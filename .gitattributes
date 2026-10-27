@@ -1,0 +1,7 @@
+* text=auto
+*.lua text
+*.toc text
+*.xml text
+*.md text
+*.tga binary
+*.png binary

@@ -1,0 +1,115 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+  <Frame name="BFIQuestiePinTemplate" mixin="BFIQuestiePinMixin" enableMouse="true" virtual="true">
+    <Size x="16" y="16"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Icon" setAllPoints="true"/>
+      </Layer>
+      <Layer level="OVERLAY">
+        <Texture parentKey="Overlay" setAllPoints="true" hidden="true"/>
+      </Layer>
+    </Layers>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+      <OnMouseUp method="OnMouseUp"/>
+    </Scripts>
+  </Frame>
+
+  <!-- RareScanner rares/treasures; the mixin lives in Rares.lua. Same look as
+       RareScanner's own pins: colored state background, small type icon, group count -->
+  <Frame name="BFIRarePinTemplate" mixin="BFIRarePinMixin" enableMouse="true" virtual="true">
+    <Size x="16" y="16"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Background" setAllPoints="true"/>
+      </Layer>
+      <Layer level="OVERLAY">
+        <Texture parentKey="Icon">
+          <Size x="10" y="10"/>
+          <Anchors>
+            <Anchor point="BOTTOMRIGHT" x="3" y="-3"/>
+          </Anchors>
+        </Texture>
+        <FontString parentKey="Count" inherits="NumberFontNormalSmall">
+          <Anchors>
+            <Anchor point="TOPRIGHT" x="4" y="4"/>
+          </Anchors>
+        </FontString>
+      </Layer>
+    </Layers>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+      <OnMouseUp method="OnMouseUp"/>
+    </Scripts>
+  </Frame>
+
+  <!-- Townsfolk (innkeepers, trainers, vendors...); the mixin lives in Townsfolk.lua -->
+  <Frame name="BFITownsfolkPinTemplate" mixin="BFITownsfolkPinMixin" enableMouse="true" virtual="true">
+    <Size x="14" y="14"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Icon" setAllPoints="true"/>
+      </Layer>
+    </Layers>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+      <OnMouseUp method="OnMouseUp"/>
+    </Scripts>
+  </Frame>
+
+  <!-- GatherMate2 nodes; the mixin lives in Gather.lua -->
+  <Frame name="BFIGatherPinTemplate" mixin="BFIGatherPinMixin" enableMouse="true" virtual="true">
+    <Size x="12" y="12"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Icon" setAllPoints="true"/>
+      </Layer>
+    </Layers>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+      <OnMouseUp method="OnMouseUp"/>
+    </Scripts>
+  </Frame>
+
+  <!-- Quest givers and turn-ins learned as you play; the mixin lives in Learn.lua -->
+  <Frame name="BFILearnedPinTemplate" mixin="BFILearnedPinMixin" enableMouse="true" virtual="true">
+    <Size x="16" y="16"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Icon" setAllPoints="true"/>
+      </Layer>
+    </Layers>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+      <OnMouseUp method="OnMouseUp"/>
+    </Scripts>
+  </Frame>
+
+  <!-- Dungeon and raid entrances (click: the dungeon's map); the mixin lives in Dungeon.lua -->
+  <Frame name="BFIDungeonPinTemplate" mixin="BFIDungeonPinMixin" enableMouse="true" virtual="true">
+    <Size x="18" y="18"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Icon" setAllPoints="true"/>
+      </Layer>
+    </Layers>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+      <OnMouseUp method="OnMouseUp"/>
+    </Scripts>
+  </Frame>
+
+  <!-- TomTom waypoints; the mixin lives in Waypoints.lua -->
+  <Frame name="BFIWaypointPinTemplate" mixin="BFIWaypointPinMixin" enableMouse="true" virtual="true">
+    <Size x="16" y="16"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Icon" setAllPoints="true" file="Interface\AddOns\TomTom\Images\GoldGreenDot"/>
+      </Layer>
+    </Layers>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+      <OnMouseUp method="OnMouseUp"/>
+    </Scripts>
+  </Frame>
+</Ui>

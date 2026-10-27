@@ -1,0 +1,52 @@
+## Interface: 11509
+## Title: Battlefield Info
+## Notes: Quests, townsfolk, rares, gathering nodes, zoom and more for the Battlefield Map
+## Version: 1.0.0
+## X-Edition: Era
+## X-License: MIT
+## SavedVariables: BattlefieldInfoDB, BattlefieldInfoQuestDB
+## SavedVariablesPerCharacter: BattlefieldInfoCharDB
+## OptionalDeps: QuestieDB, Questie, RareScanner, TomTom, GatherMate2, SharedMedia, Atlas, Atlas_ClassicWoW
+
+Data\OpenMapMinimap.lua
+Data\OpenMapDungeonMaps.lua
+Data\OpenMapCaves.lua
+Data\OpenMapCaveMinimap.lua
+Data\CaveMinimapExtra.lua
+Data\MapOverlaysEra.lua
+Data\ZoneShapes.lua
+Data\ZoneWash.lua
+Data\ZoneLevels.lua
+Data\DungeonEntrances.lua
+Client.lua
+Art.lua
+Fonts.lua
+Check.lua
+QuestData.lua
+Pin.lua
+Waypoints.lua
+Rares.lua
+Townsfolk.lua
+Gather.lua
+Learn.lua
+Tracker.lua
+Pin.xml
+BattlefieldInfo.lua
+Defaults.lua
+Town.lua
+Profiles.lua
+Options.lua
+Keys.lua
+Setups.lua
+Minimap.lua
+Coords.lua
+MapControls.lua
+Detail.lua
+Line.lua
+Dungeon.lua
+Cave.lua
+Explore.lua
+ZoneArt.lua
+Style.lua
+ZoneName.lua
+Browse.lua
