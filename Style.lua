@@ -109,7 +109,7 @@ function ns.UpdateStyle()
     local map = BattlefieldMapFrame
     if not (border and map) then return end
     local c = ns.db.border
-    local area = map.ScrollContainer or map
+    local area = ns.MapFace(map)  -- (the map area, or what's left of it collapsed: Collapse.lua)
 
     local style = ns.MapBorderStyle()
     local def = BORDERS[style]
@@ -132,6 +132,7 @@ function ns.UpdateStyle()
         border:Hide()
     end
     if ns.UpdateZoneName then ns.UpdateZoneName() end  -- the header sits on the frame's edge
+    if ns.ApplyQuestFrame then ns.ApplyQuestFrame() end  -- (it can take the map's border)
     ns.ApplyFrameAlpha()
 end
 
@@ -145,7 +146,9 @@ function ns.ApplyFrameAlpha()
     local a = ns.FrameAlpha()
     border:SetAlpha(a)
     if map.BorderFrame then map.BorderFrame:SetAlpha(a) end
-    if ns.debugFrames.header then ns.debugFrames.header:SetAlpha(a) end
+    -- (clear view can show the header only under the mouse, or not at all)
+    local h = ns.ClearViewHeaderAlpha and ns.ClearViewHeaderAlpha() or 1
+    if ns.debugFrames.header then ns.debugFrames.header:SetAlpha(a * h) end
 end
 
 -- Setup -----------------------------------------------------------------------

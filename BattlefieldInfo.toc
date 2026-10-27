@@ -1,7 +1,7 @@
 ## Interface: 11509
 ## Title: Battlefield Info
 ## Notes: Quests, townsfolk, rares, gathering nodes, zoom and more for the Battlefield Map
-## Version: 1.0.0
+## Version: 1.1.0
 ## X-Edition: Era
 ## X-License: MIT
 ## SavedVariables: BattlefieldInfoDB, BattlefieldInfoQuestDB
@@ -15,6 +15,7 @@ Data\OpenMapCaveMinimap.lua
 Data\CaveMinimapExtra.lua
 Data\MapOverlaysEra.lua
 Data\ZoneShapes.lua
+Data\ZoneCut.lua
 Data\ZoneWash.lua
 Data\ZoneLevels.lua
 Data\DungeonEntrances.lua
@@ -49,4 +50,7 @@ Explore.lua
 ZoneArt.lua
 Style.lua
 ZoneName.lua
+Collapse.lua
+ClearView.lua
+Dock.lua
 Browse.lua

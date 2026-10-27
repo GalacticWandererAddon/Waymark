@@ -32,8 +32,9 @@ ns.ART = {
     "_ui-frame-metal-edgetop-2x", "_ui-frame-metal-edgebottom-2x",
     "!ui-frame-metal-edgeleft-2x", "!ui-frame-metal-edgeright-2x",
     "redbutton-exit-c60-2x", "redbutton-exit-pressed-c60-2x", "redbutton-highlight-c60-2x",
-    -- the big map's shrink button (MapControls SetupBigButton)
+    -- the map's shrink / grow button (MapControls SetupBigButton)
     "redbutton-condense-2x", "redbutton-condense-pressed-2x", "redbutton-highlight-2x",
+    "redbutton-expand-2x", "redbutton-expand-pressed-2x",
     -- and the map's close X beside it, in the same art
     "redbutton-exit-2x", "redbutton-exit-pressed-2x", "redbutton-exit-disabled-2x",
     "options_innerframe", "options_categoryheader_1", "options_list_active", "options_list_hover",
@@ -59,6 +60,7 @@ ns.ART = {
 -- copied from Blizzard, so it's fine to ship. Names Era has itself need no entry.
 -- [Forever name] = the client's name or path; { name or path, left, right, top,
 -- bottom } for part of it (top > bottom: upside down); false: nothing drawn. Checked against Era 1.15.9.70003's atlas tables (wago.tools).
+local RED_BUTTONS = "Interface\\AddOns\\BattlefieldInfo\\Media\\RedButtons"
 ns.ART_SUBSTITUTE = {
     -- the settings window frame: Era's own classic window (ButtonFrameTemplateNoPortrait),
     -- laid out at that art's sizes in Options.lua MetalFrame
@@ -70,17 +72,20 @@ ns.ART_SUBSTITUTE = {
     ["_ui-frame-metal-edgebottom-2x"] = "_UI-Frame-Bot",
     ["!ui-frame-metal-edgeleft-2x"] = "!UI-Frame-LeftTile",
     ["!ui-frame-metal-edgeright-2x"] = "!UI-Frame-RightTile",
-    -- the settings window's close X: the classic one
-    ["redbutton-exit-c60-2x"] = "Interface\\Buttons\\UI-Panel-MinimizeButton-Up",
-    ["redbutton-exit-pressed-c60-2x"] = "Interface\\Buttons\\UI-Panel-MinimizeButton-Down",
-    ["redbutton-highlight-c60-2x"] = "Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight",
-    -- the big map's close and shrink buttons: Era has the same art at 1x
-    ["redbutton-exit-2x"] = "redbutton-exit",
-    ["redbutton-exit-pressed-2x"] = "redbutton-exit-pressed",
-    ["redbutton-exit-disabled-2x"] = "redbutton-exit-disabled",
-    ["redbutton-highlight-2x"] = "redbutton-highlight",
-    ["redbutton-condense-2x"] = "redbutton-condense",
-    ["redbutton-condense-pressed-2x"] = "redbutton-condense-pressed",
+    -- the map's close X and shrink / grow arrows, and the settings window's X: our
+    -- own (Media\RedButtons, tools\red_buttons.py). Era has this art only at 18 px,
+    -- blurred at the map's size; the classic round X was pixelated too.
+    ["redbutton-exit-2x"] = { RED_BUTTONS, 0, 0.25, 0, 0.25 },
+    ["redbutton-condense-2x"] = { RED_BUTTONS, 0.25, 0.5, 0, 0.25 },
+    ["redbutton-expand-2x"] = { RED_BUTTONS, 0.5, 0.75, 0, 0.25 },
+    ["redbutton-highlight-2x"] = { RED_BUTTONS, 0.75, 1, 0, 0.25 },
+    ["redbutton-exit-pressed-2x"] = { RED_BUTTONS, 0, 0.25, 0.25, 0.5 },
+    ["redbutton-condense-pressed-2x"] = { RED_BUTTONS, 0.25, 0.5, 0.25, 0.5 },
+    ["redbutton-expand-pressed-2x"] = { RED_BUTTONS, 0.5, 0.75, 0.25, 0.5 },
+    ["redbutton-exit-disabled-2x"] = { RED_BUTTONS, 0, 0.25, 0.5, 0.75 },
+    ["redbutton-exit-c60-2x"] = { RED_BUTTONS, 0, 0.25, 0, 0.25 },
+    ["redbutton-exit-pressed-c60-2x"] = { RED_BUTTONS, 0, 0.25, 0.25, 0.5 },
+    ["redbutton-highlight-c60-2x"] = { RED_BUTTONS, 0.75, 1, 0, 0.25 },
     -- the settings' red buttons (Options.lua RedButton): the classic panel button
     -- (its art is the top left 80 x 22 px of the file). Era has a highlight of its
     -- own, but that's a different shape, so it's swapped too.

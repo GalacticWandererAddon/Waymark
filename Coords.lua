@@ -53,6 +53,7 @@ end
 function ns.SetupCoords(map)
     bar = MakeBar(map)
     cursorBar = MakeBar(map)
+    ns.debugFrames.coords, ns.debugFrames.coordsCursor = bar, cursorBar
     cursorBar:Hide()
     baseFont, _, baseFlags = bar.text:GetFont()
 

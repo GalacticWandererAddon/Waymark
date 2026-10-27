@@ -1429,6 +1429,17 @@ local function Column(parent, x, y, width, side)
         Index(text, self.y, fs:GetStringHeight() + 6)
         self.y = self.y - fs:GetStringHeight() - 8
     end
+    -- a note that stands out: gold and a size up from the small grey notes
+    function col:Strong(text)
+        local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fs:SetPoint("TOPLEFT", x + 4, self.y - 2)
+        fs:SetWidth(width - 14)
+        fs:SetJustifyH("LEFT")
+        Ink(parent, fs)
+        fs:SetText(text)
+        Index(text, self.y, fs:GetStringHeight() + 6)
+        self.y = self.y - fs:GetStringHeight() - 8
+    end
     return col
 end
 
@@ -1465,6 +1476,8 @@ local START_SWITCHES = {
     { "Auto-zoom", "Zooms in near quest objectives and gathering nodes.", "built in", "zoom", "autoZoom", "behaviour" },
     { "Town view", "A close-up of the town when you arrive.", "built in", "townView", "enabled", "town" },
     { "Auto shape", "The map follows each zone's shape.", "built in", "mapFrame", "autoWidth", "window" },
+    { "Clear view", "Just the map, laid over the world.", "built in", "clearView", "on", "clearview" },
+    { "Minimap replacement", "The map docks over a square minimap.", "built in", "dock", "on", "minimap" },
 }
 
 -- Pages -----------------------------------------------------------------
@@ -1479,14 +1492,20 @@ local PAGES = {}
 -- The first page: the most-used switches, how the window is laid out, credits.
 -- (Each group's own page, its heading in the list, has all of its switches.)
 PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, build = function(p)
-    local a = Column(p, 0, 0, HALF)
+    local w = Column(p, 0, 0, CONTENT_W)
+    w:Header("Welcome")
+    w:Note("Thank you for testing my addon! It's still very much under active development, and some features may be lacking or buggy. It's developed with Forever in mind, and has some stand-in textures in Era because of that.")
+    w:Note("There are A LOT of settings, and a lot of things to play with, but the default settings should work well enough for most. Have fun!")
+    local top = w.y - 6
+
+    local a = Column(p, 0, top, HALF)
     a:Header("Most used")
     for _, f in ipairs(START_SWITCHES) do a:Feature(f) end
 
-    local b = Column(p, HALF, 0, HALF)
+    local b = Column(p, HALF, top, HALF)
     b:Header("Finding your way")
     b:Note("The list on the left has three groups. Click a group's name for its main switches on one page; the - beside it folds its pages away, + opens them again.")
-    b:Note("The window: the map's size, shape, border, header and buttons.")
+    b:Note("The window: the map's size, shape, border, header and buttons; clear view and the minimap replacement.")
     b:Note("Getting around: how the map follows you and zooms, towns, caves and dungeons, exploring.")
     b:Note("What's shown: quests, the tracker, townsfolk, your group and other addons' pins.")
     b:Note("Tick a switch to turn it on; > opens its settings. Hover any setting for what it does. Show advanced settings, at the bottom, adds the fine-tuning.")
@@ -1506,6 +1525,8 @@ local WINDOW_SWITCHES = {
     { "Border", "A frame round the map, in the style you pick.", "", "border", "shown", "header" },
     { "Map buttons", "The gear, the town view button and the toggle buttons.", "", nil, "mapButtons", "controls" },
     { "Coordinates", "Yours and the cursor's.", "", "coords", "shown", "controls" },
+    { "Clear view", "Just the map, laid over the world.", "", "clearView", "on", "clearview" },
+    { "Minimap replacement", "The map docks over a square minimap.", "", "dock", "on", "minimap" },
 }
 
 PAGES[#PAGES + 1] = { key = "windowhome", label = "The window", summary = true, build = function(p)
@@ -1575,6 +1596,67 @@ PAGES[#PAGES + 1] = { key = "window", label = "Size, shape & fade", build = func
     b:Requires()
     b:Check("Full opacity under the mouse", "fade", "hover")
     b:Tip("Fading comes on top of the map's own opacity: 50% opacity faded to 40% shows at 20%. At 0% the map still catches clicks.")
+    b:Header("Collapsing")
+    b:Check("Collapse the map in combat", "collapse", "combat")
+    b:Tip("The map folds up under its header, leaving a strip of its frame, and its buttons hide. An attached quest tracker stays. It opens again when the fight ends. A key does it too: Key Bindings > AddOns > Battlefield Info > Collapse the map.")
+end }
+
+-- Clear view and the minimap replacement: modes of the window, each its own page
+PAGES[#PAGES + 1] = { key = "clearview", label = "Clear view", build = function(p)
+    local b = Column(p, 0, 0, HALF)
+    b:Header("Clear view")
+    b:Check("Clear view", "clearView", "on")
+    b:Tip("Just the map, laid over the world. A key does it too: Key Bindings > AddOns > Battlefield Info > Clear view.")
+    b:Check("Hide the border", "clearView", "noFrame")
+    b:Choice("Zone name", "clearView", "header", {
+        { "hover", "On mouse-over" }, { "shown", "Shown" }, { "hidden", "Hidden" },
+    })
+    b:Choice("Buttons and coordinates", "clearView", "buttons", {
+        { "hover", "On mouse-over" }, { "shown", "Shown" },
+    })
+    b:Check("Only the zone I'm in", "clearView", "zoneOnly")
+    b:Tip("The neighbouring zones and the sea round its edges are cut away, on a zone's map (not continents, cities, caves or dungeons).")
+    b:Slider("Map opacity in clear view", 0.1, 1, 0.05, "clearView", "opacity", Percent)
+    b:Tip("In place of the map opacity (The window page) while clear view is on. Pins keep their own opacity.")
+
+    local n = Column(p, HALF, 0, HALF)
+    n:Header("How it works")
+    n:Note("The map without its frame: no border, the zone name and buttons only while the mouse is on it, the map picture as see-through as you like. Only the zone you're in can be shown, the neighbouring zones and the sea cut away.")
+    n:Note("Your pins keep their own opacity, so they stay clear over the world.")
+end }
+
+PAGES[#PAGES + 1] = { key = "minimap", label = "Minimap replacement", build = function(p)
+    local b = Column(p, 0, 0, HALF)
+    b:Header("Minimap replacement")
+    b:Check("Dock the map over the minimap", "dock", "on")
+    b:Tip("The minimap turns square and north up, and the map sits on top of it at the same size, its border and buttons round the minimap too. Its X switches between map and minimap; the Battlefield Map's own key (Shift+M) does nothing meanwhile. Tip: put Key Bindings > AddOns > Battlefield Info > Big map on M, your usual map key. A key turns the mode off: Minimap replacement (on/off), in the same list. Changes to the minimap wait until a fight ends.")
+    b:Requires("dock", "on")
+    b:Slider("Size", 100, 400, 10, "dock", "size", "%d")
+    b:Tip("The corner grip (bottom left) sizes it too: drag left or down to grow. Right-click it: back to 160. On the big map it sizes the big map.")
+    b:Check("Into the screen's top-right corner", "dock", "corner")
+    b:Tip("Off: where the minimap was.")
+    b:Check("Hide the day / night indicator", "dock", "hideSun")
+    b:Tip("The minimap's sun and moon. Its other buttons (clock, tracking, mail...): hold one to move it, right-click while holding to put it back.")
+    b:Check("Mouse wheel switches between minimap and map", "dock", "wheel")
+    b:Tip("The wheel zooms the minimap. Out past its farthest zoom the map opens, as close as the minimap was; in past that on the map, back to the minimap. A right-click on the minimap opens the map at its zoom; a double-click on the map goes back (with Map only on, or on the big map: back on you at the minimap's zoom). Replaces the minimap's + and - buttons.")
+    b:Slider("Wheel friction", 0, 5, 1, "dock", "friction", "%d")
+    b:Tip("Extra clicks before it switches. The edge glows on each.")
+    b:Requires()
+
+    local n = Column(p, HALF, 0, HALF)
+    n:Header("How it works")
+    n:Note("The minimap turns square and north up, and the map lies over it at the same size, in the screen's top-right corner. One square, two faces: the game's own minimap, with its tracking blips and your pins on it, and the map. The frame, header and buttons stay round both.")
+    n:Note("The big map opens beside the square, which stays the minimap meanwhile.")
+    n:Header("Controls")
+    n:Note("Wheel on the minimap: zoom. Out past its farthest zoom: the map.")
+    n:Note("Wheel in on the map, at the minimap's zoom with you in view: back to the minimap.")
+    n:Note("Right-click the minimap: the map at the same zoom. Drag on it: the map, panned as you drag.")
+    n:Note("Double-click the map: back to the minimap. With Map only, or on the big map: back on you.")
+    n:Note("The map's X: map or minimap. Shift+M does nothing while docked.")
+    n:Note("Big map key or arrow: the big map beside the square. Drag its edge to move it, its corner grip to size it.")
+    n:Note("The parchment button, bottom left: Map only, never the minimap.")
+    n:Note("Hold any of the minimap's buttons to move it; right-click while holding puts it back.")
+    n:Note("Key Bindings > AddOns > Battlefield Info: Minimap replacement (on/off) turns the mode off. Tip: put Big map on M.")
 end }
 
 -- zoom as art on screen (MapControls' ArtX): screen pixels per pixel of the map art
@@ -1995,8 +2077,10 @@ PAGES[#PAGES + 1] = { key = "controls", label = "Buttons & coordinates", build =
     a:Check("Toggle buttons", nil, "quickToggles")
     a:Tip("Small buttons on the map that switch layers on and off. Right-click one for its settings.")
     a:Check("Quick-options button (the gear)", nil, "quickButton")
-    a:Tip("The most-used switches in a small panel.")
+    a:Tip("The most-used switches in a small panel. Right-click it for these settings.")
     a:Requires()
+    a:Button("Put the map's buttons back", function() ns.ResetButtonPositions() end)
+    a:Tip("Press and hold any button on the map to move it; right-click while holding puts that one back.")
     a:Check("Minimap button", "minimap", "hide", true)
     a:Tip("On the game's own minimap, not on this map: opens these settings.")
     a:Header("Toggle buttons")
@@ -2211,13 +2295,16 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     end)
     a:Tip("The game's own tracker (under the minimap). Hidden while this one shows: it comes back when the map or this tracker closes. Hidden always: gone even with the map closed or this tracker off. In combat, the change waits until the fight is over.")
     a:Requires("tracker", "shown")
+    a:Check("Detach from the map", "tracker", "detached")
+    a:Tip("On its own you place it anywhere: drag its edges or the zone name to move it, its bottom-right corner to resize it. It stays open when you close the map. Attached, it moves, fades and hides with the map.")
+    a:Requires(function() return T().shown and not T().detached end)
     a:Choice("Where", "tracker", "attach", {
         { "below", "Below the map" }, { "above", "Above the map" }, { "left", "Left of the map" },
-        { "right", "Right of the map" }, { "free", "On its own (drag the zone name)" },
+        { "right", "Right of the map" },
     })
-    a:Tip("Attached, it moves, fades and hides with the map. On its own you place it anywhere: drag its edges to move it, its bottom-right corner to resize it. It still shows only while the map does.")
+    a:Requires("tracker", "shown")
     a:Slider("Width", 140, 800, 5, "tracker", "width", "%d")
-    a:Tip("Beside the map (left or right of it) or on its own. Above or below the map it's as wide as the map.")
+    a:Tip("Beside the map (left or right of it) or detached. Above or below the map it's as wide as the map.")
     a:Choice("Order", "tracker", "sort", {
         { "distance", "Nearest first" }, { "alpha", "Alphabetically" }, { "area", "By sub-zone name" },
         { "level", "By level" }, { "log", "As in the quest log" },
@@ -2364,6 +2451,8 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     a:Tip("Right-click an objective spot or a turn-in for a quest in your log: its page opens. (Other pins keep their right-click.)")
     a:Check("Open it with the quest log key", "questlog", "keyL")
     a:Tip("While the map shows, the key you open the quest log with (L) opens this window on the quest you last looked at, instead of the game's quest log. Off, or with the map closed: the key is the game's. Not changed during a fight.")
+    a:Check("Replace the game's quest log", "questlog", "replaceGame")
+    a:Tip("The quest log key opens this window whether the map shows or not, and the game's quest log stays closed: its button or a click in its tracker opens this one instead. With the map closed it opens on its own, where you last put it detached (else where the game's quest log opens).")
     a:Check("Your whole quest log", "questlog", "list")
     a:Tip("Every quest in your log, under its zone, at the top of the window; the quest you click shows below it. Click a zone: fold it. Drag the faint line between them to give the log more or less room.")
     a:Requires("questlog", "list")
@@ -2460,6 +2549,24 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     b:Check("Fade when the mouse isn't on it", "questlog", "fadeOut")
     b:Requires("questlog", "fadeOut")
     b:Slider("Faded to", 0, 100, 5, "questlog", "fadeAlpha", "%d%%")
+    b:Advanced()
+    b:Requires()
+
+    -- its frame: its own, or the map border's styles
+    b:Header("Border")
+    b:Requires("questlog", "shown")
+    b:Choice("Style", "questlog", "borderStyle", {
+        { "own", "The quest log's own" }, { "map", "Same as the map's" }, { "dialog", "Classic dialog" },
+        { "gold", "Gold" }, { "tooltip", "Tooltip" }, { "wood", "Wood" }, { "line", "Thin line" }, { "none", "None" },
+    })
+    b:Tip("Same as the map's: the map border's style, thickness, distance and colour (Header & border page). With the game's own map border, the quest log's own frame. The settings below are for the other styles.")
+    b:Advanced(true)
+    b:Slider("Thickness", 0.5, 2, 0.05, "questlog", "borderSize", "%.2fx")
+    b:Slider("Distance from the window", -12, 20, 1, "questlog", "borderGap", "%d px")
+    b:Choice("Colour", "questlog", "borderColor", {
+        { "natural", "As drawn" }, { "gold", "Gold" }, { "bronze", "Bronze" },
+        { "silver", "Silver" }, { "dark", "Dark" }, { "class", "My class colour" },
+    })
     b:Advanced()
     b:Requires()
 
@@ -2750,6 +2857,7 @@ end }
 PAGES[#PAGES + 1] = { key = "setups", label = "Setups", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Save this setup")
+    a:Strong("Not properly developed. It works but will change in the future.")
     a:Note("Everything on these pages, under a name: keep several and switch between them.")
     local nameBox = CreateFrame("EditBox", nil, p, "InputBoxTemplate")
     nameBox:SetSize(170, 20)
@@ -3454,6 +3562,14 @@ local function BuildPanel()
     local close = CreateFrame("Button", nil, panel)
     close:SetSize(24, 24)
     close:SetPoint("TOPRIGHT", -5, 1)
+    if ns.UsingSubstitutes() then
+        -- (our own X, Art.lua: no margin round it, so a smaller button, in the
+        -- socket of the classic frame's top-right corner: UI-Frame-TopCornerRight,
+        -- 33 px at TOPRIGHT 0, 4 (MetalFrame), has a 16 px hole centred at 20.5,
+        -- 11.5 of it, so -12.5, -7.5 from the window's corner)
+        close:SetSize(21, 21)
+        close:SetPoint("TOPRIGHT", -2, 3)
+    end
     close:SetFrameLevel(panel:GetFrameLevel() + 5)
     StateArt(close, "Normal", "redbutton-exit-c60-2x", "Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
     StateArt(close, "Pushed", "redbutton-exit-pressed-c60-2x", "Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
@@ -3497,7 +3613,7 @@ local function BuildPanel()
     -- "#Heading>key": the heading opens that page (the group's own summary)
     local NAV = {
         "overview",
-        "#The window>windowhome", "window", "header", "controls",
+        "#The window>windowhome", "window", "clearview", "minimap", "header", "controls",
         "#Getting around>aroundhome", "behaviour", "browse", "town", "city", "dungeon", "explore",
         "#What's shown>shownhome", "quests", "tracker", "questlog", "people", "group", "rares",
         "#Your setup", "profiles", "setups", "keys", "addon",
@@ -3997,6 +4113,11 @@ local SPACING = 2
 
 local toggleStrip, toggleButtons = nil, {}
 
+-- in the row by the X: shown and not moved away (hold to move, MapControls)
+local function InRow(b)
+    return b and b:IsShown() and not ns.ButtonMoved(b) or false
+end
+
 local function RefreshToggles()
     for _, b in ipairs(toggleButtons) do
         local on = ToggleOn(b)  -- (as you see it: a profile may decide it)
@@ -4150,12 +4271,14 @@ LayoutTogglesNow = function()
 
     toggleStrip:ClearAllPoints()
     local area = map and (map.ScrollContainer or map)
-    local gear = quickButton and quickButton:IsShown()
+    local gear = InRow(quickButton)
     -- the leftmost of the gear and the town / city view buttons beside it
-    local leftmost = (cityButton and cityButton:IsShown()) and cityButton
-        or (townButton and townButton:IsShown()) and townButton or (gear and quickButton)
+    local leftmost = InRow(cityButton) and cityButton
+        or InRow(townButton) and townButton or (gear and quickButton)
     -- (offsets in the strip's own units; it's counter-scaled like the gear)
-    if side == "inside" and edge == "top" and from == "last" and leftmost then
+    if ns.PlaceMoved(toggleStrip) then
+        -- (held and moved: where it was put)
+    elseif side == "inside" and edge == "top" and from == "last" and leftmost then
         -- left of the gear (and the town view button), as before
         toggleStrip:SetPoint("RIGHT", leftmost, "LEFT", -4, 0)
     elseif side == "outside" and map then
@@ -4175,7 +4298,7 @@ LayoutTogglesNow = function()
             if edge == "top" then inX = -28 else inY = gear and -28 - 6 or -28 end
             -- (and of the big map's shrink button beside the X)
             local big = ns.bigMapButton
-            if edge == "top" and big and big:IsShown() then inX = inX - big:GetWidth() end
+            if edge == "top" and InRow(big) then inX = inX - big:GetWidth() end
         end
         toggleStrip:SetPoint(point, area, point, inX, inY)
     end
@@ -4186,7 +4309,9 @@ ns.LayoutToggles = LayoutToggles
 -- the mouse is on the map or on its toggle buttons (which can sit outside it):
 -- what the fades go by
 function ns.MouseOnMap(map)
-    return map:IsMouseOver() or (toggleStrip and toggleStrip:IsVisible() and toggleStrip:IsMouseOver()) or false
+    -- (collapsed, Collapse.lua: only the strip that's left)
+    local inset = ns.CollapsedInset and ns.CollapsedInset() or 0
+    return map:IsMouseOver(0, inset, 0, 0) or (toggleStrip and toggleStrip:IsVisible() and toggleStrip:IsMouseOver()) or false
 end
 
 -- Townsfolk menu (shift-click the townsfolk toggle button) ---------------------
@@ -4452,7 +4577,10 @@ local function BuildToggleStrip(map)
             local step = dt * 4
             alpha = math.abs(want - alpha) <= step and want or alpha + (want > alpha and step or -step)
         end
-        local a = alpha * ns.FrameAlpha()
+        -- (clear view: only with the mouse on the map, ClearView.lua)
+        local cv = ns.ClearViewButtonAlpha and ns.db.clearView.on and ns.db.clearView.buttons == "hover"
+                   and ns.ClearViewButtonAlpha() or 1
+        local a = alpha * ns.FrameAlpha() * cv
         if a ~= shown then
             shown = a
             toggleStrip:SetAlpha(a)
@@ -4461,8 +4589,8 @@ local function BuildToggleStrip(map)
             if cityButton then cityButton:SetAlpha(a) end
         end
         local close = map.BorderFrame and map.BorderFrame.CloseButton
-        if close then close:SetAlpha(c.fadeClose and alpha or 1) end
-        if ns.bigMapButton then ns.bigMapButton:SetAlpha(c.fadeClose and alpha or 1) end
+        if close then close:SetAlpha((c.fadeClose and alpha or 1) * cv) end
+        if ns.bigMapButton then ns.bigMapButton:SetAlpha((c.fadeClose and alpha or 1) * cv) end
     end)
     LayoutToggles()
 end
@@ -4475,6 +4603,7 @@ function ns.ApplyChromeScale()
     local inv = 1 / math.max(0.1, map:GetScale())
     local close = map.BorderFrame and map.BorderFrame.CloseButton
     if close then close:SetScale(inv) end
+    if ns.closeHome then ns.closeHome:SetScale(inv) end
     if ns.bigMapButton then ns.bigMapButton:SetScale(inv) end
     if quickButton then quickButton:SetScale(inv) end
     if townButton then townButton:SetScale(inv) end
@@ -4572,13 +4701,23 @@ function ns.SetupQuickButton(map)
     end
     b:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight", "ADD")
 
-    quickButton:SetScript("OnClick", function()
+    quickButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    quickButton:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then
+            -- the settings window
+            GameTooltip:Hide()
+            quickPanel:Hide()
+            ns.ToggleOptions()
+            return
+        end
         quickPanel:SetShown(not quickPanel:IsShown())
     end)
     quickButton:SetScript("OnEnter", function()
         GameTooltip:SetOwner(quickButton, "ANCHOR_LEFT")
         GameTooltip:AddLine("Battlefield Info")
         GameTooltip:AddLine("Quick options", 1, 1, 1)
+        GameTooltip:AddLine("Right-click: settings", 0.6, 0.6, 0.6)
+        GameTooltip:AddLine("Hold any map button to move it", 0.6, 0.6, 0.6)
         GameTooltip:Show()
     end)
     quickButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -4587,6 +4726,14 @@ function ns.SetupQuickButton(map)
     townButton = BuildViewButton(map, "town")
     cityButton = BuildViewButton(map, "city")
     BuildToggleStrip(map)
+    -- press and hold to move (MapControls); a toggle button takes its strip along,
+    -- placed by the corner it grows from
+    ns.HoldToMove(quickButton, "gear")
+    ns.HoldToMove(townButton, "town")
+    ns.HoldToMove(cityButton, "city")
+    local stripPoint = function() return (select(4, TogglePlace(ns.db.toggles))) end
+    for _, b in ipairs(toggleButtons) do ns.HoldToMove(b, "toggles", toggleStrip, stripPoint) end
+    ns.HoldToMove(toggleStrip.add, "toggles", toggleStrip, stripPoint)
     ns.debugFrames.gear, ns.debugFrames.toggleStrip = quickButton, toggleStrip
     ns.debugFrames.townButton, ns.debugFrames.cityButton = townButton, cityButton
     map:HookScript("OnShow", ns.ApplyChromeScale)
@@ -4606,34 +4753,42 @@ function ns.RefreshViewGlow()
     end
 end
 
--- what our buttons line up left of: the big map's shrink button while it
--- shows (MapControls), else the close X
+-- what our buttons line up left of: the map's shrink / grow arrow (MapControls),
+-- else the close X, else (both moved away) where the X would be
 local function RightOfButtons()
     local big = ns.bigMapButton
-    if big and big:IsShown() then return big end
-    return BattlefieldMapFrame.BorderFrame and BattlefieldMapFrame.BorderFrame.CloseButton
+    if InRow(big) then return big end
+    local close = BattlefieldMapFrame.BorderFrame and BattlefieldMapFrame.BorderFrame.CloseButton
+    if close and not ns.ButtonMoved(close) then return close end
+    return ns.closeHome
 end
 
 -- the town and city view buttons: on in colour, off greyed out; in a row
 -- left of the gear (town view nearest it), or where the gear would be
 local function RefreshViewButtons()
     local close = RightOfButtons()
-    local right = quickButton and quickButton:IsShown() and quickButton
+    local right = InRow(quickButton) and quickButton
     for _, b in ipairs({ townButton, cityButton }) do
         local on = ns.db[b.view.group][b.view.key]
         b.icon:SetDesaturated(not on)
         b.icon:SetVertexColor(on and 1 or 0.6, on and 1 or 0.6, on and 1 or 0.6)
         b:ClearAllPoints()
-        if right then
+        if ns.PlaceMoved(b) then
+            -- (held and moved: out of the row)
+        elseif right then
             b:SetPoint("RIGHT", right, "LEFT", -3, 0)
         elseif close then
             b:SetPoint("RIGHT", close, "LEFT", -2, 0)
         else
             b:SetPoint("TOPRIGHT", BattlefieldMapFrame, "TOPRIGHT", -26, -4)
         end
-        if b:IsShown() then right = b end
+        if InRow(b) then right = b end
     end
     ns.RefreshViewGlow()
+end
+
+function ns.HideQuickPanel()
+    if quickPanel then quickPanel:Hide() end
 end
 
 function ns.UpdateQuickButton()
@@ -4642,7 +4797,7 @@ function ns.UpdateQuickButton()
     local all = ns.db.mapButtons ~= false
     quickButton:SetShown(all and ns.db.quickButton and true or false)
     local right = RightOfButtons()
-    if right then
+    if not ns.PlaceMoved(quickButton) and right then
         quickButton:ClearAllPoints()
         quickButton:SetPoint("RIGHT", right, "LEFT", -2, 0)
     end

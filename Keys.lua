@@ -12,10 +12,16 @@ local ACTIONS = {
                     ns.db.mapFrame.center = not ns.db.mapFrame.center
                     ns.OnSettingChanged("mapFrame", "center")
                 end },
+    clearview = { "Clear view (on/off)", function() if ns.ToggleClearView then ns.ToggleClearView() end end },
+    dock     = { "Minimap replacement (on/off)", function() if ns.ToggleDock then ns.ToggleDock() end end },
     options  = { "Settings window", function() ns.ToggleOptions() end },
     setup    = { "Next saved setup", function() if ns.NextSetup then ns.NextSetup() end end },
     continent = { "Continent map (again: back to my map)", function() if ns.BrowseKey then ns.BrowseKey() end end },
-    bigmap   = { "Big map (again: normal size; opens the map)", function() if ns.ToggleBigMap then ns.ToggleBigMap() end end },
+    -- (with the minimap replacement the Battlefield Map's own Shift+M does
+    -- nothing, so the name suggests the usual map key for this)
+    bigmap   = { "Big map (again: normal size; opens the map). Tip for Minimap replacement: put this on M",
+                 function() if ns.ToggleBigMap then ns.ToggleBigMap() end end },
+    collapse = { "Collapse the map (again: open it)", function() if ns.ToggleCollapse then ns.ToggleCollapse() end end },
 }
 
 -- one per layer toggle, from the toggle strip's list (Options.lua)
@@ -55,7 +61,7 @@ end
 -- the map actions first, then the layers
 function ns.KeyBindingList()
     local out = {}
-    for _, name in ipairs({ "zoomin", "zoomout", "center", "continent", "bigmap", "options", "setup" }) do
+    for _, name in ipairs({ "zoomin", "zoomout", "center", "continent", "bigmap", "collapse", "clearview", "dock", "options", "setup" }) do
         out[#out + 1] = { "BFI_" .. name:upper(), ACTIONS[name][1] }
     end
     for _, id in ipairs(LAYER_KEYS) do

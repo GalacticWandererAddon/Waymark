@@ -40,6 +40,40 @@ do
             local stack = debugstack and debugstack(2, 12, 0) or ""
             if tostring(msg):find("BattlefieldInfo") or stack:find("BattlefieldInfo") then
                 pcall(ns.RecordError, msg, stack)
+            elseif tostring(msg):find("MapCanvas") then
+                -- the game's map code (the stack names no file of ours): what
+                -- the scroll area held then, to see which value was missing
+                pcall(function()
+                    local sc = BattlefieldMapFrame and BattlefieldMapFrame.ScrollContainer
+                    local vals = {}
+                    if sc then
+                        for k, v in pairs(sc) do
+                            if type(v) == "number" or type(v) == "boolean" then
+                                vals[#vals + 1] = k .. "=" .. tostring(type(v) == "number" and math.floor(v * 1000) / 1000 or v)
+                            end
+                        end
+                        local levels = sc.zoomLevels
+                        vals[#vals + 1] = "levels=" .. (levels and #levels or 0)
+                            .. (levels and levels[1] and string.format(" %.3f-%.3f", levels[1].scale, levels[#levels].scale) or "")
+                        vals[#vals + 1] = "canvasScale=" .. tostring(sc:GetCanvasScale())
+                        -- the canvas's place on screen (the game measures the cursor from its left)
+                        local child = sc.Child
+                        if child then
+                            local pts = {}
+                            for i = 1, child:GetNumPoints() do
+                                local p, rel, rp, x, y = child:GetPoint(i)
+                                pts[#pts + 1] = string.format("%s>%s %s %s,%s", tostring(p), rel == sc and "scroll" or
+                                    (rel and (rel:GetName() or "?") or "nil"), tostring(rp), tostring(x), tostring(y))
+                            end
+                            vals[#vals + 1] = "child: left " .. tostring(child:GetLeft()) .. " top " .. tostring(child:GetTop())
+                                .. " size " .. tostring(child:GetWidth()) .. "x" .. tostring(child:GetHeight())
+                                .. " scale " .. tostring(child:GetScale()) .. " points [" .. table.concat(pts, "; ") .. "]"
+                        end
+                        vals[#vals + 1] = "scroll left " .. tostring(sc:GetLeft())
+                    end
+                    table.sort(vals)
+                    ns.RecordError(msg, stack .. "\nscroll area: " .. table.concat(vals, ", "))
+                end)
             end
             return prev(msg, ...)
         end)
@@ -124,7 +158,12 @@ function ns.RunCheck(noReload)
         -- the gear and the toggle buttons
         local gear, strip = ns.debugFrames.gear, ns.debugFrames.toggleStrip
         local mapRect = Rect(map)
-        local buttons = ns.db.mapButtons ~= false
+        -- (collapsed, Collapse.lua: the buttons are meant to be hidden)
+        local collapsed = ns.MapCollapsed and ns.MapCollapsed()
+        if collapsed then
+            Check("map collapsed (info)", true, "buttons hidden on purpose, not checked; " .. tostring(ns.collapseTrim))
+        end
+        local buttons = ns.db.mapButtons ~= false and not collapsed
         if gear and buttons and ns.db.quickButton then
             Check("gear shown", gear:IsVisible())
             Check("gear over the map art", gear:GetFrameLevel() > cl, "gear " .. gear:GetFrameLevel() .. ", canvas " .. cl)
@@ -221,6 +260,7 @@ function ns.RunCheck(noReload)
 
         if ns.ZoneArtInfo then Check("zone maps on the continent (info)", true, ns.ZoneArtInfo()) end
         if ns.TrackerInfo then Check("quest tracker (info)", true, ns.TrackerInfo()) end
+        if ns.DockInfo and ns.db.dock.on then Check("minimap replacement (info)", true, ns.DockInfo()) end
         if ns.QuestWindowInfo then Check("quest log window (info)", true, ns.QuestWindowInfo()) end
         if ns.QuestDataInfo then Check("QuestieDB data", ns.QDB() ~= nil, ns.QuestDataInfo(map:GetMapID())) end
 

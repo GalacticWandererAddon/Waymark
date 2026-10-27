@@ -279,7 +279,10 @@ local function UpdateView(x, y)
         -- zoom: a small cave would need a huge one, so it gets edges instead and
         -- your own zoom
         coverZoom = math.max(vw / (2 * artHW), vh / (2 * artHH))
-        k = math.max(c.zoom, math.min(coverZoom, MAX_FILL_ZOOM))
+        -- (docked over the minimap, Dock.lua: the zoom scaled to the square's
+        -- width against your map's, so it shows as much of the cave)
+        local fit = ns.DockViewFactor and ns.DockViewFactor(vw) or 1
+        k = math.max(c.zoom * fit, math.min(coverZoom, MAX_FILL_ZOOM))
         local hw, hh = vw / (2 * k), vh / (2 * k)  -- half the view, in yards
 
         if drag then
@@ -341,6 +344,7 @@ local function CreateView(map)
     view = CreateFrame("Frame", nil, area)
     view:SetAllPoints(area)
     view:SetFrameLevel(math.min(area:GetFrameLevel() + 5000, 9000))  -- over the continent map and its pins
+    ns.caveView = view  -- (Dock.lua: see-through on the minimap face, its double-click)
     view:SetClipsChildren(true)
     view:EnableMouse(true)
     view:EnableMouseWheel(true)

@@ -52,7 +52,8 @@ local tabParent  -- the tab's own parent, to put it back
 local function PlaceTab(map)
     local tab = BattlefieldMapTab
     if not tab then return end
-    if Cfg().hideTab then
+    -- (docked over the minimap, Dock.lua: the tab would float where the map was)
+    if Cfg().hideTab or (ns.Docked and ns.Docked()) then
         if tab:GetParent() ~= tabHolder then
             tabParent = tab:GetParent()
             tab:SetParent(tabHolder)
@@ -74,9 +75,17 @@ local function SavePosition(map)
 end
 
 local function RestorePosition(map)
+    -- docked over the minimap (Dock.lua): its place, not yours
+    if ns.DockPlace and ns.DockPlace(map) then PlaceTab(map) return end
     local pos = Cfg().pos
     -- (positions saved by the earlier tab-moving version are left alone)
-    if pos and pos.kind == "topleft" then PinTopLeft(map, pos.x, pos.y) end
+    if pos and pos.kind == "topleft" then
+        -- never off the screen: at least a corner's worth of it left on
+        -- (undocking once pushed it thousands of units off the left edge)
+        pos.x = Clamp(pos.x, 0, UIParent:GetWidth() - 40)
+        pos.y = Clamp(pos.y, 40, UIParent:GetHeight())
+        PinTopLeft(map, pos.x, pos.y)
+    end
     PlaceTab(map)
 end
 function ns.RestoreMapPosition()
@@ -94,10 +103,13 @@ local function SetupMover(map)
     mover:SetHitRectInsets(-14, -14, -14, -14)
     mover:SetFrameLevel(math.max(0, area:GetFrameLevel() - 1))
     mover:EnableMouse(true)
+    ns.mapMover = mover  -- (Dock.lua: its mouse off while docked; it caught the minimap's clicks)
 
     local moving = false
     mover:SetScript("OnMouseDown", function(_, button)
+        -- (docked over the minimap, Dock.lua: only the big map moves, to its own spot)
         if button ~= "LeftButton" then return end
+        if ns.Docked and ns.Docked() and not (ns.DockBigMovable and ns.DockBigMovable()) then return end
         -- detach from the tab exactly where it is, so it starts under the cursor
         local x, y = TopLeftUI(map)
         PinTopLeft(map, x, y)
@@ -111,7 +123,11 @@ local function SetupMover(map)
         if not moving then return end
         moving = false
         map:StopMovingOrSizing()
-        SavePosition(map)
+        if ns.Docked and ns.Docked() then
+            if ns.DockBigMoved then ns.DockBigMoved(map) end  -- (not your map's own spot)
+        else
+            SavePosition(map)
+        end
         RestorePosition(map)  -- back to our own anchor, tab follows
     end)
     mover:SetScript("OnEnter", function()
@@ -161,6 +177,10 @@ local function Hold(map)
 end
 -- (Browse.lua: a view it put on a new map is yours, held as if you'd zoomed there)
 ns.HoldMapView = Hold
+-- (Dock.lua's double-click: back on you, followed again)
+function ns.ReleaseMapView() heldAt = nil end
+-- (Dock.lua's big map: whether the square's view was yours or following you)
+function ns.MapViewHeld() return heldAt ~= nil end
 
 -- still held? Lets go once you've moved (or the map changed)
 local function Held(mapID, pos)
@@ -317,6 +337,9 @@ function ns.NormalViewSize(sc)
 end
 
 local function BigReach(sc)
+    -- (docked over the minimap, Dock.lua: your map's big doesn't apply; it
+    -- reached 145x art there)
+    if ns.Docked and ns.Docked() then return 1 end
     if not (Cfg().big and ns.ZoneLowestScale and sc.mapID) then return 1 end
     local big = ns.ZoneLowestScale(sc, sc.mapID)
     local normal = ns.ZoneLowestScale(sc, sc.mapID, ns.NormalViewSize(sc))
@@ -695,6 +718,9 @@ local function RestoreView(map, quiet)
     if not quiet then lastWant = v.want end
     pauseUntil = GetTime() + 1  -- let it settle before centering/auto-zoom move it
 end
+
+-- the next opening starts afresh, not on the view it closed with (Dock.lua)
+function ns.ForgetMapView() savedView = nil end
 
 -- the game may reset the view again a moment after showing: if the zoom isn't
 -- what was restored, put it back once more
@@ -1104,6 +1130,10 @@ local function BigSize(map)
 end
 
 local function WantedSize(map)
+    if ns.DockedSize then
+        local w, h = ns.DockedSize(map)
+        if w then return w, h end
+    end
     if Cfg().big then return BigSize(map) end
     return NormalSize(map)
 end
@@ -1155,6 +1185,9 @@ local function SetShape(map, w, h)
             and map:GetCenter() * map:GetEffectiveScale() > UIParent:GetWidth() * UIParent:GetEffectiveScale() / 2
     end
     map:SetSize(w, h)
+    -- docked: centred on the minimap; undocking: your saved place as it was,
+    -- not shifted by the square's size (Dock.lua)
+    if ns.DockShaping and ns.DockShaping(map) then return end
     if moved and (keepRight or keepBottom) then
         local k = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
         if keepRight then pos.x = pos.x + (oldW - w) * k end
@@ -1250,6 +1283,8 @@ end
 function ns.SetMapSize(w, h, dragging)
     local map = BattlefieldMapFrame
     if not (map and defaultW) then return end
+    -- docked over the minimap (Dock.lua): the grip sizes the square
+    if ns.Docked and ns.Docked() then ns.DockResize(map, w, h, dragging) return end
     local c = Cfg()
     local perZone = PerZone(map)
     local mapID = perZone and c.rememberShapes and map:GetMapID()
@@ -1284,13 +1319,37 @@ function ns.SetMapSize(w, h, dragging)
     end
 end
 
-local bigButton  -- the red shrink button, shown while the map is big
+local bigButton  -- the red arrow beside the X: shrink while the map is big, grow while small
 local CLOSE_ART = 0.7  -- the close X's art: this much of its button (SetupBigButton)
+local closeHome  -- where the close X sits by default; .art: its art there (SetupBigButton)
+
+-- the arrow: where it was moved to, else left of the X's art (or in its place,
+-- when the X was moved away)
+local function PlaceBigButton()
+    if not bigButton or ns.PlaceMoved(bigButton) then return end
+    bigButton:ClearAllPoints()
+    local close = BattlefieldMapFrame.BorderFrame and BattlefieldMapFrame.BorderFrame.CloseButton
+    if closeHome and ns.ButtonMoved(close) then
+        bigButton:SetPoint("RIGHT", closeHome.art, "RIGHT")
+    elseif closeHome then
+        bigButton:SetPoint("RIGHT", closeHome.art, "LEFT", -1, 0)
+    else
+        bigButton:SetPoint("TOPRIGHT", BattlefieldMapFrame, "TOPRIGHT", -26, -2)
+    end
+end
+
+-- big: docked over the minimap (Dock.lua) its own big, not your map's
+local function IsBig()
+    if ns.Docked and ns.Docked() then return ns.db.dock.big and true or false end
+    return Cfg().big and true or false
+end
 
 local function RefreshBigButton()
-    local want = Cfg().big and true or false
-    if not bigButton or bigButton:IsShown() == want then return end
-    bigButton:SetShown(want)
+    local big = IsBig()
+    if not bigButton or bigButton.big == big then return end
+    bigButton.big = big
+    ns.SetArt(bigButton:GetNormalTexture(), big and "redbutton-condense-2x" or "redbutton-expand-2x")
+    ns.SetArt(bigButton:GetPushedTexture(), big and "redbutton-condense-pressed-2x" or "redbutton-expand-pressed-2x")
     -- (the gear and the toggles line up left of it: Options)
     if ns.UpdateQuickButton then ns.UpdateQuickButton() end
     if ns.LayoutToggles then ns.LayoutToggles() end
@@ -1298,6 +1357,13 @@ end
 
 -- the map closed: open it, and big (it may have closed big already)
 function ns.ToggleBigMap()
+    -- (docked over the minimap, Dock.lua: its own big map, grown from the
+    -- square's corner; saving the position below would keep the docked spot as yours)
+    if ns.Docked and ns.Docked() then
+        ns.DockToggleBig()
+        RefreshBigButton()
+        return
+    end
     local map = BattlefieldMapFrame
     if not (map and map:IsShown()) then
         if ToggleBattlefieldMap then pcall(ToggleBattlefieldMap) end
@@ -1324,17 +1390,21 @@ function ns.ToggleBigMap()
     RefreshBigButton()
 end
 
-function ns.MapIsBig() return Cfg().big and true or false end
+function ns.MapIsBig() return IsBig() end
+ns.RefreshBigButton = function() RefreshBigButton() end  -- (Dock.lua: docking changes what big means)
 
 -- left of the map's close X, as big as its red X art (the button itself is
--- larger: a click margin round the art); the game's red "condense" button, in
--- its 2x art (the 1x one is a few pixels across and blurred when drawn this big)
+-- larger: a click margin round the art); the game's red "condense" button while
+-- the map is big, "expand" while it's small, in their 2x art (the 1x one is a
+-- few pixels across and blurred when drawn this big; Era: our own, Art.lua)
 local function SetupBigButton(map)
     local border = map.BorderFrame
     local close = border and border.CloseButton
     -- the close X in the same 2x art, CLOSE_ART of the button's size in its
     -- middle (this art has no margin round it, the game's had), and only that
-    -- part clickable
+    -- part clickable. Our own Era art (Art.lua) is drawn at 70 % of that: it
+    -- has no see-through edge, so it looked bigger than the game's.
+    local k = CLOSE_ART * (ns.UsingSubstitutes() and 0.7 or 1)
     if close then
         local w, h = close:GetSize()
         for _, s in ipairs({ { "Normal", "redbutton-exit-2x" }, { "Pushed", "redbutton-exit-pressed-2x" },
@@ -1345,31 +1415,37 @@ local function SetupBigButton(map)
                 if w > 0 then
                     tex:ClearAllPoints()
                     tex:SetPoint("CENTER")
-                    tex:SetSize(w * CLOSE_ART, h * CLOSE_ART)
+                    tex:SetSize(w * k, h * k)
                 end
             end
         end
-        local mx, my = w * (1 - CLOSE_ART) / 2, h * (1 - CLOSE_ART) / 2
+        local mx, my = w * (1 - k) / 2, h * (1 - k) / 2
         close:SetHitRectInsets(mx, mx, my, my)
     end
     local art = close and close:GetNormalTexture()
     local edge = (art and art:GetWidth() > 0) and art or close
+    -- where the X is by default, kept when it's moved (hold to move, below): a
+    -- frame on the X's own anchors, its art's size in the middle
+    if close then
+        local w, h = close:GetSize()
+        closeHome = CreateFrame("Frame", nil, map)
+        closeHome:SetSize(w, h)
+        for i = 1, close:GetNumPoints() do closeHome:SetPoint(close:GetPoint(i)) end
+        closeHome.art = CreateFrame("Frame", nil, closeHome)
+        closeHome.art:SetPoint("CENTER")
+        closeHome.art:SetSize(edge:GetSize())
+        ns.closeHome = closeHome
+    end
     local b = CreateFrame("Button", nil, map)
     local size = edge and edge:GetHeight() or 0
-    b:SetSize(size > 0 and size or 22, size > 0 and size or 22)
-    if edge then
-        b:SetPoint("RIGHT", edge, "LEFT", -1, 0)
-    else
-        b:SetPoint("TOPRIGHT", map, "TOPRIGHT", -26, -2)
-    end
+    if size <= 0 then size = 22 * k / CLOSE_ART end
+    b:SetSize(size, size)
     -- above the border art, like the gear (Options)
     b:SetFrameLevel((border or map):GetFrameLevel() + 10)
-    for _, s in ipairs({ { "Normal", "redbutton-condense-2x" }, { "Pushed", "redbutton-condense-pressed-2x" },
-                         { "Highlight", "redbutton-highlight-2x" } }) do
-        b["Set" .. s[1] .. "Texture"](b, "Interface\\Buttons\\WHITE8X8")
-        local tex = b["Get" .. s[1] .. "Texture"](b)
-        if tex then ns.SetArt(tex, s[2]) end
+    for _, s in ipairs({ "Normal", "Pushed", "Highlight" }) do
+        b["Set" .. s .. "Texture"](b, "Interface\\Buttons\\WHITE8X8")
     end
+    ns.SetArt(b:GetHighlightTexture(), "redbutton-highlight-2x")
     local glow = b:GetHighlightTexture()
     if glow then glow:SetBlendMode("ADD") end
     b:SetScript("OnClick", function() ns.ToggleBigMap() end)
@@ -1377,6 +1453,190 @@ local function SetupBigButton(map)
     ns.bigMapButton = b
     ns.debugFrames.bigMap = b
     RefreshBigButton()
+    if close then
+        ns.HoldToMove(close, "close")
+        ns.PlaceMoved(close)
+    end
+    ns.HoldToMove(b, "bigMap")
+    PlaceBigButton()
+end
+
+-- Hold to move -------------------------------------------------------------
+
+-- Press and hold any of the map's buttons (the close X, the arrow, the gear,
+-- the town / city buttons, a toggle button: that takes its whole strip) and it
+-- follows the mouse until you let go; that click doesn't count. Right-click
+-- while holding: back to its usual place. Saved in BattlefieldInfoDB.buttonPos
+-- [key] = { its point, the map's nearest corner, x, y } (in its own units), so
+-- it stays put on the big map too; 5th field true: dropped away from the map,
+-- so on the screen's nearest corner instead (still shown with the map). A moved button leaves the row by the X; the
+-- others close up (Options InRow).
+local HOLD = 0.4        -- seconds held before it moves
+local OFF_MAP = 30      -- dropped further than this outside the map: kept on the screen, not the map
+local held, dragging    -- the button pressed; the frame being moved
+local grabX, grabY      -- that frame's point minus the cursor, in screen pixels
+local holdDriver
+
+-- where a frame's point is, in screen pixels
+local function PointXY(f, point)
+    local l, b, w, h = f:GetRect()
+    if not l then return nil end
+    local s = f:GetEffectiveScale()
+    local x = point:find("LEFT") and l or point:find("RIGHT") and l + w or l + w / 2
+    local y = point:find("BOTTOM") and b or point:find("TOP") and b + h or b + h / 2
+    return x * s, y * s
+end
+
+local function MovePoint(f) return f.bfiMovePoint and f.bfiMovePoint() or "CENTER" end
+
+-- the moved buttons' places in use: docked over the minimap (Dock.lua) its
+-- own set, dock.buttonPos (yours had the toggles off the screen there);
+-- create: make the table if there's none
+local function Positions(create)
+    local owner, key = ns.db, "buttonPos"
+    if ns.Docked and ns.Docked() then owner = ns.db.dock end
+    if create and not owner[key] then owner[key] = {} end
+    return owner[key], owner
+end
+
+function ns.ButtonMoved(f)
+    local pos = f and f.bfiMoveKey and ns.db and Positions()
+    return (pos and pos[f.bfiMoveKey]) and true or false
+end
+
+-- a moved frame to its saved place (true); false: lay it out as usual
+function ns.PlaceMoved(f)
+    local map = BattlefieldMapFrame
+    if not (map and ns.ButtonMoved(f)) then return false end
+    local p = Positions()[f.bfiMoveKey]
+    f:ClearAllPoints()
+    f:SetPoint(p[1], p[5] and UIParent or map, p[2], p[3], p[4])
+    return true
+end
+
+-- every map button to its saved or usual place
+local function RelayoutButtons()
+    local close = BattlefieldMapFrame and BattlefieldMapFrame.BorderFrame and BattlefieldMapFrame.BorderFrame.CloseButton
+    if close and not ns.PlaceMoved(close) and closeHome then
+        close:ClearAllPoints()
+        close:SetAllPoints(closeHome)
+    end
+    PlaceBigButton()
+    if ns.UpdateQuickButton then ns.UpdateQuickButton() end  -- (gear, town / city, toggles)
+    if ns.PlaceMinimapButtons then ns.PlaceMinimapButtons() end  -- (docked: the minimap's, Dock.lua)
+end
+
+-- (docked: the docked set)
+function ns.ResetButtonPositions()
+    if ns.db then
+        local _, owner = Positions()
+        owner.buttonPos = nil
+    end
+    RelayoutButtons()
+end
+ns.RelayoutMapButtons = RelayoutButtons  -- (Dock.lua: docking swaps the set)
+
+local function StopDrag(keep)
+    local f = dragging
+    dragging, held = nil, nil
+    if not f then return end
+    local positions, owner = Positions(true)
+    local map = BattlefieldMapFrame
+    local point = MovePoint(f)
+    local x, y = PointXY(f, point)
+    local l, b, w, h = map:GetRect()
+    if keep and x and l then
+        local ms = map:GetEffectiveScale()
+        l, b, w, h = l * ms, b * ms, w * ms, h * ms
+        -- dropped well away from the map: kept on the screen instead (its nearest
+        -- corner), so moving or resizing the map leaves it be
+        local away = math.max(l - x, x - (l + w), b - y, y - (b + h)) / UIParent:GetEffectiveScale()
+        local screen = away > OFF_MAP or nil
+        if screen then
+            local us = UIParent:GetEffectiveScale()
+            l, b, w, h = 0, 0, UIParent:GetWidth() * us, UIParent:GetHeight() * us
+        end
+        local corner = (y > b + h / 2 and "TOP" or "BOTTOM") .. (x > l + w / 2 and "RIGHT" or "LEFT")
+        local cx = corner:find("LEFT") and l or l + w
+        local cy = corner:find("TOP") and b + h or b
+        local s = f:GetEffectiveScale()
+        positions[f.bfiMoveKey] = { point, corner, (x - cx) / s, (y - cy) / s, screen }
+    else
+        positions[f.bfiMoveKey] = nil
+        if not next(positions) then owner.buttonPos = nil end
+    end
+    RelayoutButtons()
+end
+
+local function HoldUpdate()
+    local left = IsMouseButtonDown("LeftButton")
+    if dragging then
+        if IsMouseButtonDown("RightButton") then
+            StopDrag(false)
+        elseif not left then
+            StopDrag(true)
+        else
+            local cx, cy = GetCursorPosition()
+            local s = dragging:GetEffectiveScale()
+            dragging:ClearAllPoints()
+            dragging:SetPoint(MovePoint(dragging), UIParent, "BOTTOMLEFT", (cx + grabX) / s, (cy + grabY) / s)
+        end
+        return
+    end
+    if held and left then
+        if GetTime() - held.bfiDownAt >= HOLD then
+            dragging = held.bfiMoveTarget
+            held.bfiSwallow = true
+            local px, py = PointXY(dragging, MovePoint(dragging))
+            local cx, cy = GetCursorPosition()
+            if not px then dragging = nil return end
+            grabX, grabY = px - cx, py - cy
+            GameTooltip:Hide()
+        end
+        return
+    end
+    held = nil
+    -- (both buttons up: the click they made has been swallowed; clicks count again)
+    if not (left or IsMouseButtonDown("RightButton")) then
+        holdDriver:Hide()
+        C_Timer.After(0.1, function()
+            for _, b in ipairs(ns.holdButtons) do b.bfiSwallow = nil end
+        end)
+    end
+end
+
+ns.holdButtons = {}
+-- b: the button you hold; key: its saved place; target: what moves (default b);
+-- point(): the target's point it's placed by (default its middle)
+function ns.HoldToMove(b, key, target, point)
+    target = target or b
+    target.bfiMoveKey, target.bfiMovePoint = key, point
+    b.bfiMoveTarget = target
+    if not holdDriver then
+        holdDriver = CreateFrame("Frame")
+        holdDriver:Hide()
+        holdDriver:SetScript("OnUpdate", function() ns.Safe("MapControls hold to move", HoldUpdate) end)
+    end
+    b:HookScript("OnMouseDown", function(self, button)
+        if button ~= "LeftButton" or dragging then return end
+        -- (the minimap's own buttons and the map-only one, Dock.lua: movable
+        -- only while docked, the minimap's not on the big map)
+        if self.bfiDockOnly and not (ns.DockButtonMovable and ns.DockButtonMovable(self)) then return end
+        held, self.bfiDownAt = self, GetTime()
+        holdDriver:Show()
+    end)
+    -- (set after the button's own OnClick: a click that moved it does nothing;
+    -- a plain frame has no OnClick)
+    if not (b.HasScript and b:HasScript("OnClick")) then
+        ns.holdButtons[#ns.holdButtons + 1] = b
+        return
+    end
+    local click = b:GetScript("OnClick")
+    b:SetScript("OnClick", function(self, ...)
+        if self.bfiSwallow then return end
+        if click then return click(self, ...) end
+    end)
+    ns.holdButtons[#ns.holdButtons + 1] = b
 end
 
 -- Setup -------------------------------------------------------------------
@@ -1387,7 +1647,9 @@ local function ApplyOpacity(map)
     if not (BattlefieldMapOptions and map.RefreshAlpha) then return end
     local c = Cfg()
     if c.opacity == nil then c.opacity = 1 - (BattlefieldMapOptions.opacity or 0) end
-    local want = 1 - c.opacity
+    -- (clear view has its own; mapFrame.opacity is kept for when it's off)
+    local op = ns.ClearView and ns.ClearView() and ns.db.clearView.opacity or c.opacity
+    local want = 1 - op
     if BattlefieldMapOptions.opacity ~= want then
         BattlefieldMapOptions.opacity = want
         pcall(map.RefreshAlpha, map)
@@ -1411,6 +1673,7 @@ function ns.ApplyMapControls(group)
     end
     ns.Safe("MapControls UpdateShape", UpdateShape)
     RefreshBigButton()  -- (a loaded setup brings its own big / normal)
+    if not group then RelayoutButtons() end  -- (and its own button places)
     -- auto-zoom settings changed: decide afresh (not for other map settings,
     -- or dragging e.g. the opacity slider would re-zoom you)
     if group == "zoom" then lastWant = nil end
@@ -1490,7 +1753,11 @@ function ns.SetupMapControls(map)
             ns.Safe("MapControls UpdateFade", UpdateFade, map, dt)
             -- following you: every frame, so the game's own glide runs on
             -- smoothly (twice a second, it moved in starts and stops)
-            if (Cfg().center or (lastWant and AnyAutoZoom())) and not (ns.Browsing and ns.Browsing()) then
+            -- (docked over the minimap it follows you as the minimap does; on
+            -- the minimap face Dock.lua keeps it on you itself, and the two
+            -- pulling a little differently made it flicker)
+            if (Cfg().center or (ns.Docked and ns.Docked()) or (lastWant and AnyAutoZoom()))
+               and not (ns.Browsing and ns.Browsing()) and not (ns.DockMinimapFace and ns.DockMinimapFace()) then
                 ns.Safe("MapControls CenterOnPlayer", CenterOnPlayer, map)
             end
             sinceTip = sinceTip + dt

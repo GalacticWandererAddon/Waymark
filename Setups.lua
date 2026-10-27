@@ -37,7 +37,7 @@ function ns.ApplyAll()
         { nil, "scale" }, { "questie", "shown" }, { "waypoints", "shown" }, { "rares", "shown" },
         { "townsfolk", "shown" }, { "mapFrame" }, { "zoom" }, { "detail" }, { "line" },
         { "gather", "shown" }, { "dungeon" }, { "zoneName" }, { "cave" }, { "profiles" },
-        { "explore" }, { "border" }, { "learned", "shown" }, { "dungeons", "shown" }, { "toggles" }, { "party", "classColors" },
+        { "explore" }, { "border" }, { "learned", "shown" }, { "dungeons", "shown" }, { "toggles" }, { "party", "classColors" }, { "clearView" },
     }) do
         pcall(ns.OnSettingChanged, ch[1], ch[2])
     end

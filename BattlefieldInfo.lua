@@ -28,6 +28,19 @@ local DEFAULTS = {
     -- the whole map fades while you move / in combat, to these opacities (%);
     -- hover: full again under the mouse
     fade       = { moving = false, movingAlpha = 40, combat = false, combatAlpha = 40, hover = true },
+    -- the map folded up to its header in combat (Collapse.lua; also a key)
+    collapse   = { combat = false },
+    -- just the map over the world (ClearView.lua; also a key): noFrame hides the
+    -- border; header / buttons "shown", "hover" (header also "hidden"); opacity:
+    -- the map picture's, in place of mapFrame.opacity; zoneOnly: the neighbours cut away
+    -- the map docked over the minimap, which turns square and north up
+    -- (Dock.lua): size its side in UI units; wheel: the wheel zooms the
+    -- minimap and goes between the two, friction: extra clicks past the end;
+    -- face: "minimap" or "map", the one showing; corner: pushed into the
+    -- screen's top-right corner; big / bigSize: the map face grown (UI units)
+    dock       = { on = false, size = 160, wheel = true, friction = 2, face = "minimap",
+                   corner = true, big = false, bigSize = 360, mapOnly = false, hideSun = false },
+    clearView  = { on = false, noFrame = true, header = "hover", buttons = "hover", opacity = 0.7, zoneOnly = true },
     -- the settings window's text (Options.lua): font sizes of the section
     -- headings and of everything else (an earlier version kept small offsets)
     optionsText = { heading = 15, text = 12 },
@@ -53,14 +66,14 @@ local DEFAULTS = {
     learned    = { shown = true, alpha = 1, scale = 0.8, mode = "gaps", record = true, turnins = true,
                    trivial = false, repeatable = true },
     -- the quest tracker (Tracker.lua): this zone's quests, nearest first;
-    -- attach: below / above / left / right of the map, or "free" (pos)
+    -- attach: below / above / left / right of the map; detached: on its own (pos)
     -- (onlyTracked: the quests you track; folded[questID]: its objectives hidden;
     -- groupByArea: under sub-zone headings; maxHeight: taller than this scrolls)
     -- hideGameTracker: the game's own quest tracker hidden while ours shows
     -- (true) or "always" (even with the map closed);
     -- autoTrack: quests you accept are tracked at once
     -- (showUntracked: the "Not tracked" quests unfolded at the list's end)
-    tracker    = { shown = true, hideGameTracker = false, autoTrack = true, showUntracked = false, attach = "below", width = 220, pos = nil, sort = "distance",
+    tracker    = { shown = true, hideGameTracker = false, autoTrack = true, showUntracked = false, attach = "below", detached = false, width = 220, pos = nil, sort = "distance",
                    finished = "show", hideGrey = false, hideElite = false, hideDungeon = false,
                    hideGroup = false, onlyTracked = true, objectives = true, hideDoneObjectives = false,
                    collapsed = false, hideEmpty = false, folded = {}, groupByArea = true, maxHeight = 260,
@@ -105,8 +118,11 @@ local DEFAULTS = {
     -- Page: objectives, description, rewards, levelTag, people (giver and
     -- turn-in, QuestieDB), questID; buttons abandon / share / track / focus;
     -- glow (its spots and areas lit while open). Look: paper "parchment" /
-    -- "dark", alpha, fadeOut to fadeAlpha %.
-    questlog   = { shown = true, fromPins = false, keyL = false, list = false, escape = true,
+    -- "dark", alpha, fadeOut to fadeAlpha %. Frame: borderStyle "own" (its own
+    -- art) / "map" (the map border's) / a map border style, with borderSize,
+    -- borderGap, borderColor.
+    -- replaceGame: the quest log key opens it map or not, the game's closes as it opens
+    questlog   = { shown = true, fromPins = false, keyL = false, replaceGame = false, list = false, escape = true,
                    listHereFirst = true, listFoldOthers = true, listLevelColors = true, listShare = 0.27, logStyle = "leather",
                    listGoldTitles = false,
                    textHeadFont = "morpheus", textHeadSize = 14, textHeadOutline = true,
@@ -124,7 +140,8 @@ local DEFAULTS = {
                    objectives = true, description = true, rewards = true, levelTag = true, people = true,
                    questID = false, abandon = true, share = true, track = true, focus = true, glow = true,
                    paper = "parchment", alpha = 1,
-                   fadeOut = false, fadeAlpha = 30 },
+                   fadeOut = false, fadeAlpha = 30,
+                   borderStyle = "own", borderSize = 1, borderGap = 0, borderColor = "natural" },
     -- types[key] = true per townsfolk/vendor key (Townsfolk.lua), plus "professions"
     -- mergeYards: same-type townsfolk this close share one pin (0 = off)
     -- record: learn townsfolk as you play (Townsfolk.lua); useLearned: show
@@ -635,8 +652,10 @@ function ns.FrameAlpha()
 end
 
 -- The map border's style as drawn: "none" while the border is switched off
+-- (or clear view hides it)
 function ns.MapBorderStyle()
     local b = ns.db.border
+    if ns.ClearViewHidesFrame and ns.ClearViewHidesFrame() then return "none" end
     return b.shown == false and "none" or b.style
 end
 
@@ -789,6 +808,7 @@ local function SetupResize(map)
     local grip = CreateFrame("Button", nil, map)
     grip:SetSize(16, 16)
     grip:SetPoint("BOTTOMRIGHT", map, "BOTTOMRIGHT", -2, 2)
+    ns.debugFrames.grip = grip
     grip:SetFrameStrata("DIALOG")
     grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
     grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
@@ -897,6 +917,12 @@ function ns.OnSettingChanged(group, key)
         if ns.RedrawGather then ns.RedrawGather() end
     elseif group == "dungeon" then
         if ns.UpdateDungeon then ns.UpdateDungeon() end
+    elseif group == "collapse" then
+        if ns.ApplyCollapse then ns.ApplyCollapse() end
+    elseif group == "clearView" then
+        if ns.ApplyClearView then ns.ApplyClearView() end
+    elseif group == "dock" then
+        if ns.ApplyDock then ns.ApplyDock() end
     elseif group == "zoneName" then
         if ns.UpdateZoneName then ns.UpdateZoneName() end
     elseif group == "browse" then
@@ -1218,6 +1244,9 @@ local function Setup()
     ns.ApplyScales("objectives")
     if ns.SetupQuickButton then ns.SetupQuickButton(map) end
     if ns.SetupCoords then ns.SetupCoords(map) end
+    if ns.SetupCollapse then ns.SetupCollapse(map) end
+    if ns.SetupClearView then ns.SetupClearView(map) end
+    if ns.SetupDock then ns.SetupDock(map) end
 end
 
 -- Blocked actions: the game says which function it blocked in these events (the

@@ -11,8 +11,8 @@ local _, ns = ...
 -- for a finished quest to its turn-in.
 --
 -- tracker settings (ns.db.tracker): attach "below" / "above" / "left" /
--- "right" / "free"; width (left, right, free); pos (free: top-left, UIParent
--- units); sort "distance" / "level" / "log"; finished "show" / "hide" /
+-- "right"; detached (on its own, at pos: top-left, UIParent units); width
+-- (left, right, detached); sort "distance" / "level" / "log"; finished "show" / "hide" /
 -- "only"; hideGrey, hideElite, hideDungeon, hideGroup, onlyTracked; objectives
 -- (show them), hideDoneObjectives; folded[questID]; groupByArea; maxHeight
 -- (taller scrolls); collapsed. Look: titleFont, textFont (Fonts.lua keys),
@@ -24,7 +24,13 @@ local _, ns = ...
 -- right), levelColumn (levels in a column of their own; goldTitles),
 -- quietHeadings, flashProgress.
 
-local function Cfg() return ns.db.tracker end
+-- ("free" was a fourth attach before detached was its own switch: old
+-- settings and profiles still carry it)
+local function Cfg()
+    local c = ns.db.tracker
+    if c.attach == "free" then c.detached, c.attach = true, "below" end
+    return c
+end
 
 local frame          -- the tracker
 local rows = {}      -- its lines, reused
@@ -667,9 +673,15 @@ local function QuestColor(q)
     return GOLD[1], GOLD[2], GOLD[3]
 end
 
+-- (and pinned by its top-left again: after a drag the game anchors it by the
+-- nearest screen corner, and on the right half a wider tracker then grows left)
 local function SavePosition()
+    local l, t = frame:GetLeft(), frame:GetTop()
+    if not (l and t) then return end
     local s = frame:GetEffectiveScale() / UIParent:GetEffectiveScale()
-    Cfg().pos = { x = frame:GetLeft() * s, y = frame:GetTop() * s }
+    Cfg().pos = { x = l * s, y = t * s }
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l, t)
 end
 
 local header, scroll, content, edge
@@ -994,7 +1006,7 @@ local FACING = {  -- the side of the tracker that faces the map, and its corners
 local function Joined()
     local c = Cfg()
     local style = BorderSpec()
-    return c.joinBorders ~= false and FACING[c.attach or "below"] ~= nil
+    return c.joinBorders ~= false and not c.detached and FACING[c.attach or "below"] ~= nil
         and ns.BorderOutset and ns.BorderOutset() ~= nil
         and ns.BORDER_STYLES and ns.BORDER_STYLES[style] ~= nil
 end
@@ -1008,9 +1020,11 @@ local function Place()
     -- borders clear of each other. With the game's own border (it sits on the
     -- map frame's edge): against the map frame.
     local mapOut = ns.BorderOutset and ns.BorderOutset()
-    local area = mapOut and (map.ScrollContainer or map) or map
+    -- (collapsed, Collapse.lua: the strip that's left of the map, and the game's
+    -- border round it)
+    local area = mapOut and ns.MapFace(map) or map.BorderFrame or map
     local apart = Joined() and mapOut or (mapOut or 0) + BorderReach() + 2
-    if c.attach == "free" then
+    if c.detached then
         frame:SetParent(UIParent)
         frame:SetFrameStrata(map:GetFrameStrata())
         frame:SetScale(ns.db.scale or 1)  -- (as big as the map's own text)
@@ -1040,13 +1054,13 @@ local function Place()
         end
     end
     frame:SetFrameLevel(map:GetFrameLevel() + 5)  -- (a new parent resets it)
-    frame:SetMovable(c.attach == "free")
-    frame:SetResizable(c.attach == "free")
-    frame:SetClampedToScreen(c.attach == "free")
+    frame:SetMovable(c.detached)
+    frame:SetResizable(c.detached)
+    frame:SetClampedToScreen(c.detached)
     -- on its own: moved by dragging its edges (and the zone name), resized
     -- by the corner grip
-    frame:EnableMouse(c.attach == "free")
-    if frame.grip then frame.grip:SetShown(c.attach == "free") end
+    frame:EnableMouse(c.detached)
+    if frame.grip then frame.grip:SetShown(c.detached) end
 end
 
 -- the zone name over its gold rule, and the fold button: fixed at the top
@@ -1129,7 +1143,8 @@ end
 local function Draw()
     local c = Cfg()
     local map = BattlefieldMapFrame
-    local want = map and map:IsShown() and ns.IsShown("tracker") and (#list > 0 or #untracked > 0 or not c.hideEmpty)
+    -- (detached: with the map closed too)
+    local want = map and (map:IsShown() or c.detached) and ns.IsShown("tracker") and (#list > 0 or #untracked > 0 or not c.hideEmpty)
     frame:SetShown(want and true or false)
     ApplyGameTracker()
     if not want then return end
@@ -1200,7 +1215,7 @@ local function Draw()
     local function Untracked(y)
         if #untracked == 0 then return y end
         if n > 0 then y = y + (c.questGap or 6) end
-        y = Heading(y, "untracked", string.format("%s Not tracked (%d)", c.showUntracked and "-" or "+", #untracked))
+        y = Heading(y, "untracked", string.format("Not tracked (%d)", #untracked))
         if c.showUntracked then
             for _, q in ipairs(untracked) do
                 q.untracked = true
@@ -1288,9 +1303,9 @@ local function Draw()
     -- its own: the height you gave it with the corner grip (freeHeight)
     local listH = c.collapsed and 0 or y
     local full = pad + headH + (listH > 0 and 4 or 0) + listH + pad
-    local cap = c.attach == "free" and (c.freeHeight or 260) or (c.maxHeight or 260)
+    local cap = c.detached and (c.freeHeight or 260) or (c.maxHeight or 260)
     local height = math.min(full, math.max(headH + pad * 2 + 20, cap))
-    if c.attach == "free" and not c.collapsed then height = math.max(headH + pad * 2 + 20, cap) end
+    if c.detached and not c.collapsed then height = math.max(headH + pad * 2 + 20, cap) end
     frame:SetHeight(height)
     scroll:SetShown(listH > 0)
     ScrollTo(scrollY)
@@ -1310,11 +1325,12 @@ local function UpdateFade(dt)
     end
 end
 
--- An objective that counted up (flashProgress): its line white, back to
--- its own colour over a second
+-- An objective that counted up (flashProgress): its line gold, back to
+-- its own colour over a second (gold: objectives still to do are white already)
 local FLASH = 1.1
 local function Mix(fs, col, a)
-    fs:SetTextColor(col[1] + (1 - col[1]) * a, col[2] + (1 - col[2]) * a, col[3] + (1 - col[3]) * a)
+    fs:SetTextColor(col[1] + (GOLD[1] - col[1]) * a, col[2] + (GOLD[2] - col[2]) * a,
+        col[3] + (GOLD[3] - col[3]) * a)
 end
 local function UpdateFlash()
     local now = GetTime()
@@ -1372,13 +1388,13 @@ local function Build(map)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine("Quest tracker: " .. zoneName)
         GameTooltip:AddLine(Cfg().collapsed and "Click: show the quests" or "Click: hide the quests", 1, 1, 1)
-        if Cfg().attach == "free" then GameTooltip:AddLine("Drag: move it", 1, 1, 1) end
+        if Cfg().detached then GameTooltip:AddLine("Drag: move it", 1, 1, 1) end
         GameTooltip:Show()
     end)
     header:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    -- free: drag the header to move it
+    -- detached: drag the header to move it
     header:SetScript("OnDragStart", function()
-        if Cfg().attach == "free" then
+        if Cfg().detached then
             frame.bfiMoving = true
             frame:StartMoving()
         end
@@ -1386,13 +1402,13 @@ local function Build(map)
     header:SetScript("OnDragStop", function()
         frame:StopMovingOrSizing()
         frame.bfiMoving = nil
-        if Cfg().attach == "free" then SavePosition() end
+        if Cfg().detached then SavePosition() end
     end)
 
     -- on its own: drag it by its edges (the frame round the text) to move it
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", function()
-        if Cfg().attach == "free" then
+        if Cfg().detached then
             frame.bfiMoving = true
             frame:StartMoving()
         end
@@ -1400,7 +1416,7 @@ local function Build(map)
     frame:SetScript("OnDragStop", function()
         frame:StopMovingOrSizing()
         frame.bfiMoving = nil
-        if Cfg().attach == "free" then SavePosition() end
+        if Cfg().detached then SavePosition() end
     end)
 
     -- ... and its bottom-right corner to resize it (width, and the height the
@@ -1415,7 +1431,8 @@ local function Build(map)
     grip:Hide()
     frame.grip = grip
     grip:SetScript("OnMouseDown", function(_, button)
-        if button ~= "LeftButton" or Cfg().attach ~= "free" then return end
+        if button ~= "LeftButton" or not Cfg().detached then return end
+        SavePosition()  -- (grows right and down from where it is)
         local x0, y0 = GetCursorPosition()
         local w0, h0 = frame:GetWidth(), frame:GetHeight()
         grip:SetScript("OnUpdate", function()
@@ -1461,7 +1478,7 @@ function ns.UpdateTracker(now)
     -- placed again on a settings change or a new map scale; not every second
     -- (that would fight a drag)
     -- (attached: every time, so it follows the map's border settings too)
-    if (now or placedScale ~= ns.db.scale or Cfg().attach ~= "free") and not frame.bfiMoving then
+    if (now or placedScale ~= ns.db.scale or not Cfg().detached) and not frame.bfiMoving then
         placedScale = ns.db.scale
         ns.Safe("Tracker Place", Place)
     end
@@ -1478,7 +1495,7 @@ function ns.TrackerInfo()
     if not frame then return "not set up" end
     local c = Cfg()
     return string.format("%s, %s, %d quests in %s, sort %s, %dx%d", frame:IsShown() and "shown" or "hidden",
-        c.attach or "?", #list, zoneName ~= "" and zoneName or "?", c.sort or "?", frame:GetWidth(), frame:GetHeight())
+        c.detached and "detached" or c.attach or "?", #list, zoneName ~= "" and zoneName or "?", c.sort or "?", frame:GetWidth(), frame:GetHeight())
 end
 
 -- Quest window ---------------------------------------------------------------------
@@ -2404,7 +2421,19 @@ local function PlaceQuestWindow()
         return
     end
     local map = BattlefieldMapFrame
-    if not (map and map:GetTop()) then return end
+    -- the map hidden (opened as the game's quest log, questlog.replaceGame):
+    -- at its detached spot if it has one, else where the game's quest log opens
+    if not (map and map:IsShown() and map:GetTop()) then
+        qw.seam:Hide()
+        qw:ClearAllPoints()
+        qw:SetHeight(c.height or 420)
+        if c.pos then
+            qw:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", c.pos[1] / k, c.pos[2] / k)
+        else
+            qw:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 16 / k, -104 / k)
+        end
+        return
+    end
     -- everything in UIParent units first
     local ui = UIParent:GetEffectiveScale()
     local function Edges(f)
@@ -2413,9 +2442,9 @@ local function PlaceQuestWindow()
     end
     local mapOut = ns.BorderOutset and ns.BorderOutset()
     local o = (mapOut or 0) * map:GetEffectiveScale() / ui
-    local l, r, t, b = Edges(mapOut and (map.ScrollContainer or map) or map)
+    local l, r, t, b = Edges(mapOut and ns.MapFace(map) or map.BorderFrame or map)
     l, r, t, b = l - o, r + o, t + o, b - o  -- (the map border's outer edge)
-    if c.pastTracker and frame and frame:IsShown() and Cfg().attach == "below" and frame:GetBottom() then
+    if c.pastTracker and frame and frame:IsShown() and not Cfg().detached and Cfg().attach == "below" and frame:GetBottom() then
         local _, _, _, fb = Edges(frame)
         b = math.min(b, fb - BorderReach() * frame:GetEffectiveScale() / ui)
     end
@@ -2482,7 +2511,33 @@ local function ApplyEscape()
     if QCfg().escape then tinsert(UISpecialFrames, "BattlefieldInfoQuestWindow") end
 end
 
+-- Its frame (questlog.borderStyle): its own art ("own"), or one of the map's
+-- border styles with its own thickness, distance and colour; "map": the map
+-- border's style and settings (the game's own map border, which only the map
+-- has: its own art)
+local function ApplyQuestFrame()
+    local c = QCfg()
+    local style, size, gap, color = c.borderStyle or "own", c.borderSize, c.borderGap, c.borderColor
+    if style == "map" then
+        local b = ns.db.border
+        style, size, gap, color = ns.MapBorderStyle(), b.size, b.gap, b.color
+        if style == "game" then style = "own" end
+    end
+    qw.frameArt:SetShown(style == "own")
+    if style == "own" or not ns.DressBorder then
+        qw.border:Hide()
+    else
+        ns.DressBorder(qw.border, qw, style, size, gap, color)  -- (hides it for "none")
+    end
+end
+-- (the map's border changed)
+function ns.ApplyQuestFrame()
+    if qw then ApplyQuestFrame() end
+end
+
 local function BuildQuestWindow()
+    -- (Era's substitute top bar is dark down to its foot: the log starts under it)
+    if ns.UsingSubstitutes() then LOG_TOP = 51 end
     qw = CreateFrame("Frame", "BattlefieldInfoQuestWindow", UIParent)
     qw:SetSize(QW_W, QW_H)
     qw:SetFrameStrata("HIGH")
@@ -2530,6 +2585,13 @@ local function BuildQuestWindow()
     crest:SetSize(48, 19)
     crest:SetPoint("TOP", 0, 1)
     ns.SetArt(crest, "QuestLog-frame-filigree")
+    -- or the map's border styles instead (ApplyQuestFrame)
+    -- (qw.edge is its bottom-edge grip)
+    local styled = CreateFrame("Frame", nil, qw, "BackdropTemplate")
+    styled:SetFrameLevel(qw:GetFrameLevel() + 20)
+    styled:Hide()
+    qw.frameArt, qw.border = frameArt, styled
+    ApplyQuestFrame()
 
     -- the seam between the map (and tracker) and the window: a soft dark
     -- shadow behind both, so it shows only in the gap between their borders.
@@ -2577,7 +2639,7 @@ local function BuildQuestWindow()
 
     -- the page: scrolls with the wheel, with the game's slim scroll bar
     local scroll = CreateFrame("ScrollFrame", nil, qw)
-    scroll:SetPoint("TOPLEFT", 5, -43)
+    scroll:SetPoint("TOPLEFT", 5, -LOG_TOP)
     scroll:SetPoint("BOTTOMRIGHT", qw, "BOTTOMLEFT", SCROLL_R, BTN_BAR + 2)
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(SCROLL_R - 5, 10)
@@ -2937,14 +2999,30 @@ function ns.ShowQuestWindow(id)
     ShowQuest(id, true)
 end
 
+-- The window needs the Battlefield Map's addon (our setup runs when it
+-- loads): with the map never opened yet, load it (it stays hidden).
+local function MapLoaded()
+    if BattlefieldMapFrame then return true end
+    if InCombatLockdown() then
+        ns.Log("the quest window can't load in combat the first time: after the fight")
+        return false
+    end
+    pcall(C_AddOns and C_AddOns.LoadAddOn or LoadAddOn, "Blizzard_BattlefieldMap")
+    return BattlefieldMapFrame ~= nil
+end
+
 -- The quest log key (questlog.keyL): while the map shows, an override binding
 -- on the keys bound to the quest log clicks a hidden button, which opens the
 -- window on the quest last shown (else the first in the log), or closes it.
--- Bindings can't change in a fight: then once it's over.
+-- questlog.replaceGame: always, from login, map or not. Bindings can't
+-- change in a fight: then once it's over.
+-- id: that quest's page (from the game's quest log opening: its selection)
 local keyButton, keyPending
-local function OpenFromKey()
+local function OpenFromKey(id)
+    if not MapLoaded() then return end
+    if id and LogIndex(id) then ns.ShowQuestWindow(id) return end
     if qw and qw:IsShown() then qw:Hide() return end
-    local id = lastQuest and LogIndex(lastQuest) and lastQuest
+    id = lastQuest and LogIndex(lastQuest) and lastQuest
     if not id then
         for i = 1, NumEntries() do
             local e = Entry(i)
@@ -2966,18 +3044,58 @@ local function ApplyQuestKey()
     keyPending = nil
     ClearOverrideBindings(keyButton)
     local c, map = QCfg(), BattlefieldMapFrame
-    if not (c.shown and c.keyL and map and map:IsShown()) then return end
+    if not (c.shown and (c.replaceGame or (c.keyL and map and map:IsShown()))) then return end
     for _, key in ipairs({ GetBindingKey("TOGGLEQUESTLOG") }) do
         SetOverrideBindingClick(keyButton, false, key, "BattlefieldInfoQuestLogKey")
     end
 end
 
+-- questlog.replaceGame: the game's quest log closes as it opens (its micro
+-- button, a click in its tracker), and this window opens on the quest it
+-- would have shown (the same quest again: closes it)
+local gameLogHooked
+local function HookGameLog()
+    if gameLogHooked or not QuestLogFrame then return end
+    gameLogHooked = true
+    QuestLogFrame:HookScript("OnShow", function(self)
+        local c = QCfg()
+        if not (c.shown and c.replaceGame) then return end
+        HideUIPanel(self)
+        ns.Safe("Quest log", function()
+            local index = GetQuestLogSelection and GetQuestLogSelection()
+            local id = index and index > 0 and GetQuestLogTitle and select(8, GetQuestLogTitle(index))
+            OpenFromKey(id ~= 0 and id or nil)
+        end)
+    end)
+end
+-- from login, before the map is ever loaded
+do
+    local login = CreateFrame("Frame")
+    login:RegisterEvent("PLAYER_ENTERING_WORLD")
+    login:RegisterEvent("PLAYER_REGEN_ENABLED")  -- (a reload in combat)
+    login:SetScript("OnEvent", function()
+        if not ns.db then return end
+        pcall(HookGameLog)
+        ApplyQuestKey()
+        -- a detached tracker shows without the map: its addon loaded (the map
+        -- stays closed; not in combat, so after the fight)
+        local t = ns.db.tracker
+        if t.shown and (t.detached or t.attach == "free") and not BattlefieldMapFrame and not InCombatLockdown() then
+            pcall(C_AddOns and C_AddOns.LoadAddOn or LoadAddOn, "Blizzard_BattlefieldMap")
+        end
+    end)
+end
+
 -- a Quest log page setting changed
 function ns.ApplyQuestWindow(key)
-    if key == "shown" or key == "keyL" then ApplyQuestKey() end
+    if key == "shown" or key == "keyL" or key == "replaceGame" then
+        ApplyQuestKey()
+        pcall(HookGameLog)
+    end
     if (key == "shown" or key == "fromPins") and ns.RedrawQuestie then ns.RedrawQuestie() end  -- (pins' right-click)
     if not qw then return end
     ApplyEscape()
+    ApplyQuestFrame()
     if not QCfg().shown then qw:Hide() return end
     if key == "listFoldOthers" then wipe(QCfg().zoneOpen) end  -- (folded afresh by the new rule)
     if key == "glow" then
@@ -2996,6 +3114,7 @@ end
 function ns.QuestWindowInfo()
     local c = QCfg()
     local where = c.detached and "detached" or ("attached " .. (c.side or "?") .. (c.matchHeight and ", map's height" or ""))
+    if c.replaceGame then where = where .. ", replaces the game's quest log" end
     if not qw then return "not built yet, " .. where end
     return string.format("%s, %s, quest %s, %dx%d at %.2fx", qw:IsShown() and "shown" or "hidden", where,
         tostring(qwQuest), qw:GetWidth(), qw:GetHeight(), qw:GetScale())
@@ -3022,9 +3141,10 @@ function ns.SetupTracker(map)
     map:HookScript("OnShow", function()
         ns.UpdateTracker(true)
         ApplyQuestKey()
+        ns.PlaceQuestWindow()  -- (open on its own: now by the map)
     end)
     map:HookScript("OnHide", function()
-        if frame then frame:Hide() end
+        if frame and not Cfg().detached then frame:Hide() end
         ApplyQuestKey()
         ApplyGameTracker()  -- (the game's tracker back while ours is gone)
     end)
@@ -3044,7 +3164,7 @@ function ns.SetupTracker(map)
         elapsed = elapsed + dt
         if not (dirty and elapsed >= 0.2) and elapsed < 1 then return end
         elapsed = 0
-        if not map:IsShown() then return end
+        if not (map:IsShown() or Cfg().detached) then return end
         ns.UpdateTracker()
     end)
     ns.UpdateTracker(true)

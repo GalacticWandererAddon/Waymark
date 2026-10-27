@@ -131,7 +131,11 @@ local function Compose()
     local subzone = GetSubZoneText and GetSubZoneText() or ""
     local name = subzone ~= "" and subzone or zone
     if name == "" then return end
-    if c.showZone and subzone ~= "" and zone ~= "" and subzone ~= zone then
+    -- docked over the minimap (Dock.lua): the zone with the sub-zone on the
+    -- big map, never on the small square (no room); else your setting
+    local showZone = c.showZone
+    if ns.Docked and ns.Docked() then showZone = ns.MapIsBig and ns.MapIsBig() end
+    if showZone and subzone ~= "" and zone ~= "" and subzone ~= zone then
         name = name .. ", " .. zone
     end
     local extras = {}
@@ -258,11 +262,11 @@ local function Layout(map)
     sub:SetPoint("LEFT", text, "RIGHT", 10, 0)
 
     header:ClearAllPoints()
-    local area = map.ScrollContainer or map
+    local area = ns.MapFace(map)  -- (collapsed: the strip that's left, Collapse.lua)
     -- the frame's outer edge: our border reaches `out` past the map area;
     -- the game's own border sits on the map frame's edge
     local out = ns.BorderOutset and ns.BorderOutset()
-    local anchor = out and area or map
+    local anchor = out and area or map.BorderFrame or map
     out = (out or 0) / inv  -- (in the header's units)
     -- the plate overlaps the frame's edge a little, as dialog headers do
     local overlap = c.style == "plate" and h * 0.28 or 0

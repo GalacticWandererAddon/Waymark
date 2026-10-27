@@ -496,8 +496,9 @@ local function UpdateFallback(map)
         manualFloor = false
     end
 
-    -- (in combat the minimap stays in its own place: the map view meanwhile)
-    local minimapView = Cfg().view == "minimap" and not InCombat()
+    -- (in combat the minimap stays in its own place: the map view meanwhile;
+    -- docked over the minimap, Dock.lua, it's the other face already)
+    local minimapView = Cfg().view == "minimap" and not InCombat() and not (ns.Docked and ns.Docked())
     if not floors and not minimapView then overlay:Hide() return end  -- (no art: the minimap view still works)
     overlay:Show()
     viewBtn:SetText(minimapView and "Map" or "Minimap")
@@ -571,6 +572,7 @@ local function CreateOverlay(map)
     overlay:SetAllPoints(area)
     overlay:SetFrameLevel(ns.DungeonOverlayLevel(map))
     overlay.bfiCoversMap = true  -- (Explore's hover names: not through it)
+    ns.dungeonOverlay = overlay  -- (Dock.lua: see-through on the minimap face, its double-click)
     overlay:EnableMouse(true)  -- the zone map underneath isn't where you are
     overlay:EnableMouseWheel(true)
     overlay:SetClipsChildren(true)
