@@ -21,5 +21,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 Data/OpenMap*.lua come from OpenMap under its own MIT licence: see LICENSES/OpenMap-LICENSE.txt.
+Libs/LibDeflate is LibDeflate by Haoqian He, zlib licence: see LICENSES/LibDeflate-zlib.txt.
+Libs/LibStub is in the public domain.
+Media/Fonts are under their own licences (SIL OFL 1.1 or Apache 2.0): see LICENSES/.
 World of Warcraft and its art belong to Blizzard Entertainment; this addon contains none of
 its art, only names and file IDs of the game's own files.
+World of Warcraft and its art belong to Blizzard Entertainment. Media/ZoneCloneArt and
+Media/ZoneShapes/Forever/letters*.tga are derived from Blizzard's map art (zone and continent
+maps, edited and baked): they belong to Blizzard Entertainment and are NOT covered by the MIT
+licence above. Everything else is only names and file IDs of the game's own files.

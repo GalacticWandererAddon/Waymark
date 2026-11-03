@@ -1,0 +1,3 @@
+-- Battlefield Info is now Waymark. This folder only keeps the old saved variables
+-- (BattlefieldInfo.lua in WTF) loading, so Waymark can copy them over; it runs no code.
+-- Source: the Waymark repo's Migration\BattlefieldInfo; shipped by tools\build_era_release.py.

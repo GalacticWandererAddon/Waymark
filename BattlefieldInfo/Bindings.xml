@@ -1,0 +1,4 @@
+<Bindings>
+    <!-- Empty on purpose: the game reads Bindings.xml from every addon folder, and 1.x left one
+         here (BFI_* keys calling BattlefieldInfo_Key). Waymark has the bindings now. -->
+</Bindings>

@@ -1,10 +1,12 @@
-<p align="center"><img src=".github/logo.png" width="160" alt="Battlefield Info logo"></p>
+<p align="center"><img src=".github/logo.png" width="160" alt="Waymark logo"></p>
 
-# Battlefield Info
+# Waymark
+
+*Formerly Battlefield Info.*
 
 **The small Battlefield Map, turned into the map you actually play with.**
 
-Battlefield Info builds on the game's own Battlefield Map (Shift-M): the small map you can keep open while you play. It adds quests, townsfolk, rares, gathering nodes and exploration to it, and lets you size, zoom and style it however you like. It's an exploration aid in the classic spirit: it shows you the world and leaves the route to you.
+Waymark builds on the game's own Battlefield Map (Shift-M): the small map you can keep open while you play. It adds quests, townsfolk, rares, gathering nodes and exploration to it, and lets you size, zoom and style it however you like. It's an exploration aid in the classic spirit: it shows you the world and leaves the route to you.
 
 ## On the map
 
@@ -32,18 +34,15 @@ Battlefield Info builds on the game's own Battlefield Map (Shift-M): the small m
 - 
 ## Installing
 
-**From CurseForge:** install *Battlefield Info* with the CurseForge app. **PENDING REVIEW ON CURSE AS OF 10.27 8AM CET**
+**From CurseForge:** install *Waymark: Battlefield Map* with the CurseForge app (formerly Battlefield Info: existing installs update by themselves).
 
-**By hand:** download `BattlefieldInfo-Era-1.0.0.zip` from the [latest release](../../releases/latest) and unzip it into
-`World of Warcraft\_classic_era_\Interface\AddOns\`, so you end up with `AddOns\BattlefieldInfo\BattlefieldInfo.toc`.
+**By hand:** download `Waymark-Forever-1.2.0.zip` from the [latest release](../../releases/latest) and unzip it into
+`World of Warcraft\_forever_\Interface\AddOns\`, so you end up with `AddOns\Waymark\Waymark.toc` and `AddOns\BattlefieldInfo\`
+(a small helper that carries 1.x settings over; it can be deleted once each character has logged in with Waymark).
 
-**From git:** clone into the AddOns folder under the name `BattlefieldInfo`:
+**From git:** copy this repository's `Waymark` and `BattlefieldInfo` folders into your AddOns folder.
 
-```
-git clone https://github.com/GalacticWandererAddon/BattlefieldInfo.git BattlefieldInfo
-```
-
-Made for **Classic Era** (interface 11509).
+1.2 is made for **WoW Forever** (interface 16001). The last Classic Era build is [1.1.0](../../releases/tag/v1.1.0).
 
 ## Getting started
 
@@ -64,10 +63,10 @@ All optional; the map works without them:
 ## Bugs and ideas
 
 Open an [issue](../../issues). For a bug, say what you did, what you saw, and which other map or quest addons you run.
-`/bfi check` prints a self-test to chat that helps.
+`/waymark check` prints a self-test to chat that helps.
 
 ## Credits
 
-Cave and dungeon map data come from [OpenMap](https://www.curseforge.com/wow/addons/openmap) (MIT licence). Battlefield Info is MIT licensed. It contains no Blizzard art: everything you see from the game is drawn from your own client.
+Cave and dungeon map data come from [OpenMap](https://www.curseforge.com/wow/addons/openmap) (MIT licence). Waymark's code is MIT licensed. Almost everything you see from the game is drawn from your own client; the exceptions are the baked continent patches and sea lettering (Media/ZoneCloneArt, Media/ZoneShapes/Forever/letters), derived from Blizzard's map art and not covered by the MIT licence (see LICENSE).
 
 See [LICENSE](LICENSE) and [CHANGELOG](CHANGELOG.md).

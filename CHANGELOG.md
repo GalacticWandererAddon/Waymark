@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.2.0 (2026-11-03)
+
+**Battlefield Info is now Waymark.** Same addon, new name. Your settings, ink, notes, setups and key bindings come along by themselves.
+
+The download now has two folders: `Waymark` (the addon) and `BattlefieldInfo` (a small helper that carries your old settings over). The CurseForge app installs both. If you install by hand, extract both into `Interface\AddOns`; the helper replaces the old BattlefieldInfo folder's contents. Once each of your characters has logged in with Waymark, the helper can be deleted (it is safe to keep). `/waymark` opens the settings; `/bfi` still works. If you kept an old copy of Battlefield Info as well, Waymark turns it off for you and asks for a /reload.
+
+This release is for WoW Forever.
+
+New
+- The found notebook: an old wanderer's dungeon notes, with maps, routes and warnings, reached from the dungeon doors and the map's quill button. Write in it and draw on its maps yourself.
+- Map ink: a quill to draw your own marks, routes and notes on any zone or dungeon map.
+- Dungeon maps for every classic dungeon: bosses you can number and reorder, doors, chests and switches, quest monsters, and a light that guesses where you are inside from the monsters you meet.
+- Caves: quest pins and objective spots inside caves, a floor bar for caves with several levels, and a right-click out to the zone.
+- The continent map: zone maps joined into one painted continent, with coasts, seas and fading names.
+- Quest ground: objective areas drawn on the map, coloured by quest type; hover for the quest, right-click for its menu, arrows to lone spots and turn-ins.
+- Quest window: rewards and drop chances, a "Looking at" section for quests you don't have, one row per quest on givers with several, Shift-click links and Ctrl-click try-ons.
+- Quest progress on the game's own tooltips, and giver tooltips with each quest's kind in its colour (or Questie's tooltip, if you prefer).
+- Rares and chests from our own data, with their drops behind Shift; boss loot in a "What they carry" window.
+- Vendors and trainers: what they sell and what they teach.
+- "What you've learned": quest givers and monster spots learned as you play, shareable as a string.
+- Start here: presets that set up the whole map in one click (Creator's, Purist, Minimap Replacement, Minimalist), "(altered)" when you change one, and presets of your own.
+- Quick options panel beside the map; toggle buttons for quest areas and the quill; lock the map in place.
+- The big map key opens and closes the map; the map stays open through zone changes and reloads, and holds still on a flight path while you browse.
+
+Changes
+- Auto-zoom is off by default; its button is now "Keep centered".
+- Clearer settings: plain words, pages that read top to bottom, a welcome page.
+- One set of controls everywhere: left-click acts, right-click gives a menu, hold to move.
+
+Fixes and polish
+- Quest-provider chat spam on Classic Era gone.
+- Duplicate key binding warnings gone.
+- Many smaller tooltip, tracker and docked-minimap fixes.
+
 ## 1.1.0 (2026-10-27)
 
 New
