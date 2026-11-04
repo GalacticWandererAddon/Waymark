@@ -1,8 +1,8 @@
-## Interface: 16001
+## Interface: 11509
 ## Title: Waymark
 ## Notes: Quests, townsfolk, rares, gathering nodes, zoom and more for the Battlefield Map
 ## Version: 1.2.0
-## X-Edition: Forever
+## X-Edition: Era
 ## IconTexture: Interface\AddOns\Waymark\Media\Icon
 ## X-License: MIT
 ## SavedVariables: WaymarkDB, WaymarkQuestDB
@@ -16,14 +16,13 @@ Data\OpenMapDungeonMaps.lua
 Data\OpenMapCaves.lua
 Data\OpenMapCaveMinimap.lua
 Data\CaveMinimapExtra.lua
-Data\MapOverlays.lua
+Data\MapOverlaysEra.lua
 Data\ZoneShapes.lua
 Data\ZoneCut.lua
 Data\ZoneClone.lua
 Data\ZoneCloneArt.lua
 Data\MountainStamps.lua
 Data\CutRestore.lua
-Data\AutoTour.lua
 Data\ZoneCutBounds.lua
 Data\ZoneWash.lua
 Data\ZoneLevels.lua
@@ -36,17 +35,17 @@ Data\DungeonObjects.lua
 Data\DungeonWalk.lua
 Data\DungeonWhereLearned.lua
 Data\WorldQuests.lua
+Data\ForeverQuests.lua
 Data\VendorStock.lua
 Data\InkGlyphs.lua
 Data\InkScenes.lua
 Data\FoundNotes.lua
-Data\DungeonWatch.lua
+Data\NodeMarkCells.lua
 Client.lua
 Controls.lua
 Art.lua
 Fonts.lua
 Check.lua
-Tour.lua
 WorldQuests.lua
 QuestData.lua
 Pin.lua
@@ -67,6 +66,7 @@ Defaults.lua
 Town.lua
 Profiles.lua
 Options.lua
+Bridge.lua
 Keys.lua
 Data\PresetCreator.lua
 Data\PresetPurist.lua
@@ -75,6 +75,7 @@ Data\PresetMinimalist.lua
 Setups.lua
 Minimap.lua
 Coords.lua
+Clock.lua
 MapControls.lua
 ClickThrough.lua
 Detail.lua
@@ -83,8 +84,8 @@ Dungeon.lua
 Cave.lua
 Explore.lua
 Ink.lua
+BookOwn.lua
 Notebook.lua
-DungeonWatch.lua
 DungeonObjects.lua
 DungeonWhere.lua
 ZoneArt.lua
@@ -92,7 +93,7 @@ Style.lua
 ZoneName.lua
 Collapse.lua
 ClearView.lua
-CutEdit.lua
+SoftEdges.lua
+MapHour.lua
 Dock.lua
 Browse.lua
-DevBar.lua

@@ -365,11 +365,13 @@ function ns.RunCheck(noReload)
             pins[g] = (pins[g] or 0) + 1
         end)
         local shownEmpty = {}
-        for _, g in ipairs({ "questie", "turnins", "spots", "townsfolk", "rares", "gather", "party" }) do
+        for _, g in ipairs({ "questie", "turnins", "spots", "townsfolk", "rares", "party" }) do
             if ns.db[g] and ns.IsShown(g) and not pins[g] then shownEmpty[#shownEmpty + 1] = g end
         end
         Check("shown layers have pins (info)", true,
             #shownEmpty == 0 and "all have some" or ("none here for: " .. table.concat(shownEmpty, ", ")))
+
+        if ns.GatherInfo then Check("gathering nodes (info)", true, ns.GatherInfo()) end
 
         Check("sharp map art (info)", true, string.format("%d art pieces made sharp (%s, addon %s)",
             ns.sharpTiles or 0, ns.db.detail.sharpArt and "on" or "off",

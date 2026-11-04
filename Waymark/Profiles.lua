@@ -12,7 +12,7 @@ ns.PROFILE_LABELS = {
     gathering = "Gathering & farming",
 }
 
--- "gathering": two or more gathering nodes (GatherMate) within this many yards
+-- "gathering": two or more gathering nodes within this many yards
 local GATHER_YARDS, GATHER_MIN = 100, 2
 
 local inCombat = false

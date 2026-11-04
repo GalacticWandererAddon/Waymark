@@ -895,6 +895,7 @@ function ns.SetupCave(map)
 
     local canvas = map:GetCanvas()
     arrowHost = CreateFrame("Frame", nil, canvas)
+    arrowHost.bfiNoEdgeFade = true  -- (you: never faded away, SoftEdges.lua)
     arrowHost:SetAllPoints(canvas)
     arrowTex = arrowHost:CreateTexture(nil, "OVERLAY")
     SetArrowTexture(arrowTex)

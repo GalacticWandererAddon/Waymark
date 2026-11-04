@@ -8,6 +8,9 @@ ns.PRESET_SETTINGS["minimalist"] = {
 		alpha = 0.90000003576278687,
 		shown = false,
 	},
+	mapHour = {
+		on = false,
+	},
 	beasts = {
 		alpha = 0.85000002384185791,
 		shown = false,
@@ -522,7 +525,6 @@ ns.PRESET_SETTINGS["minimalist"] = {
 		iconSet = "modern",
 		scale = 0.65000003576278687,
 		shown = true,
-		source = "own",
 		tooltip = false,
 		trivial = false,
 		unitTips = true,

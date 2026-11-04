@@ -1,0 +1,8 @@
+## Interface: 11509
+## Title: Waymark Nodes |cff9d9d9d(data)|r
+## Notes: Herb, ore, treasure and fishing spots for Waymark's map. Loaded by Waymark when its layer is on.
+## LoadOnDemand: 1
+## X-License: GPLv3
+## IconTexture: Interface\AddOns\Waymark\Media\Icon
+
+Nodes.lua

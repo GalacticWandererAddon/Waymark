@@ -10,6 +10,19 @@ ns.FOREVER = interface >= 16000 and interface < 20000
 ns.CLASSIC_ERA = interface >= 11500 and interface < 12000
 ns.CLIENT = ns.FOREVER and "forever" or ns.CLASSIC_ERA and "classic era" or "other"
 
+-- The game's own objective markers and blue quest areas are Forever's only (the map's
+-- providers aren't attached elsewhere, BattlefieldInfo.lua): their settings, buttons
+-- and preset rows don't show there. Their saved values are left alone.
+function ns.NoGameLayer(group)
+    return not ns.FOREVER and (group == "objectives" or group == "areas")
+end
+function ns.DropNoGameLayers(list, field)
+    for i = #list, 1, -1 do
+        if ns.NoGameLayer(list[i][field]) then table.remove(list, i) end
+    end
+    return list
+end
+
 -- Which edition this copy is, from the TOC's X-Edition: "Forever" (branch main; also
 -- run on the stand-ins for testing) or "Era" (the frozen Classic Era release, branch
 -- era, in F:\AddonWorkspace\BattlefieldInfo-Era). Shown by /bfi check.

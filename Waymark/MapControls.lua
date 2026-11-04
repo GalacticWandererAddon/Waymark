@@ -497,7 +497,7 @@ end
 
 -- three or more of our quest pins close to the player counts as a cluster
 local CLUSTER_RADIUS, CLUSTER_COUNT = 0.06, 3
--- ... and so do two or more gathering nodes within 80 yards (GatherMate's data)
+-- ... and so do two or more gathering nodes within 80 yards
 local NODE_YARDS, NODE_MIN = 80, 2
 local function NearCluster(map, px, py)
     local n = 0
@@ -1505,7 +1505,9 @@ end
 -- [key] = { its point, the map's nearest corner, x, y } (in its own units), so
 -- it stays put on the big map too; 5th field true: dropped away from the map,
 -- so on the screen's nearest corner instead (still shown with the map). A moved button leaves the row by the X; the
--- others close up (Options InRow).
+-- others close up (Options InRow). A toggle button held with Shift leaves its strip and goes alone
+-- (buttonPos["toggle:<id>"]; the row closes up), and held again it moves alone, Shift or not;
+-- right-click while holding slots it back in the row.
 local HOLD = 0.4        -- seconds held before it moves
 local OFF_MAP = 30      -- dropped further than this outside the map: kept on the screen, not the map
 local held, dragging    -- the button pressed; the frame being moved
@@ -1630,6 +1632,7 @@ local function HoldUpdate()
     if held and left then
         if GetTime() - held.bfiDownAt >= HOLD then
             local f = held.bfiMoveTarget
+            if held.bfiMoveKey and f ~= held and (IsShiftKeyDown() or ns.ButtonMoved(held)) then f = held end
             local px, py = PointXY(f, MovePoint(f))
             if not px then return end
             -- (from where it was pressed: the mouse may have moved while held)

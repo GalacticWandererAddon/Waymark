@@ -26,7 +26,3 @@ Libs/LibStub is in the public domain.
 Media/Fonts are under their own licences (SIL OFL 1.1 or Apache 2.0): see LICENSES/.
 World of Warcraft and its art belong to Blizzard Entertainment; this addon contains none of
 its art, only names and file IDs of the game's own files.
-World of Warcraft and its art belong to Blizzard Entertainment. Media/ZoneCloneArt and
-Media/ZoneShapes/Forever/letters*.tga are derived from Blizzard's map art (zone and continent
-maps, edited and baked): they belong to Blizzard Entertainment and are NOT covered by the MIT
-licence above. Everything else is only names and file IDs of the game's own files.

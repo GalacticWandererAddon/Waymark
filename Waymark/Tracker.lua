@@ -2872,23 +2872,31 @@ local function BuildQuestWindow()
     local topArt = top:CreateTexture(nil, "BORDER")
     topArt:SetAllPoints()
     ns.SetArt(topArt, "QuestLog-reward-top-frame")
-    -- Forever's red X (the map's own close X art, MapControls; Era: ours), on the
-    -- window's top-right corner, over its frame, as Forever's windows have it (inside
-    -- the top bar it looked off, the user); the button a little bigger than its art
-    local close = CreateFrame("Button", nil, top)
-    close:SetSize(28, 28)
-    close:SetPoint("CENTER", qw, "TOPRIGHT", -10, -10)
-    close:SetFrameLevel(qw:GetFrameLevel() + 25)  -- (over the frame's art, at + 20)
-    local xs = ns.UsingSubstitutes and ns.UsingSubstitutes() and 15 or 21
-    for _, s in ipairs({ { "Normal", "redbutton-exit-2x" }, { "Pushed", "redbutton-exit-pressed-2x" },
-                         { "Highlight", "redbutton-highlight-2x" } }) do
-        local tex = close:CreateTexture(nil, s[1] == "Highlight" and "HIGHLIGHT" or "ARTWORK")
-        ns.SetArt(tex, s[2])
-        close["Set" .. s[1] .. "Texture"](close, tex)
-        -- (sized after: setting it can stretch it over the button)
-        tex:ClearAllPoints()
-        tex:SetSize(xs, xs)
-        tex:SetPoint("CENTER")
+    -- Era's art: the old "Close" button, top left of the bar. Forever: its red X (the
+    -- map's own close X art, MapControls; dev art gives it on Era too), on the window's
+    -- top-right corner, over its frame, as Forever's windows have it (inside the top
+    -- bar it looked off, the user); the button a little bigger than its art
+    local close
+    if ns.UsingSubstitutes and ns.UsingSubstitutes() then
+        close = CreateFrame("Button", nil, top, "UIPanelButtonTemplate")
+        close:SetSize(90, 22)
+        close:SetPoint("LEFT", 11, 4)
+        close:SetText(CLOSE or "Close")
+    else
+        close = CreateFrame("Button", nil, top)
+        close:SetSize(28, 28)
+        close:SetPoint("CENTER", qw, "TOPRIGHT", -10, -10)
+        close:SetFrameLevel(qw:GetFrameLevel() + 25)  -- (over the frame's art, at + 20)
+        for _, s in ipairs({ { "Normal", "redbutton-exit-2x" }, { "Pushed", "redbutton-exit-pressed-2x" },
+                             { "Highlight", "redbutton-highlight-2x" } }) do
+            local tex = close:CreateTexture(nil, s[1] == "Highlight" and "HIGHLIGHT" or "ARTWORK")
+            ns.SetArt(tex, s[2])
+            close["Set" .. s[1] .. "Texture"](close, tex)
+            -- (sized after: setting it can stretch it over the button)
+            tex:ClearAllPoints()
+            tex:SetSize(21, 21)
+            tex:SetPoint("CENTER")
+        end
     end
     close:SetScript("OnClick", function() qw:Hide() end)
     qw.close = close

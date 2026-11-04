@@ -1493,7 +1493,8 @@ local HEADER_STYLES = {
 }
 
 -- Start here's quest help: the quest layers in four steps (the Quests page has each)
-local QUEST_LAYERS = { "questie", "turnins", "spots", "objectives", "areas", "learned", "tracker" }
+local QUEST_LAYERS = ns.FOREVER and { "questie", "turnins", "spots", "objectives", "areas", "learned", "tracker" }
+    or { "questie", "turnins", "spots", "learned", "tracker" }
 local QUEST_HELP = {
     { "none", "None", {} },
     { "givers", "Quest givers", { questie = true, objectives = true, areas = true, learned = true } },
@@ -1928,7 +1929,7 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
     end
     w:Header("About")
     w:Note("The list on the left has three groups: The window, Getting around and What's shown. Click a group's name for its main switches on one page. Hover any setting for what it does; Show advanced settings, at the bottom, adds the fine-tuning to every page.")
-    w:Note("Minimap and dungeon map data: OpenMap (MIT licence, see LICENSES). QuestieDB, RareScanner and GatherMate2 data are read from those addons while the game runs; nothing of theirs is copied into this addon. Where Questie is installed, its quest icons are used.")
+    w:Note("Minimap and dungeon map data: OpenMap (MIT licence, see LICENSES). QuestieDB, RareScanner and GatherMate2 data are read from those addons while the game runs; nothing of theirs is copied into this addon. Where Questie is installed, its quest icons are used. Gathering spots: the Waymark Nodes addon beside this one (GPL v3, from the CMaNGOS database).")
 end }
 
 local function Percent(v) return string.format("%d%%", v * 100 + 0.5) end
@@ -1985,6 +1986,20 @@ PAGES[#PAGES + 1] = { key = "window", label = "Size, shape & fade", build = func
     a:Button("Reset shape to defaults", function() ns.ConfirmResetGroup("shape") end)
     a:Advanced()
     a:Requires()
+    a:Header("Soft edges")
+    a:Check("Fade the map into the world at its edges", "softEdges", "on")
+    a:Tip("The border goes while this is on. Not on continents, or docked over the minimap. With clear view's zone cut on, only once you've zoomed in.")
+    a:Requires("softEdges", "on")
+    a:Choice("Shape", "softEdges", "shape", {
+        { "square", "Soft square" }, { "round", "Round corners" }, { "oval", "Oval" }, { "worn", "Worn edge" },
+    })
+    a:Choice("Reach", "softEdges", "reach", { { 1, "Small" }, { 2, "Medium" }, { 3, "Large" } })
+    a:Check("Pins fade at the edge too", "softEdges", "pins")
+    a:Tip("Off: pins stay sharp right up to the edge.")
+    a:Requires()
+    a:Header("Time of day")
+    a:Check("The map follows the hour", "mapHour", "on")
+    a:Tip("Zone maps warm at dawn and dusk and turn moonlit blue at night, with a lamp round you in the dark. Goes by the clock's time, from Time from on the Clock settings.")
 
     local b = Column(p, HALF, 0, HALF)
     b:Header("Placement")
@@ -2160,14 +2175,14 @@ local SHOWN_SWITCHES = {
     { "Line to target", "A line from you to a pin.", "built in", "line", "shown", "group" },
     { "Rares & treasures", "Rare mobs, treasures and events.", "RareScanner", "rares", "shown", "rares", "RareScanner" },
     { "Rares & chests", "Rares, rare elites and treasure chests.", "built in", "wilds", "shown", "rares" },
-    { "Gathering nodes", "Herbs, ore, fish and more.", "GatherMate2", "gather", "shown", "rares", "GatherMate2" },
+    { "Gathering nodes", "Herbs, ore, fish and more.", "", "gather", "shown", "rares" },
     { "Your ink on the world map", "Routes, marks and notes you drew.", "built in", "ink", "shown", "ink" },
 }
 
 PAGES[#PAGES + 1] = { key = "shownhome", label = "What's shown", summary = true, build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Layers")
-    for _, f in ipairs(SHOWN_SWITCHES) do a:Feature(f) end
+    for _, f in ipairs(ns.DropNoGameLayers(SHOWN_SWITCHES, 4)) do a:Feature(f) end
 
     local b = Column(p, HALF, 0, HALF)
     b:Header("All pins")
@@ -2209,7 +2224,7 @@ PAGES[#PAGES + 1] = { key = "browse", label = "Other zones & continent", build =
     a:Check("Zone names under the mouse", "browse", "overviewNames")
     a:Tip("The zone's name and levels as you move the mouse over the continent or the world.")
     a:Check("Quest givers on the continent", "browse", "continentGivers")
-    a:Tip("Every zone's quest givers on the continent map, as your quest giver settings show them.")
+    a:Tip("Every zone's quest givers on the continent map, as your quest giver settings show them. Low-level (grey) ones stay on the zone maps.")
     a:Check("Sharp zone maps on the continent", "browse", "zoneArt")
     a:Tip("As you zoom in on a continent, each zone's own sharp map fades in over the blocky continent picture.")
     a:Requires("browse", "zoneArt")
@@ -2261,7 +2276,7 @@ PAGES[#PAGES + 1] = { key = "behaviour", label = "Zoom, centring & detail", buil
     b:Tip("Zooms in when you reach a cluster of objectives or nodes and back out when you leave; it waits while you've panned or zoomed yourself.")
     b:Requires("zoom", "autoZoom")
     b:Check("Clusters of quest objectives", "zoom", "nearSpots")
-    b:Check("Gathering nodes (GatherMate)", "zoom", "nearNodes")
+    b:Check("Gathering nodes", "zoom", "nearNodes")
     b:Slider("How close", 0.5, 16, 0.1, "zoom", "clusterX", HowClose)
     b:Tip("", HOW_CLOSE_TIP)
     b:Requires()
@@ -2307,7 +2322,7 @@ local function ViewPinSizes(a, view, where)
         { "rares", "Rares & treasures" }, { "gather", "Gathering nodes" },
         { "dungeons", "Dungeon entrances" },
     }
-    for _, l in ipairs(LAYERS) do
+    for _, l in ipairs(ns.DropNoGameLayers(LAYERS, 1)) do
         a:SliderWith(l[2], 0.2, 3, 0.05,
             function() return ns.TownPinSize(l[1], view) end,
             function(v)
@@ -2405,7 +2420,7 @@ PAGES[#PAGES + 1] = { key = "town", label = "Town view", build = function(p)
     b:Button("This place is a town", function() ns.MarkTown(true) end)
     b:Button("This place is not a town", function() ns.MarkTown(false) end)
     b:Button("Back to automatic", function() ns.MarkTown(nil) end)
-    b:Note("A town is where two kinds of service NPC (inn, repair, mail, flight, stable, bank, auction) stand within 60 yards; its sub-zone is then remembered. A place you mark wins. /waymark town shows each step.")
+    b:Note("A town is where two kinds of service NPC (inn, repair, mail, flight, stable, bank, auction) stand within 60 yards; its sub-zone is then remembered. A place you mark wins.")
     b:Button("Forget remembered towns", function() ns.ForgetLearnedTowns() end)
 end }
 
@@ -2556,7 +2571,8 @@ PAGES[#PAGES + 1] = { key = "controls", label = "Buttons & coordinates", build =
     local l = Column(p, 0, nil, HALF, true)
     local r = Column(p, HALF, nil, HALF, true)
     -- which buttons, under where each layer comes from (t[6]; ours when none)
-    local ORDER = { "QuestieDB", "The game's own", "Other addons", "Waymark" }
+    local ORDER = ns.FOREVER and { "QuestieDB", "The game's own", "Other addons", "Waymark" }
+        or { "QuestieDB", "Other addons", "Waymark" }
     l:Header("Which buttons")
     l:Requires(nil, "quickToggles")
     for _, source in ipairs(ORDER) do
@@ -2628,6 +2644,51 @@ PAGES[#PAGES + 1] = { key = "controls", label = "Buttons & coordinates", build =
     c:Tip("A dark outline round the letters: easier to read without the backing.")
     c:Advanced()
     c:Requires()
+
+    c:Header("Clock")
+    c:Check("Show a clock on the map", "clock", "shown")
+    c:Check("Disable the game's minimap clock", "clock", "hideGame")
+    c:Requires("clock", "shown")
+    c:Choice("Look", "clock", "look", {
+        { "plain", "Plain digits" }, { "head", "In the header" }, { "sun", "Moon dial" }, { "arc", "The day's arc" },
+        { "stamp", "Stamp" }, { "ink", "In ink" },
+    })
+    c:Tip("In the header: beside the zone's name, while the header shows. In ink: the hour in words, to the nearest 5 minutes.", "Drag the clock to move it. Right-click it to detach it from the map, or anchor it again.")
+    c:Choice("Time from", "clock", "source", { { "realm", "The realm" }, { "computer", "My computer" } })
+    c:Check("24-hour time", "clock", "h24")
+    c:Choice("Show", "clock", "show", { { "always", "Always" }, { "hover", "With the mouse on the map" } })
+    c:Slider("Size", 70, 150, 5, "clock", "size", "%d%%")
+    c:Slider("Opacity", 20, 100, 5, "clock", "alpha", "%d%%")
+    c:Requires(function() return ns.IsShown("clock") and (ns.db.clock.look == "sun" or ns.db.clock.look == "arc") end)
+    c:Check("Paper behind the clock", "clock", "plate")
+    c:Check("Hide the digits", "clock", "hideDigits")
+    c:Tip("The time is still in the clock's tooltip. Shown, drag them on the map to slide them round the art.")
+    c:Requires(function()
+        local l = ns.db.clock.look
+        return ns.IsShown("clock") and (l == "sun" or l == "arc" or l == "stamp")
+    end)
+    c:Slider("Digits: size", 70, 200, 5, "clock", "digitSize", "%d%%")
+    c:Slider("Digits: paper behind them", 0, 100, 5, "clock", "digitBack", "%d%%", "none")
+    c:Tip("For busy ground. Only where the digits sit straight on the map.")
+    c:Check("Digits: bolder", "clock", "digitBold")
+    c:Requires(function() return ns.IsShown("clock") and ns.db.clock.look == "plain" end)
+    c:Choice("Font", "clock", "font", ns.FontChoices)
+    c:Choice("Digit colour", "clock", "tint", { { "parchment", "Parchment" }, { "gold", "Gold" }, { "white", "White" } })
+    c:Slider("Background", 0, 100, 5, "clock", "backing", "%d%%", "none")
+    c:Choice("Frame", "clock", "frame", {
+        { "none", "None" }, { "dialog", "Classic dialog" }, { "gold", "Gold" },
+        { "tooltip", "Tooltip" }, { "wood", "Wood" }, { "line", "Thin line" },
+    })
+    c:Choice("Frame colour", "clock", "frameColor", {
+        { "natural", "As drawn" }, { "gold", "Gold" }, { "bronze", "Bronze" },
+        { "silver", "Silver" }, { "dark", "Dark" }, { "class", "My class colour" },
+    })
+    c:Slider("Frame thickness", 0.5, 2, 0.05, "clock", "frameSize", "%.2fx")
+    c:Slider("Distance from the digits", -12, 20, 1, "clock", "frameGap", "%d px")
+    c:Requires("clock", "shown")
+    c:Button("Reset clock position", function() ns.ResetClock() end)
+    c:Tip("Puts it under the minimap, detached from the map, with the digits back under the art.")
+    c:Requires()
 end }
 
 PAGES[#PAGES + 1] = { key = "keys", label = "Key bindings", build = function(p)
@@ -2651,9 +2712,9 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Quest data")
     a:Choice("Quests from", "questie", "source", {
-        { "own", "Waymark's own" }, { "questiedb", "QuestieDB" },
+        { "own", "Waymark's own" }, { "both", "Waymark's, filled from QuestieDB" }, { "questiedb", "QuestieDB" },
     })
-    a:Tip("Waymark's own: quest givers, turn-ins, objectives and quest ground from data built into the addon, no other addon needed. QuestieDB: read from QuestieDB where it's installed. Townsfolk follow this too. A change takes a /reload.")
+    a:Tip("Waymark's own: quest givers, turn-ins, objectives and quest ground from data built into the addon, no other addon needed. Filled from QuestieDB: ours first, QuestieDB for what ours lacks. QuestieDB: read from QuestieDB alone. Both need QuestieDB installed. Townsfolk follow this too. A change takes a /reload.")
     a:Button("Reload now", function() ReloadUI() end)
     a:Header("Quest givers & turn-ins", ns.ToggleIcon("questie"))
     a:Check("Show quest givers", "questie", "shown")
@@ -2677,7 +2738,7 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     })
     a:Tip("Questie's: its round icons where Questie is installed; without it, the modern \"!\" and \"?\".")
     a:Check(Needs("Questie's tooltip", "Questie"), "questie", "tooltip")
-    a:Tip("Hovering a quest giver or turn-in shows Questie's own tooltip (its tooltip settings apply) instead of Waymark's. Objective spots use Questie's either way.")
+    a:Tip("Every quest tooltip on the map, givers, turn-ins, objective spots and quest ground, shows Questie's own (its tooltip settings apply) instead of Waymark's.")
     a:Check("Quest progress on tooltips", "questie", "unitTips")
     a:Tip("Hovering a monster, an item or a thing in the world your quests want: the quest and how far along that objective is (Kobold Vermin slain: 3/10). Where Questie is loaded, Questie's own lines do this instead.")
     a:Requires()
@@ -2720,28 +2781,31 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     a:Requires()
     a:Header("Pin filters")
     a:Check("Hide quest pins outside the zone", "outside", "hideQuests")
-    a:Tip("The zone map shows bits of the zones around it; quest pins that fall there are hidden. The blue quest areas are one picture, so they stay.")
+    a:Tip("The zone map shows bits of the zones around it; quest pins that fall there are hidden." .. (ns.FOREVER and " The blue quest areas are one picture, so they stay." or ""))
     a:Check("Objectives of tracked quests only", "outside", "trackedOnly")
-    a:Tip("Objective spots and the game's objective markers only for the quests you track.")
+    a:Tip(ns.FOREVER and "Objective spots and the game's objective markers only for the quests you track." or "Objective spots only for the quests you track.")
     a:Note("Hiding pins in unexplored areas is on the Exploration page.")
 
     local b = Column(p, HALF, 0, HALF)
-    b:Header("Quest objectives (the game's)", ns.ToggleIcon("questMarkers"))
-    b:Check("Show", "objectives", "shown")
-    b:Requires("objectives", "shown")
-    b:Slider("Opacity", 0, 1, 0.05, "objectives", "alpha")
-    b:Slider("Size", 0.2, 2, 0.05, "objectives", "scale")
-    b:Requires()
-    b:Header("Quest areas (blue zones)", ns.ToggleIcon("questAreas"))
-    b:Check("Show", "areas", "shown")
-    b:Requires("areas", "shown")
-    b:Slider("Opacity", 0, 1, 0.05, "areas", "alpha")
-    b:Requires()
+    if ns.FOREVER then
+        b:Header("Quest objectives (the game's)", ns.ToggleIcon("questMarkers"))
+        b:Check("Show", "objectives", "shown")
+        b:Requires("objectives", "shown")
+        b:Slider("Opacity", 0, 1, 0.05, "objectives", "alpha")
+        b:Slider("Size", 0.2, 2, 0.05, "objectives", "scale")
+        b:Requires()
+        b:Header("Quest areas (blue zones)", ns.ToggleIcon("questAreas"))
+        b:Check("Show", "areas", "shown")
+        b:Requires("areas", "shown")
+        b:Slider("Opacity", 0, 1, 0.05, "areas", "alpha")
+        b:Requires()
+    end
     b:Header("Learned quest givers")
     b:Check("Show", "learned", "shown")
     -- (the quest data in use, by name: "Quests from" above; a change takes a /reload,
     -- which builds this page again)
-    local data = ns.QuestSourceName and ns.QuestSourceName() == "QuestieDB" and "QuestieDB" or "Waymark's data"
+    local from = ns.QuestSourceName and ns.QuestSourceName()
+    local data = from == "QuestieDB" and "QuestieDB" or from == "both" and "Waymark's data and QuestieDB" or "Waymark's data"
     b:Tip("Quest givers your characters have talked to, remembered with where they stand. Covers quests " .. data .. " lacks, such as Forever's new ones.")
     b:Requires("learned", "shown")
     b:Choice("Which quests", "learned", "mode", {
@@ -2946,7 +3010,7 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     a:Tip("Click an objective spot, a turn-in or a quest's ground: its page opens. (Lighting a spot's quest is then in its right-click menu.)")
     -- (with the window's own settings, not its buttons: moved here 2026-11-03)
     a:Check("Light up its spots and areas while open", "questlog", "glow")
-    a:Tip("As hovering it in the tracker does: its objective spots and turn-in glow, and with the Quest areas layer on, its areas.")
+    a:Tip("As hovering it in the tracker does: its objective spots and turn-in glow" .. (ns.FOREVER and ", and with the Quest areas layer on, its areas." or "."))
     a:Check("Open it with the quest log key", "questlog", "keyL")
     a:Tip("While the map shows, your quest log key (L) opens this window instead of the game's quest log.")
     a:Check("Replace the game's quest log", "questlog", "replaceGame")
@@ -3115,7 +3179,24 @@ PAGES[#PAGES + 1] = { key = "people", label = "Townsfolk", build = function(p)
     a:Requires("townsfolk", "shown")
     a:Slider("Opacity", 0, 1, 0.05, "townsfolk", "alpha")
     a:Slider("Size", 0.2, 2, 0.05, "townsfolk", "scale")
+    a:Choice("Spirit healers", "townsfolk", "graveMark", {
+        { "stone", "Headstone" }, { "game", "The game's icon" },
+    })
     a:Requires()
+    if ns.SetupTransports then   -- (left out of releases for now: toolsuild_era_release.py)
+        a:Header("Boats, zeppelins & the tram")
+        a:Check("Show", "transports", "shown")
+        a:Tip("Inked at each pier, tower and tram stop. Hover one to see where it goes.")
+        a:Requires("transports", "shown")
+        a:Check("Boats", "transports", "boats")
+        a:Check("Zeppelins", "transports", "zeppelins")
+        a:Check("The tram", "transports", "trams")
+        a:Check("On the continent map too", "transports", "continent")
+        a:Choice("Boat", "transports", "boat", { { "cog", "Cog" }, { "woodcut", "Woodcut" } })
+        a:Slider("Opacity", 0, 1, 0.05, "transports", "alpha")
+        a:Slider("Size", 0.2, 2, 0.05, "transports", "scale")
+        a:Requires()
+    end
     -- which ones: trainers, services and vendors side by side (a checklist)
     a:Header("Which townsfolk")
     a:Requires(function() return ns.db.townsfolk.shown end)
@@ -3193,7 +3274,7 @@ PAGES[#PAGES + 1] = { key = "group", label = "You & your group", build = functio
     b:Requires()
 end }
 
--- what other addons put on the map: RareScanner, GatherMate2 (TomTom's waypoints: left
+-- rares, and gathering nodes (TomTom's waypoints: left
 -- off the pages until they show on this map; Waypoints.lua and its settings are kept)
 PAGES[#PAGES + 1] = { key = "rares", label = "Rares & gathering nodes", build = function(p)
     local a = Column(p, 0, 0, HALF)
@@ -3230,14 +3311,35 @@ PAGES[#PAGES + 1] = { key = "rares", label = "Rares & gathering nodes", build = 
     a:Tip("A boss's own drops with their chances, greens and better first, then its quest items. Not the world drops every monster shares.")
 
     local b = Column(p, HALF, 0, HALF)
-    b:Header(Needs("Gathering nodes", "GatherMate2"), ns.ToggleIcon("gather"))
+    b:Header("Gathering nodes", ns.ToggleIcon("gather"))
     b:Check("Show", "gather", "shown")
     b:Requires("gather", "shown")
     b:Slider("Opacity", 0, 1, 0.05, "gather", "alpha")
     b:Slider("Size", 0.2, 2, 0.05, "gather", "scale")
-    b:Check("Follow GatherMate's own rules", "gather", "follow")
-    b:Tip("On: a type also needs GatherMate to show it (e.g. only with the profession). GatherMate's per-node filters always apply.")
-    b:SubHeader("Node types")   -- (part of GatherMate's section, not one of its own)
+    if ns.AddonPresent("GatherMate2") then
+        b:Choice("Nodes from", "gather", "source", {
+            { "gathermate", "GatherMate2" }, { "own", "Waymark" },
+        })
+        b:Tip("GatherMate2: its database and its node filters, shown on this map and the minimap. Waymark: our own data, with what you gather added.")
+        b:Choice("Look", "gather", "look", {
+            { "ink", "Waymark's marks" }, { "gathermate", "GatherMate2's icons" },
+        })
+        b:Tip("Waymark's marks: a small picture for each spot: the herb's own plant, a lump of ore, a chest, a fish. GatherMate2's icons: only on its nodes.")
+        b:Check("Follow GatherMate's own rules", "gather", "follow")
+        b:Tip("With its nodes on: a type also needs GatherMate to show it (e.g. only with the profession).")
+    else
+        b:Note("With GatherMate2 installed, you can show its nodes here instead of ours.")
+    end
+    b:Check("Only what I can gather", "gather", "canGather")
+    b:Tip("Hides herbs and ore your skill can't gather yet. Without the profession, none of its nodes show.")
+    b:Check("Colour by skill-up chance", "gather", "tint")
+    b:Tip("Marks take the trade skill colours: orange, yellow, green and grey by your skill, red when it's too low.")
+    b:Check("Fade spots I've never gathered", "gather", "fadeUnseen")
+    b:Check("Show on the minimap", "gather", "minimap")
+    b:Tip("The nearest spots, on the game's minimap. With the map as your minimap, they're on it anyway.")
+    b:Slider("Ring distance", 50, 240, 5, "gather", "ringYards", "%d yards")
+    b:Tip("While you track herbs or minerals, spots this near turn into rings so the game's own blip shows inside. An empty ring: nothing there now.")
+    b:SubHeader("Node types")   -- (part of this section, not one of its own)
     for _, t in ipairs(ns.GATHER_TYPES or {}) do
         b:CheckWith(t.label,
             function() return ns.db.gather.types[t.key] end,
@@ -3245,6 +3347,18 @@ PAGES[#PAGES + 1] = { key = "rares", label = "Rares & gathering nodes", build = 
                 ns.db.gather.types[t.key] = v or nil
                 ns.OnSettingChanged("gather", "types")
             end)
+    end
+    b:Button("Show hidden node types again", function()
+        wipe(ns.db.gather.off)
+        ns.OnSettingChanged("gather", "off")
+    end)
+    b:Tip("Right-clicking a mark hides that kind of node. This brings them all back.")
+    if ns.AddonPresent("GatherMate2") then
+        b:Button("Copy my GatherMate2 nodes", function()
+            local n = ns.ImportGatherMate and ns.ImportGatherMate()
+            print("Waymark: " .. tostring(n or 0) .. " GatherMate2 nodes copied to your own spots.")
+        end)
+        b:Tip("Adds the nodes in your GatherMate2 database to your own spots. Copy once: another copy counts them again.")
     end
     b:Requires()
 end }
@@ -3263,8 +3377,22 @@ PAGES[#PAGES + 1] = { key = "ink", label = "Map ink & notes", build = function(p
     a:Requires()
     a:Button("Take up the quill", function() if ns.QuillToggle then ns.QuillToggle() end end)
     a:Tip("The quill's bar: draw routes and marks and write notes on the map, as in the found notes.", "Also: Shift-click the ink button on the map, or /waymark ink. Again: put it down.")
-    a:Header("Found notes")
-    a:Button("Open the notebook", function() if ns.ToggleNotebook then ns.ToggleNotebook() end end)
+    a:Header("The book")
+    a:Choice("What's in the book", "notebook", "kind", {
+        { "story", "The wanderer's story" }, { "notes", "Notes only" }, { "blank", "Blank journal" },
+    })
+    a:Tip("Notes only: the dungeon tips, maps and quest lines, without the story. Blank: empty pages of your own. Changing it hides pages, it deletes nothing.")
+    a:CheckWith("Book button on the map",
+        function() return ns.db.toggles.list.book end,
+        function(v)
+            ns.db.toggles.list.book = v and true or false
+            ns.OnSettingChanged("toggles", "list")
+        end, true, ns.MEDIA .. "BookIcon")
+    a:Tip("Click it to open the book, right-click for more. There's also a key: Esc > Options > Keybindings > AddOns > Waymark.")
+    a:Button("Open the book", function() if ns.ToggleNotebook then ns.ToggleNotebook() end end)
+    a:Button("Reset the whole book", function() StaticPopup_Show("WAYMARK_BOOK_RESET") end)
+    a:Button("Bring back what was reset", function() if ns.BookBack then ns.BookBack(true) end end)
+    a:Tip("A reset sets your words and ink aside. Nothing is deleted. To reset one page, use the quill's bar.")
     a:Tip("Pages someone left about the dungeons. Their numbered rings show on the dungeon maps.", "Click the stamp in a dungeon map's corner for its page. /waymark notes opens the book too.")
 end }
 
@@ -3384,7 +3512,7 @@ local PROFILE_WHEN = {
     battleground = "Inside a battleground or an arena.",
     dungeon = "Inside a dungeon or a raid.",
     city = "In a capital, or a town while town view is on (else where you rest).",
-    gathering = "Out in the world with two or more gathering nodes (GatherMate2) within 100 yards.",
+    gathering = "Out in the world with two or more gathering nodes within 100 yards.",
 }
 
 -- One table: the layers down the left, a column per context (Show / Hide / -
@@ -3397,8 +3525,9 @@ PAGES[#PAGES + 1] = { key = "profiles", label = "Context profiles", build = func
         { "townsfolk", "Townsfolk" }, { "dungeons", "Dungeon entrances" }, { "party", "Player & group" },
         { "rares", "Rares & treasures" }, { "gather", "Gathering nodes" }, { "line", "Line to target" },
         { "explore", "Unexplored areas" }, { "detail", "Close-up detail" }, { "zoneName", "Header" },
-        { "coords", "Coordinates" },
+        { "coords", "Coordinates" }, { "clock", "Clock" },
     }
+    ns.DropNoGameLayers(LAYERS, 1)
     local order = ns.PROFILE_ORDER or {}
     local w = Column(p, 0, 0, CONTENT_W)
     w:Note("While a context is on, its column overrides the layers: Show or Hide, or - to leave the layer as you set it. Where two contexts are on, the one further left wins. Your own settings aren't changed.")
@@ -3653,6 +3782,11 @@ local function SizeChoices(lo, hi, default)
 end
 
 -- work in progress, kept apart from the finished settings
+-- Waymark: Combat's page (its own addon: it fills the page in, Combat\Waymark_Combat\Menus.lua)
+PAGES[#PAGES + 1] = { key = "combat", label = "Combat bars", build = function(p)
+    WaymarkCombat.BuildSettings(Column(p, 0, 0, CONTENT_W))
+end }
+
 PAGES[#PAGES + 1] = { key = "dev", label = "Dev", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("AI-upscaled map art")
@@ -3662,6 +3796,8 @@ PAGES[#PAGES + 1] = { key = "dev", label = "Dev", build = function(p)
         return ns.MapArtAvailable and ns.MapArtAvailable() and "Installed: Waymark_MapArt"
             or "Not installed: the Waymark_MapArt folder"
     end)
+
+    if ns.MapLifeSettings then ns.MapLifeSettings(a) end  -- (DevMapLife.lua: not in releases)
 
     -- every command (DevBar.lua's list), a section a group, in the one column: two columns' buttons
     -- landed on top of each other where the window is narrow
@@ -3675,6 +3811,13 @@ PAGES[#PAGES + 1] = { key = "dev", label = "Dev", build = function(p)
     end
     a:Note("Also: /waymark quest <id> (its box is on the command bar), /waymark <number> (the map's scale, 0.3-3).")
 end }
+
+-- the Lab's pages (Lab\Lab.lua, never in a release): what's held for 1.3, in one place
+for _, page in ipairs({ { "lab", "What's in here" }, { "labminimap", "Minimap look" }, { "labhorizon", "The Horizon" }, { "labframes", "Frames & themes" } }) do
+    PAGES[#PAGES + 1] = { key = page[1], label = page[2], build = function(p)
+        ns.LabPage(page[1], Column(p, 0, 0, CONTENT_W))
+    end }
+end
 
 -- Panel -------------------------------------------------------------------
 
@@ -4303,9 +4446,18 @@ local function BuildPanel()
         "#The window>windowhome", "window", "clearview", "minimap", "header", "controls",
         "#Getting around>aroundhome", "behaviour", "browse", "town", "city", "dungeon", "explore",
         "#What's shown>shownhome", "quests", "tracker", "questlog", "people", "group", "rares", "ink",
-        "#Your setup", "profiles", "setups", "keys",
-        "#Development", "dev",
+        "#Your setup", "profiles", "setups", "keys", "combat",
     }
+    -- (Combat's page only with its addon switched on, the Lab's only where Lab\ is, Dev only where
+    -- DevBar.lua is: releases leave it out)
+    for i = #PAGES, 1, -1 do
+        local key = PAGES[i].key
+        if (key == "combat" and not WaymarkCombat) or (key == "dev" and not ns.DevCommands) or (key:find("^lab") and not ns.LabPage) then table.remove(PAGES, i) end
+    end
+    if ns.DevCommands then NAV[#NAV + 1] = "#Development"; NAV[#NAV + 1] = "dev" end
+    if ns.LabPage then
+        for _, key in ipairs({ "#Lab, for 1.3", "lab", "labminimap", "labhorizon", "labframes" }) do NAV[#NAV + 1] = key end
+    end
     local byKey = {}
     for _, def in ipairs(PAGES) do byKey[def.key] = def end
 
@@ -4870,6 +5022,7 @@ local function BuildQuickPanel(map)
     local function Marks(givers, turnins, spots)
         local want = { questie = givers, learned = givers, objectives = givers, areas = givers,
                        turnins = turnins, spots = spots }
+        if not ns.FOREVER then want.objectives, want.areas = nil, nil end
         return function()
             for g, v in pairs(want) do if Shown(g) ~= v then return false end end
             return true
@@ -4908,11 +5061,9 @@ local function BuildQuickPanel(map)
     Context(a.last.text, { "townsfolk" })
     CycleRow(a, "Rares", RARES, "Built in: rares and chests the addon knows. RareScanner: its pins instead, where it's installed. Off: none.",
         nil, { "wilds", "shown" })  -- (no context marker here)
-    a:Requires(function() return ns.AddonPresent("GatherMate2") end)
     Layer(a, "Gathering nodes", "gather")
     Context(a.last.text, { "gather" })
-    a:Tip("From GatherMate2, where it's installed.")
-    a:Requires()
+    a:Tip("Herbs, ore, treasure and fishing spots.")
     a:Header("On the map")
     Layer(a, "Unexplored areas", "explore")
     Context(a.last.text, { "explore" })
@@ -4993,7 +5144,7 @@ local TOGGLES = {
     -- (not "areas": that old id is cleared from toggles.list at login, BattlefieldInfo.lua)
     { "questAreas", "shown",   ns.MEDIA .. "QuestArea",                          "Quest areas (blue zones)", "areas", "The game's own" },
     { "rares",     "shown",    "vignettekillelite",                              "Rares & treasures (RareScanner)", nil, "Other addons" },
-    { "gather",    "shown",    "cursor_gatherherbs_128",                         "Gathering nodes (GatherMate)", nil, "Other addons" },
+    { "gather",    "shown",    "cursor_gatherherbs_128",                         "Gathering nodes", nil, "Other addons" },
     { "line",      "shown",    "minimap-questarrow",                             "Line to target" },
     { "dungeons",  "shown",    "dungeon",                                        "Dungeon entrances" },
     { "detail",    "shown",    "cursor_inspect_128",                             "Close-up detail" },
@@ -5002,7 +5153,10 @@ local TOGGLES = {
     { "ink",       "shown",    "cursor_palette_128",                             "Your ink on the world map" },
     -- (not a layer: the quill taken up or put down, lit while it's in hand; Notebook.lua)
     { "quill",     "shown",    ns.MEDIA .. "Quill",                              "The quill (write and draw)", "ink" },
+    -- (not a layer either: the book, opened; its right-click is its own menu, Notebook.lua)
+    { "book",      "shown",    ns.MEDIA .. "BookIcon",                           "The book", "ink" },
 }
+ns.DropNoGameLayers(TOGGLES, 5)
 ns.TOGGLES = TOGGLES
 
 -- the buttons' ids in your order (toggles.order, from the Buttons & coordinates
@@ -5039,6 +5193,10 @@ end
 -- puts icon name on tex (owner: the frame the cursor mask is made on); returns
 -- the cut of it (left, right, top, bottom) for an atlas, nil for a whole file
 function ns.SetIconArt(owner, tex, name)
+    -- (a cursor swapped for our own file, the palette on Era: it's that file from here
+    -- on, with no pointer tip to mask)
+    local own = ns.UsingSubstitutes() and ns.ART_SUBSTITUTE[name]
+    if type(own) == "string" and own:find("\\AddOns\\", 1, true) then name = own end
     ns.SetArt(tex, name, "Interface\\Icons\\INV_Misc_QuestionMark")
     ns.CursorMask(owner, tex, name:find("^cursor_") ~= nil)
     if name:find("\\", 1, true) then
@@ -5064,6 +5222,7 @@ end
 -- (t[7]: a button that switches several settings together, { { group, key }, ... }:
 -- on while any of them is, and a click sets them all the same way)
 local function ToggleOn(b)
+    if b.id == "book" then return true end
     if b.id == "quill" then return ns.QuillOut() end
     if not b.pairs then return ns.LayerOn(b.group, b.key) end
     for _, gk in ipairs(b.pairs) do
@@ -5073,6 +5232,10 @@ local function ToggleOn(b)
 end
 
 local function ToggleClick(b)
+    if b.id == "book" then
+        if ns.ToggleNotebook then ns.ToggleNotebook() end
+        return
+    end
     if b.id == "quill" then
         if ns.QuillToggle then ns.QuillToggle() end
         return
@@ -5232,9 +5395,11 @@ LayoutTogglesNow = function()
         b:SetShown(on)
         if on then
             StyleButton(b, c.style, size)
-            b:ClearAllPoints()
-            b:SetPoint(point, toggleStrip, point, n * (size + SPACING) * dx, n * (size + SPACING) * dy)
-            n = n + 1
+            if not ns.PlaceMoved(b) then  -- (taken out of the row: where it was put)
+                b:ClearAllPoints()
+                b:SetPoint(point, toggleStrip, point, n * (size + SPACING) * dx, n * (size + SPACING) * dy)
+                n = n + 1
+            end
         end
     end
     -- the + in the next place along, its cross about half the button's size
@@ -5280,6 +5445,12 @@ LayoutTogglesNow = function()
     elseif area then
         local inX = (point:find("LEFT") and 6 or -6)
         local inY = (point:find("TOP") and -6 or 6)
+        -- (clear of a soft edge's fade)
+        if ns.SoftEdgeInset then
+            local ix, iy = ns.SoftEdgeInset()
+            inX = inX + (point:find("LEFT") and ix or -ix)
+            inY = inY + (point:find("TOP") and -iy or iy)
+        end
         if point == "TOPRIGHT" then
             -- clear of the close X and the gear: a row starts left of them, a
             -- column below them
@@ -5463,6 +5634,12 @@ function ns.ShowTownsfolkMenu(anchor)
     tfMenu:Show()
 end
 
+-- what holding a toggle button does, for its tooltip
+function ns.ToggleMoveHints(b)
+    if ns.ButtonMoved(b) then return { { "Hold", "move it" }, { "Hold, right-click", "back in the row" } } end
+    return { { "Hold", "move the row" }, { "Shift + hold", "take it out of the row" } }
+end
+
 local function BuildToggleStrip(map)
     toggleStrip = CreateFrame("Frame", nil, map)
     toggleStrip:SetFrameLevel(quickButton:GetFrameLevel())
@@ -5480,6 +5657,10 @@ local function BuildToggleStrip(map)
             if button == "RightButton" then
                 -- its settings: the page it lives on, the option marked
                 GameTooltip:Hide()
+                if b.id == "book" then
+                    ns.BookMenu()
+                    return
+                end
                 ns.ShowOption(b.group, b.key)
                 return
             end
@@ -5510,7 +5691,13 @@ local function BuildToggleStrip(map)
             GameTooltip:AddLine(t[4])
             local key = ns.ActiveProfileKey and ns.ActiveProfileKey()
             local label = key and ns.PROFILE_LABELS and ns.PROFILE_LABELS[key]
-            if b.id == "quill" then
+            if b.id == "book" then
+                GameTooltip:AddLine(ns.BookKindName(ns.db.notebook.kind), 1, 1, 1)
+                GameTooltip:AddLine("Keep it your way: story, notes or blank.", 0.7, 0.7, 0.7, true)
+                ns.Hints({ { "Click", "open it" }, { "Right-click", "more" }, unpack(ns.ToggleMoveHints(b)) })
+                GameTooltip:Show()
+                return
+            elseif b.id == "quill" then
                 -- (not a layer: no profile)
             elseif b.key == "shown" and label and ns.db.toggles.saveToProfile then
                 GameTooltip:AddLine("Your click is saved in the " .. label .. " profile.", 0.7, 0.7, 0.7, true)
@@ -5521,7 +5708,7 @@ local function BuildToggleStrip(map)
                        b.id == "townsfolk" and { "Shift-click", "filter townsfolk" } or nil,
                        b.id == "ink" and { "Shift-click", "the quill" } or nil,
                        b.id == "zoom" and { "Shift-click", "auto-zoom (" .. (ns.db.zoom.autoZoom and "on" or "off") .. ")" } or nil,
-                       { "Right-click", "its settings" }, { "Hold", "move it" } })
+                       { "Right-click", "its settings" }, unpack(ns.ToggleMoveHints(b)) })
             GameTooltip:Show()
         end)
         b:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -5620,7 +5807,7 @@ function ns.ApplyButtonLevels()
     local d = ns.debugFrames
     local close = map.BorderFrame and map.BorderFrame.CloseButton
     for _, f in ipairs({ close, ns.bigMapButton, quickButton, townButton, cityButton, dockButton,
-                         d.coords, d.coordsCursor, d.dockMapOnly }) do
+                         d.coords, d.coordsCursor, d.clock, d.dockMapOnly }) do
         if f and f:GetFrameLevel() ~= level then f:SetFrameLevel(level) end
     end
     if toggleStrip then
@@ -5758,7 +5945,10 @@ function ns.SetupQuickButton(map)
     ns.HoldToMove(cityButton, "city")
     ns.HoldToMove(dockButton, "dock")
     local stripPoint = function() return (select(4, TogglePlace(ns.db.toggles))) end
-    for _, b in ipairs(toggleButtons) do ns.HoldToMove(b, "toggles", toggleStrip, stripPoint) end
+    for _, b in ipairs(toggleButtons) do
+        ns.HoldToMove(b, "toggles", toggleStrip, stripPoint)
+        b.bfiMoveKey = "toggle:" .. b.id  -- (its own place, once Shift + hold takes it out of the row)
+    end
     ns.HoldToMove(toggleStrip.add, "toggles", toggleStrip, stripPoint)
     ns.debugFrames.gear, ns.debugFrames.toggleStrip = quickButton, toggleStrip
     ns.debugFrames.townButton, ns.debugFrames.cityButton = townButton, cityButton

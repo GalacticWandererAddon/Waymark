@@ -1327,6 +1327,7 @@ local function PlaceYou()
     end
     if not you then
         you = CreateFrame("Frame", nil, canvas)
+        you.bfiNoEdgeFade = true  -- (you: never faded away, SoftEdges.lua)
         you.tex = you:CreateTexture(nil, "OVERLAY")
         you.tex:SetAllPoints()
         if ns.CaveArrowTexture then ns.CaveArrowTexture(you.tex) end
@@ -1504,7 +1505,7 @@ end
 function ns.DungeonCutTarget()
     local c, key = ns.DungeonInkSurface()
     if not c then return end
-    return c, key, tiles, overlay.bfiBg
+    return c, key, tiles, overlay.bfiBg, markerLayer
 end
 
 -- In an instance where this view covers your own map (the art, or the borrowed

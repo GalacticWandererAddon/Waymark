@@ -869,11 +869,13 @@ local function Hover()
         over = false
     end
     local owner = GameTooltip:IsShown() and GameTooltip:GetOwner()
-    if owner and owner ~= host then tipShown = false return end   -- (a pin's tooltip)
+    -- (ours, or Questie's over this ground, questie.tooltip)
+    local mine = owner == host or (tipShown and owner and owner == (ns.QuestTipProxy and ns.QuestTipProxy()))
+    if owner and not mine then tipShown = false return end   -- (a pin's tooltip)
     -- (a menu up, e.g. this ground's own: no tooltip under it; shown again it
     -- flickered, the menu's opening hiding it each time)
     if ns.QuillMenuShown and ns.QuillMenuShown() then
-        if tipShown and owner == host then GameTooltip:Hide() end
+        if tipShown and mine then ns.QuestTooltipLeave() end
         tipShown = false
         return
     end
@@ -937,7 +939,7 @@ local function Hover()
         for i = #hits, 13, -1 do hits[i] = nil end   -- (12: an item's many droppers fold to one line)
     end
     if #hits == 0 then
-        if tipShown and owner == host then GameTooltip:Hide() end
+        if tipShown and mine then ns.QuestTooltipLeave() end
         if tipShown and ns.HoverQuestGlow then ns.HoverQuestGlow(nil) end
         tipShown = false
         return
@@ -946,61 +948,17 @@ local function Hover()
     local keys = {}
     for i, d in ipairs(hits) do keys[i] = tostring(d[3].id) .. (d[4].what or "") end
     local key = table.concat(keys, "|") .. (IsShiftKeyDown() and "+shift" or "")   -- (Shift shows the droppers)
-    if tipShown and owner == host and key == tipKey then return end
+    if tipShown and mine and key == tipKey then return end
     tipKey = key
     if ns.HoverQuestGlow then ns.HoverQuestGlow(hits[1][3].id) end   -- (its ground lights up)
-    GameTooltip:SetOwner(host, "ANCHOR_CURSOR_RIGHT", 12, 12)
-    -- each quest: its name in gold, [level] in its difficulty colour, on the right
-    -- what it asks in its type's colour; under it what's here for it, with the
-    -- objective's count (from your log; none for a quest you could take)
-    -- an item more than 2 kinds of monster drop: one line under the title, the item
-    -- and its count; the monsters under it only while Shift is held
-    local shift = IsShiftKeyDown()
-    local droppers, folded = {}, false
-    for _, d in ipairs(hits) do
-        local part = d[4]
-        if part.item and c.drops ~= false and part.item ~= part.what then
-            local k = d[3].id .. ":" .. part.item
-            droppers[k] = (droppers[k] or 0) + 1
-        end
-    end
-    local itemDone = {}
-    local lastQuest
-    for _, d in ipairs(hits) do
-        local q, part = d[3], d[4]
-        if q ~= lastQuest then
-            if lastQuest then GameTooltip:AddLine(" ") end
-            lastQuest = q
-            local lc = "ffffff"
-            if GetQuestDifficultyColor then
-                local ok, dc = pcall(GetQuestDifficultyColor, q.level)
-                if ok and dc then lc = string.format("%02x%02x%02x", dc.r * 255, dc.g * 255, dc.b * 255) end
-            end
-            local ok, word = pcall(ns.QuestKind or function() end, q.id)
-            word = ok and word or nil
-            local tc = TYPE_COLORS[word or ""] or PLAIN
-            -- (the type's ink lightened: the tooltip is dark)
-            local tr, tg, tb = tc[1] * 0.7 + 0.3, tc[2] * 0.7 + 0.3, tc[3] * 0.7 + 0.3
-            GameTooltip:AddDoubleLine(string.format("%s |cff%s[%d]|r", q.name or "?", lc, q.level or 0),
-                (word or "") .. (q.inLog and "" or (word and ", " or "") .. "available"), 1, 0.82, 0, tr, tg, tb)
-        end
-        local have, need = (part.text or ""):match("(%d+)%s*/%s*(%d+)")
-        local count = have and (have .. "/" .. need) or ""
-        local left = "  " .. (part.what or "?")
-        local many = part.item and droppers[q.id .. ":" .. part.item]
-        if many and many > 2 then
-            local k = q.id .. ":" .. part.item
-            if not itemDone[k] then
-                itemDone[k] = true
-                GameTooltip:AddDoubleLine("  " .. part.item, count, 1, 1, 1, 0.7, 0.7, 0.7)
-                if not shift then folded = true end
-            end
-            if shift then GameTooltip:AddLine("    " .. (part.what or "?"), 0.8, 0.8, 0.8) end
-        elseif part.item and c.drops ~= false and part.item ~= part.what then
-            GameTooltip:AddDoubleLine(left, part.item .. (count ~= "" and "  " .. count or ""), 1, 1, 1, 0.7, 0.7, 0.7)
-        else
-            GameTooltip:AddDoubleLine(left, count, 1, 1, 1, 0.7, 0.7, 0.7)
-        end
+    -- (the quests' lines: Pin.lua's ns.QuestSpotLines, shared with objective pins; Questie's with
+    -- questie.tooltip on)
+    local rows = {}
+    for i, d in ipairs(hits) do rows[i] = { quest = d[3], part = d[4] } end
+    local folded = false
+    if not (ns.GroundQuestieTip and ns.GroundQuestieTip(host, rows)) then
+        GameTooltip:SetOwner(host, "ANCHOR_CURSOR_RIGHT", 12, 12)
+        folded = ns.QuestSpotLines(rows, c.drops)
     end
     tipQuest = hits[1][3].id
     -- (the hints' "Hold Shift" also covers what's folded away)

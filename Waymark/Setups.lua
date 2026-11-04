@@ -24,12 +24,12 @@ local EXCLUDE = { setups = true, characters = true, dungeonRun = true, blockedLo
                   notebook = true,  -- (the found notes: your pages, marks, the book's place)
                   objectSpots = true, objectHidden = true,  -- (dungeon pins you moved or hid)
                   optionsWindow = true,  -- (the settings window's own state: folds, last page)
-                  beforeCleared = true,
+                  beforeCleared = true, questieBoth = true,
                   myPresets = true,  -- (your presets: names of setups, kept with the setups)  -- (SetupSetups: the old "Before ..." setups cleared, once)
                   zoneShapes = true,  -- (dev: ZoneArt.lua's measurements)
                   cutEdits = true, cutEditsBeforeRestore = true, cutRestored = true }  -- (dev: CutEdit.lua)
 -- inside a group: also yours, kept when a setup is loaded (quests you hid, folds)
-local KEEP_IN = { questie = { hidden = true }, tracker = { folded = true, foldedAreas = true },
+local KEEP_IN = { questie = { hidden = true, source = true }, tracker = { folded = true, foldedAreas = true },
                   questlog = { zoneOpen = true } }
 
 local function Copy(v)
@@ -94,6 +94,7 @@ local function Apply(s)
         ns.db[g] = ns.db[g] or {}
         for k, v in pairs(t) do ns.db[g][k] = v end
     end
+    ns.ClockFirstTime(ns.db)   -- (a setup or character saved before the clock)
     ns.CopyDefaults(ns.db, ns.DEFAULTS)
     ns.keepSizeOff = true  -- (its scale and its sizes as saved: ns.SetScale)
     pcall(ns.ApplyAll)
@@ -300,6 +301,10 @@ local function Yours(k, p) return POS[k] or MINE[p] end
 local ROW_PATHS = { ["dock.on"] = true, ["clearView.on"] = true, ["profiles.city.enabled"] = true,
                     ["profiles.city.layers.townsfolk"] = true }
 for _, row in ipairs(ROWS) do ROW_PATHS[row[2]] = true end
+-- (after that, so these two still don't count as "every other setting")
+for i = #ROWS, 1, -1 do
+    if ns.NoGameLayer((ROWS[i][2]:match("^(%w+)%.shown$"))) then table.remove(ROWS, i) end
+end
 
 -- the preset's whole settings (nil: its rows only; the file missing)
 local function Base(id)

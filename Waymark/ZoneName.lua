@@ -322,7 +322,8 @@ function ns.UpdateZoneName()
         return
     end
     ApplyStyle()
-    text:SetText(name)
+    local time = ns.ClockHeaderText and ns.ClockHeaderText()
+    text:SetText(time and (name .. "   " .. time) or name)
     sub:SetText(extras ~= "" and extras or nil)
     -- drag it to move the map; right-click: back to your own map (when you're looking at another)
     header:EnableMouse(true)

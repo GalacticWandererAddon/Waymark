@@ -48,6 +48,10 @@ local function CanWear(classID, sub)
     return true
 end
 
+-- Forever's bosses the game's encounter table (the dungeon map's names) calls something else: the
+-- loot is under the name players meet them by
+local KNOWN_AS = { ["Mana Elemental"] = "Arcanic Enigma", ["Infurnus"] = "Magmatus", ["The Butcher"] = "The Baron" }
+
 local function Rows(instanceID)
     local data = ns.OwnQuestDB and ns.OwnQuestDB()
     local rows = data and data.Wilds and data.Wilds.bossLoot[instanceID]
@@ -61,9 +65,10 @@ local function Bosses(instanceID)
     local byName, out, seen = {}, {}, {}
     for _, row in ipairs(rows) do byName[row[1]] = row end
     for _, b in ipairs(ns.DungeonEncounters and ns.DungeonEncounters[instanceID] or {}) do
-        if byName[b[1]] and not seen[b[1]] then
-            seen[b[1]] = true
-            out[#out + 1] = byName[b[1]]
+        local n = KNOWN_AS[b[1]] or b[1]
+        if byName[n] and not seen[n] then
+            seen[n] = true
+            out[#out + 1] = byName[n]
         end
     end
     for _, row in ipairs(rows) do
@@ -74,6 +79,7 @@ end
 
 function ns.HasBossLoot(instanceID, name)
     if Cfg().bossLoot == false then return false end
+    name = KNOWN_AS[name] or name
     for _, row in ipairs(Bosses(instanceID)) do
         if not name or row[1] == name then return true end
     end
@@ -243,6 +249,7 @@ local function SubText(classID, subType, equipLoc)
 end
 
 function ns.OpenBossLoot(instanceID, name)
+    name = KNOWN_AS[name] or name
     local bosses = Bosses(instanceID)
     if #bosses == 0 then return end
     if not f then Make() end

@@ -57,7 +57,7 @@
     </Scripts>
   </Frame>
 
-  <!-- GatherMate2 nodes; the mixin lives in Gather.lua -->
+  <!-- The gathering node under the cursor; the mixin lives in Gather.lua -->
   <Frame name="BFIGatherPinTemplate" mixin="BFIGatherPinMixin" enableMouse="true" virtual="true">
     <Size x="12" y="12"/>
     <Layers>
@@ -96,6 +96,19 @@
     <Scripts>
       <OnLoad method="OnLoad"/>
       <OnMouseUp method="OnMouseUp"/>
+    </Scripts>
+  </Frame>
+
+  <!-- Boats and zeppelins; the mixin lives in Transports.lua -->
+  <Frame name="BFITransportPinTemplate" mixin="BFITransportPinMixin" enableMouse="true" virtual="true">
+    <Size x="22" y="22"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Icon" setAllPoints="true"/>
+      </Layer>
+    </Layers>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
     </Scripts>
   </Frame>
 

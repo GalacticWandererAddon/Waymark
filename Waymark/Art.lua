@@ -63,6 +63,7 @@ ns.ART = {
 -- [Forever name] = the client's name or path; { name or path, left, right, top,
 -- bottom } for part of it (top > bottom: upside down); false: nothing drawn. Checked against Era 1.15.9.70003's atlas tables (wago.tools).
 local RED_BUTTONS = ns.MEDIA .. "RedButtons"
+local PALETTE = ns.MEDIA .. "Palette"
 ns.ART_SUBSTITUTE = {
     -- the dock button (Options.lua VIEW_ICONS): Era hasn't Forever's map icon; its sibling
     ["Interface\\Icons\\INV_Misc_Map_01"] = "Interface\\Icons\\INV_Misc_Map02",
@@ -110,8 +111,8 @@ ns.ART_SUBSTITUTE = {
     ["vignettekill"] = "VignetteKill",
     ["vignettekillelite"] = "VignetteKillElite",
     ["cursor_directions_128"] = "Interface\\Cursor\\Directions",
-    -- the ink toggle: Era has no palette cursor; its letter one
-    ["cursor_palette_128"] = "Interface\\Cursor\\Mail",
+    -- the ink toggle: Era has no palette cursor; our own (tools\palette_icon.py)
+    ["cursor_palette_128"] = PALETTE,
     ["bonus-objective-star"] = "tradeskills-star",
     -- the quest window (Tracker.lua). Era lists the QuestLog-* atlases but hasn't
     -- their file (questlogframe.blp: green). Its frame: Era's dark metal frame, a

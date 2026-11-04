@@ -3,8 +3,9 @@ local _, ns = ...
 -- Quests and townsfolk from QuestieDB: the database addon Questie is built on,
 -- read through its public API (LibQuestieDB). Questie itself isn't needed.
 -- Quests come from our own data by default (WorldQuests.lua dresses it as
--- QuestieDB's API; questie.source = "questiedb" reads QuestieDB's instead);
--- townsfolk from the same source (ours: sorted by the tool, OwnFolk).
+-- QuestieDB's API; questie.source = "questiedb" reads QuestieDB's instead, "both"
+-- ours with QuestieDB filling what ours lacks); townsfolk from the same source
+-- (ours: sorted by the tool, OwnFolk; with "both", QuestieDB's for NPCs ours doesn't list).
 -- The data only holds (who starts and ends which quest, where NPCs
 -- and objects stand, what vendors sell); which quests are available to you,
 -- which objectives are still to do and which NPCs count as which townsfolk is
@@ -39,22 +40,96 @@ function ns.QDB()
     return lib
 end
 
--- Where quests come from: our own data (questie.source "own", the default) or
--- QuestieDB ("questiedb"), whichever is there if the other isn't. Picked once a
--- session (the option says a /reload follows).
+local function LoadTable(v)
+    if type(v) == "table" then return v end
+    if type(v) ~= "string" then return nil end
+    local f = loadstring(v)
+    local ok, t = pcall(f or error)
+    return ok and type(t) == "table" and t or nil
+end
+
+-- Ours with QuestieDB behind it, by the same API: each answer is ours, and QuestieDB's only where
+-- ours has none, so Forever's new quests in either show and our rows are never replaced.
+local function Mixed(own, real)
+    local function Both(part)
+        local a, b = own[part], real[part]
+        return setmetatable({}, { __index = function(t, key)
+            local f, g = a[key], b[key]
+            local fn = f or g
+            if f and g then
+                fn = function(id, ...)
+                    local v = f(id, ...)
+                    if v ~= nil and not (type(v) == "table" and next(v) == nil) then return v end
+                    local ok, w = pcall(g, id, ...)
+                    if ok and w ~= nil then return w end
+                    return v
+                end
+            end
+            t[key] = fn
+            return fn
+        end })
+    end
+    local ids
+    local mixed = {
+        contractVersion = "both", readMode = "ours, then QuestieDB", mixed = true,
+        Enum = own.Enum, Wilds = own.Wilds, Folk = own.Folk,
+        Quest = Both("Quest"), Npc = Both("Npc"), Object = Both("Object"), Item = Both("Item"),
+        Support = {
+            Get = function(name)
+                if name ~= "QuestXP" then return own.Support.Get(name) end
+                local db = {}
+                local ok, s = pcall(real.Support.Get, name)
+                for id, e in pairs(ok and type(s) == "table" and LoadTable(s.db) or {}) do db[id] = e end
+                for id, e in pairs(own.Support.Get(name).db) do db[id] = e end
+                return { db = db }
+            end,
+        },
+    }
+    function mixed.Quest.GetAllIds()
+        if not ids then
+            local seen = {}
+            ids = {}
+            for _, L in ipairs({ own, real }) do
+                for _, id in ipairs(L.Quest.GetAllIds() or {}) do
+                    if not seen[id] then
+                        seen[id] = true
+                        ids[#ids + 1] = id
+                    end
+                end
+            end
+            table.sort(ids)
+        end
+        return ids
+    end
+    function mixed.Quest.GetAll(id, keys)
+        return own.Quest.GetAll(id, keys) or real.Quest.GetAll(id, keys)
+    end
+    return mixed
+end
+
+-- Where quests come from: our own data (questie.source "own", the default), QuestieDB
+-- ("questiedb"), or ours filled from QuestieDB ("both"); whichever is there if the other isn't.
+-- Picked once a session (the option says a /reload follows).
 local src
 function ns.QuestSource()
     if src or not ns.db then return src end
     local qdb, mine = ns.QDB(), ns.OwnQuestDB and ns.OwnQuestDB()
-    if ns.db.questie.source == "questiedb" then src = qdb or mine else src = mine or qdb end
+    local want = ns.db.questie.source
+    if want == "both" and qdb and mine then
+        src = Mixed(mine, qdb)
+    elseif want == "questiedb" then
+        src = qdb or mine
+    else
+        src = mine or qdb
+    end
     return src
 end
 local Source = ns.QuestSource
 
--- "own" or "QuestieDB" (nil: neither)
+-- "own", "QuestieDB" or "both" (nil: neither)
 function ns.QuestSourceName()
     local s = Source()
-    return s and (s == lib and "QuestieDB" or "own") or nil
+    return s and (s.mixed and "both" or s == lib and "QuestieDB" or "own") or nil
 end
 
 local function Q() return (src or Source()).Quest end
@@ -71,14 +146,6 @@ end
 
 -- QuestieDB keys spawns by the game's area (zone) IDs; the map needs uiMapIDs
 local areaToMap, parentArea, dungeonArea
-
-local function LoadTable(v)
-    if type(v) == "table" then return v end
-    if type(v) ~= "string" then return nil end
-    local f = loadstring(v)
-    local ok, t = pcall(f or error)
-    return ok and type(t) == "table" and t or nil
-end
 
 -- (from QuestieDB and from the quest source, when that's ours: the same area IDs)
 local function LoadZones()
@@ -1113,6 +1180,7 @@ function ns.QuestIcons(mapID)
                 out[#out + 1] = {
                     x = g.x * 100, y = g.y * 100, id = best.id, name = QuestName(best.id), group = "questie",
                     level = bestLevel, starterType = g.starterType, who = g.name, sub = g.sub, quests = quests,
+                    trivial = best.trivial or nil,
                     kind = art and "file" or nil, value = art and (QUESTIE_ICONS .. icon .. ".blp") or nil,
                     l = 0, r = 1, t = 0, b = 1,
                 }
@@ -1398,7 +1466,9 @@ local PROFESSION_WORDS = {
 ns.PROFESSION_TRAINER_IDS = PROFESSION_WORDS
 -- rogue poison ingredients sold by poison vendors
 local POISON_ITEMS = { [2928] = true, [2930] = true, [5173] = true, [8923] = true, [8924] = true, [5140] = true }
+local folkSkip   -- filling from QuestieDB: { npcs = {}, objects = {} }, what ours already lists
 local function Put(key, id)
+    if folkSkip and folkSkip[key == "Mailbox" and "objects" or "npcs"][id] then return end
     local l = folk[key]
     if not l then l = {} folk[key] = l end
     l[#l + 1] = id
@@ -1432,6 +1502,16 @@ local function OwnFolk(s)
             for _, id in ipairs(ids) do if Mine(id) then Put(key, id) end end
         end
     end
+end
+
+-- everything our list holds, whichever side or level it's for
+local function OursListed(s)
+    local out = { npcs = {}, objects = {} }
+    for _, r in ipairs(s.Folk() or {}) do
+        local into = r[1] == "Mailbox" and out.objects or out.npcs
+        for _, v in ipairs(r[2]) do into[type(v) == "table" and v[1] or v] = true end
+    end
+    return out
 end
 
 -- QuestieDB's
@@ -1564,9 +1644,17 @@ local function EnsureFolk()
     StartJob("Townsfolk index", function()
         wipe(folk)
         if s.Folk then OwnFolk(s) else BuildFolk() end
+        if s.mixed then
+            folkSkip = OursListed(s)
+            BuildFolk()
+        end
     end, function(ok)
         folkState = "done"
-        if not ok then wipe(folk) end
+        folkSkip = nil
+        if not ok then
+            wipe(folk)
+            if s.mixed then pcall(OwnFolk, s) end   -- (QuestieDB's failed: ours still stand)
+        end
         if ns.TownsfolkIndexReady then ns.TownsfolkIndexReady() end
     end)
     return false

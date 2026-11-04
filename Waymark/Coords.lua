@@ -81,7 +81,11 @@ local function Anchor(b, map, point, side, nx, ny)
         local mine = top and point:gsub("TOP", "BOTTOM") or point:gsub("BOTTOM", "TOP")
         b:SetPoint(mine, map, point, dx, (top and 4 or -4) + ny)
     else
-        b:SetPoint(point, area, point, dx, (top and -3 or 3) + ny)
+        -- (clear of a soft edge's fade)
+        local ix, iy = 0, 0
+        if ns.SoftEdgeInset then ix, iy = ns.SoftEdgeInset() end
+        dx = dx + (point:find("LEFT") and ix or point:find("RIGHT") and -ix or 0)
+        b:SetPoint(point, area, point, dx, (top and -3 - iy or 3 + iy) + ny)
     end
 end
 

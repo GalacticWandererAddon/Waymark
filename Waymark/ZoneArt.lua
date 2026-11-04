@@ -561,8 +561,11 @@ end
 local function BuildPatch(p)
     local cw, ch = host:GetWidth(), host:GetHeight()
     if not (cw > 0 and ch > 0) then return end
-    if p.builtFor == cw then return end
-    p.builtFor = cw
+    -- (whole units: the host's width comes from its anchors and can differ a hair with the
+    -- zoom, which laid every patch again on each step)
+    local size = math.floor(cw + 0.5)
+    if p.builtFor == size then return end
+    p.builtFor = size
     local d, z = p.d, p.z
     local k, layer, sub = Slot(d.depth)
     local f = SlotFrame(k)
@@ -608,11 +611,6 @@ local function BuildPatch(p)
     p.fade = nil
 end
 
-local function HidePatch(p)
-    for i = 1, p.used do p.tex[i]:Hide() end
-    p.builtFor, p.fade, p.parked = nil, nil, nil
-end
-
 -- Off the view a patch is hidden but kept laid (each one draws a handful of masked
 -- textures, and hundreds of them lagged the map even where you weren't looking)
 local function Park(p)
@@ -621,9 +619,9 @@ local function Park(p)
     p.parked = true
 end
 
--- the view on the continent (0-1), and as much again round it so a pan doesn't
+-- the view on the continent (0-1), and half as much again round it so a pan doesn't
 -- show patches popping in; nil when it can't be told
-local VIEW_MARGIN = 0.5
+local VIEW_MARGIN = 0.25
 local function ViewBox()
     local sc = BattlefieldMapFrame and BattlefieldMapFrame.ScrollContainer
     local s = sc and sc:GetCanvasScale()
@@ -731,17 +729,21 @@ end
 
 -- shown as the zone maps are (s: the frames, veil: the base maps, detail: the areas)
 local patchesFor          -- the continent whose patches are laid
+local BUILDS_A_CALL = 20  -- (patches laid at once: the rest next frame, or a zoom into hundreds stuttered)
+local buildsLeft          -- ShowPatches' latest arguments while some wait to be laid
 local function ShowPatches(cont, a, s, veil, detail, global, seaA)
     if patchesFor ~= cont then
-        for _, p in ipairs(patchesFor and patches[patchesFor] or {}) do HidePatch(p) end
+        -- (kept laid: wheeling out of a zone onto the continent laid every patch again)
+        for _, p in ipairs(patchesFor and patches[patchesFor] or {}) do Park(p) end
         patchesFor = cont
     end
-    -- (baked: the pictures, the live patches not laid at all)
-    local baked = BakedOf(cont) and true or false
+    -- (baked: the pictures, the live patches not laid at all; Era's cells are its land alone)
+    local data = BakedOf(cont)
+    local baked = data and data.f and #data.f > 0 or false
     ShowBaked(cont, a, s, veil, detail, global, seaA)
     local list = baked and {} or PatchesOf(cont)
     local on = a > 0.01 and #list > 0
-    local level = host:GetFrameLevel() + 3  -- (over the zone maps' frames and pieces)
+    local level = host:GetFrameLevel() + 4  -- (over the zone maps' frames and pieces, and the land cells)
     for k, f in pairs(slotFrames) do
         if f:GetFrameLevel() ~= level + k then f:SetFrameLevel(level + k) end
         f:SetAlpha(s * global)
@@ -751,6 +753,7 @@ local function ShowPatches(cont, a, s, veil, detail, global, seaA)
     if not on then return end
     local fade = veil .. "|" .. detail
     local vl, vt, vr, vb = ViewBox()
+    local size, built, waiting = math.floor(host:GetWidth() + 0.5), 0, false
     for _, p in ipairs(list) do
         local d = p.d
         local inView = not vl or (d.r > vl and d.l < vr and d.b > vt and d.t < vb)
@@ -761,15 +764,35 @@ local function ShowPatches(cont, a, s, veil, detail, global, seaA)
                 for i = 1, p.used do p.tex[i]:Show() end
                 p.parked = nil
             end
-            ns.Safe("ZoneArt BuildPatch", BuildPatch, p)
+            -- (checked here: a call for each of hundreds already laid was most of the cost)
+            if p.builtFor ~= size then
+                if built < BUILDS_A_CALL then
+                    built = built + 1
+                    ns.Safe("ZoneArt BuildPatch", BuildPatch, p)
+                else
+                    waiting = true
+                end
+            end
         end
-        if inView and p.fade ~= fade then
+        if inView and p.fade ~= fade and p.builtFor == size then
             for i = 1, p.used do
                 local t = p.tex[i]
                 t:SetAlpha(t.piece and veil * detail or veil)
             end
             p.fade = fade
         end
+    end
+    if waiting then
+        if not buildsLeft then
+            C_Timer.After(0, function()
+                local b = buildsLeft
+                buildsLeft = nil
+                ShowPatches(b[1], b[2], b[3], b[4], b[5], b[6], b[7])
+            end)
+        end
+        buildsLeft = { cont, a, s, veil, detail, global, seaA }
+    elseif buildsLeft then
+        buildsLeft = { cont, a, s, veil, detail, global, seaA }
     end
 end
 
@@ -1074,6 +1097,7 @@ function ns.RebuildZoneArt()
 end
 
 -- for /bfi check: zones on this continent, with an outline, built
+local canvasSized = { calls = 0, real = 0 }  -- (OnSizeChanged's count, for the check)
 function ns.ZoneArtInfo()
     local map = BattlefieldMapFrame
     local id = map and map:GetMapID()
@@ -1089,9 +1113,10 @@ function ns.ZoneArtInfo()
         end
         veil = veil or z.veil
     end
-    return string.format("%d zones, %d with an outline, %d built, shown %s, alpha %.2f; wash %s, %d of %d lit, base veil %.2f",
+    return string.format("%d zones, %d with an outline, %d built, shown %s, alpha %.2f; wash %s, %d of %d lit, base veil %.2f; canvas sized %d times, %d real, now %s x %s, host %.3f",
         n, shaped, built, tostring(host and host:IsShown()), host and host:GetEffectiveAlpha() or 0,
-        tostring(Cfg().zoneWash), washOn, washes, veil or -1)
+        tostring(Cfg().zoneWash), washOn, washes, veil or -1, canvasSized.calls, canvasSized.real,
+        tostring(canvasSized.w), tostring(canvasSized.h), host and host:GetWidth() or 0)
 end
 
 -- /bfi shapes ------------------------------------------------------------------
@@ -1296,6 +1321,11 @@ function ns.SetupZoneArt(map)
     end
     -- (a new canvas size: the zones' frames are placed in its units)
     canvas:HookScript("OnSizeChanged", function()
+        -- (only a real change: it can fire with the same size, and laid every patch again)
+        local w, h = math.floor(canvas:GetWidth() + 0.5), math.floor(canvas:GetHeight() + 0.5)
+        canvasSized.calls = canvasSized.calls + 1
+        if w == canvasSized.w and h == canvasSized.h then return end
+        canvasSized.w, canvasSized.h, canvasSized.real = w, h, canvasSized.real + 1
         for _, list in pairs(zones) do
             for _, z in ipairs(list) do z.placed, z.builtFor = nil, nil end
         end
