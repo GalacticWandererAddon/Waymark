@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.2.0 for Classic Era (2026-11-04)
+
+**Waymark comes to Classic Era.** Battlefield Info is now Waymark. Same addon, new name. Your settings, ink, notes, setups and key bindings come along by themselves.
+
+The download has three folders: `Waymark` (the addon), `BattlefieldInfo` (a small helper that carries your old settings over) and `Waymark_Nodes` (gathering spots, data only, GPL v3). The CurseForge app installs them all. If you install by hand, extract all three into `Interface\AddOns`. Once each of your characters has logged in with Waymark, the helper can be deleted. `/waymark` opens the settings; `/bfi` still works.
+
+This release is for Classic Era (interface 11509). It has everything in Forever's 1.2.0, plus what's below. On Era the continent map is drawn with our own land and strokes, with no Blizzard map art in the download.
+
+New since Forever's 1.2.0
+- Gathering nodes: herbs, ore and treasure on the map and minimap from Waymark's own data, with GatherMate2 as an option.
+- A sun clock on the map. New installs start with it on and the game's minimap clock off; if you're updating, the game's clock stays.
+- The map follows the hour, in the Creator's preset only.
+
+New since 1.1.0
+- The found notebook: an old wanderer's dungeon notes, with maps, routes and warnings, reached from the dungeon doors and the map's quill button. Write in it and draw on its maps yourself. Pages up to Gnomeregan are open; later ones come in later updates.
+- Map ink: a quill to draw your own marks, routes and notes on any zone or dungeon map.
+- Dungeon maps for every classic dungeon: bosses you can number and reorder, doors, chests and switches, quest monsters, and a light that guesses where you are inside from the monsters you meet.
+- Caves: quest pins and objective spots inside caves, a floor bar for caves with several levels, and a right-click out to the zone.
+- The continent map: zones joined into one painted continent, with coasts, seas and fading names.
+- Quest ground: objective areas drawn on the map, coloured by quest type; hover for the quest, right-click for its menu, arrows to lone spots and turn-ins.
+- Quest window: rewards and drop chances, a "Looking at" section for quests you don't have, one row per quest on givers with several, Shift-click links and Ctrl-click try-ons.
+- Quest progress on the game's own tooltips, and giver tooltips with each quest's kind in its colour (or Questie's tooltip, if you prefer).
+- Rares from our own data, with their drops behind Shift; boss loot in a "What they carry" window.
+- Vendors and trainers: what they sell and what they teach.
+- "What you've learned": quest givers and monster spots learned as you play, shareable as a string.
+- Start here: presets that set up the whole map in one click (Creator's, Purist, Minimap Replacement, Minimalist), "(altered)" when you change one, and presets of your own.
+- Quick options panel beside the map; toggle buttons for quest areas and the quill; lock the map in place.
+- The big map key opens and closes the map; the map stays open through zone changes and reloads, and holds still on a flight path while you browse.
+
+Changes
+- Auto-zoom is off by default; its button is now "Keep centered".
+- Clearer settings: plain words, pages that read top to bottom, a welcome page.
+- One set of controls everywhere: left-click acts, right-click gives a menu, hold to move.
+
+Fixes and polish
+- Quest-provider chat spam on Classic Era gone.
+- Duplicate key binding warnings gone.
+- Many smaller tooltip, tracker and docked-minimap fixes.
+
 ## 1.2.0 (2026-11-03)
 
 **Battlefield Info is now Waymark.** Same addon, new name. Your settings, ink, notes, setups and key bindings come along by themselves.

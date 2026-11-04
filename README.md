@@ -42,7 +42,7 @@ Waymark builds on the game's own Battlefield Map (Shift-M): the small map you ca
 
 **From git:** copy this repository's `Waymark` and `BattlefieldInfo` folders into your AddOns folder.
 
-1.2 is made for **WoW Forever** (interface 16001). The last Classic Era build is [1.1.0](../../releases/tag/v1.1.0).
+The latest release and this branch are for **WoW Forever** (interface 16001). For **Classic Era** (interface 11509), get `Waymark-Era-1.2.0.zip` from [its release](../../releases/tag/v1.2.0-era) and unzip it into `World of Warcraft\_classic_era_\Interface\AddOns\`; it has a third folder, `Waymark_Nodes`. The Era files are on the [`era` branch](../../tree/era).
 
 ## Getting started
 
