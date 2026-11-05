@@ -6,15 +6,10 @@ local _, ns = ...
 -- are never changed: ns.IsShown asks the active profile first.
 
 -- checked in this order: the first enabled one that matches wins
-ns.PROFILE_ORDER = { "combat", "battleground", "dungeon", "city", "gathering" }
+ns.PROFILE_ORDER = { "combat", "battleground", "dungeon", "city" }
 ns.PROFILE_LABELS = {
     combat = "In combat", battleground = "Battlegrounds", dungeon = "Dungeons & raids", city = "Towns & cities",
-    gathering = "Gathering & farming",
 }
-if ns.GatherPulled() then table.remove(ns.PROFILE_ORDER) end  -- (it's the last)
-
--- "gathering": two or more gathering nodes within this many yards
-local GATHER_YARDS, GATHER_MIN = 100, 2
 
 local inCombat = false
 local active      -- key of the active profile, or nil
@@ -30,13 +25,6 @@ local function Matches(key)
         if ns.InCityView and ns.InCityView() then return true end
         if ns.InTownView then return ns.InTownView() end
         return not inInstance and IsResting()
-    end
-    if key == "gathering" then
-        if inInstance or not ns.GatherNodesNear then return false end
-        local mapID = C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
-        local pos = mapID and C_Map.GetPlayerMapPosition(mapID, "player")
-        if not (pos and pos.x) then return false end
-        return ns.GatherNodesNear(mapID, pos.x, pos.y, GATHER_YARDS) >= GATHER_MIN
     end
     return false
 end
@@ -97,7 +85,7 @@ function ns.SetupProfiles()
         local now = Detect()
         if now ~= was then ns.UpdateProfile() end
     end)
-    -- walking up to gathering nodes fires no event: re-check every 2 s
+    -- walking into a town fires no event of its own: re-check every 2 s
     local elapsed = 0
     f:SetScript("OnUpdate", function(_, dt)
         elapsed = elapsed + dt

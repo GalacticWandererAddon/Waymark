@@ -170,13 +170,13 @@ ns.PRESET_SETTINGS["creator"] = {
 	},
 	dock = {
 		big = false,
-		bigH = 564,
+		bigH = 708,
 		bigSize = 360,
 		bigTR = {
 			764.33331298828125,
 			940.6671142578125,
 		},
-		bigW = 726,
+		bigW = 836,
 		buttonPos = {
 			city = {
 				"CENTER",
@@ -276,14 +276,15 @@ ns.PRESET_SETTINGS["creator"] = {
 				-4.9999856948852539,
 			},
 		},
-		corner = true,
+		corner = false,
 		face = "map",
 		friction = 1,
 		hideSun = true,
 		hideTitle = true,
 		mapOnly = false,
+		ourGround = true,
 		on = false,
-		size = 266,
+		size = 272,
 		splitQuests = false,
 		wheel = true,
 	},

@@ -343,11 +343,15 @@ local function Place(c)
         return
     end
     if point == "MAP" then
+        -- (docked: placed from the square, the spot you look for the time. From the map frame, the big
+        -- map put it off the screen, and the corner's drag took it along till it snapped back)
+        if ns.Docked and ns.Docked() and ns.DockSquareBox then area = ns.DockSquareBox() end
         local aw, ah = area:GetSize()
+        local k = area:GetEffectiveScale() / clock:GetEffectiveScale()
         c.mx = math.max(-AROUND, math.min(1 + AROUND, c.mx or 0.5))
         c.my = math.max(-AROUND, math.min(1 + AROUND, c.my or 0.5))
         clock:ClearAllPoints()
-        clock:SetPoint("CENTER", area, "TOPLEFT", c.mx * aw, -c.my * ah)
+        clock:SetPoint("CENTER", area, "TOPLEFT", c.mx * aw * k, -c.my * ah * k)
         return
     end
     local ix, iy = 0, 0

@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.2.3 (2026-11-05)
+
+**Live tracking on your map, gathering nodes back, and a much better docked map.**
+
+New
+- Docked: live minimap blips on your map. Find Herbs, Find Minerals, hunter tracking and the rest now sit on the detailed map art at every zoom, with their names on hover. Past the minimap's farthest zoom they show in a patch around you, for as far as the minimap can see. On by default; you'll find the switch on the Minimap replacement page.
+- Gathering nodes are back on Forever, through GatherMate2. Install GatherMate2 and GatherMate2_Data, then import Herbs, Mines and Treasure in GatherMate2's options. Spots are corrected in Mulgore, Eastern Plaguelands and Redridge, which Forever redrew.
+- Docked: drag the header to move the square. The frame's menu sends it back.
+- Docked: right-click the frame for the map's menu, for those who play without a header.
+- Docked: the corner drags an outline, and the square changes once when you let go.
+
+Changed
+- The dungeon map is switched off on Forever for now, while it's tested in live dungeons. Dungeon entrances on zone maps stay.
+- Map toggles: a click during a fight now stays, instead of lasting only for that fight.
+- The Gathering context profile is gone.
+- The Creator's dock settings are refreshed.
+- Docked: the game's day and night icon is hidden, as we have our own clock.
+
+Fixed
+- Docked: the minimap's + and - no longer show.
+- Docked: pins no longer stick to the cursor when you wheel in with the button held.
+- Docked: the buffs don't jump aside for the big map, and the clock stays by the square.
+- Docked: the arrow keeps one size at every zoom.
+- The corner grip is easier to hit.
+
 ## 1.2.2 (2026-11-05)
 
 **Key bindings at last, a smoother docked map, and a simpler Quests page.** Please update: no earlier release had working key bindings.

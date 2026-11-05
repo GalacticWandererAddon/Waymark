@@ -17,6 +17,7 @@
     <Binding name="BFI_LAYER_SPOTS" category="BINDING_HEADER_BFI">Waymark_Key("layer_spots")</Binding>
     <Binding name="BFI_LAYER_TOWNSFOLK" category="BINDING_HEADER_BFI">Waymark_Key("layer_townsfolk")</Binding>
     <Binding name="BFI_LAYER_RARES" category="BINDING_HEADER_BFI">Waymark_Key("layer_rares")</Binding>
+    <Binding name="BFI_LAYER_GATHER" category="BINDING_HEADER_BFI">Waymark_Key("layer_gather")</Binding>
     <Binding name="BFI_LAYER_PARTY" category="BINDING_HEADER_BFI">Waymark_Key("layer_party")</Binding>
     <Binding name="BFI_LAYER_LINE" category="BINDING_HEADER_BFI">Waymark_Key("layer_line")</Binding>
     <Binding name="BFI_LAYER_EXPLORE" category="BINDING_HEADER_BFI">Waymark_Key("layer_explore")</Binding>

@@ -191,13 +191,13 @@ Over(ns.DEFAULTS, {
 	},
 	dock = {
 		big = false,
-		bigH = 564,
+		bigH = 708,
 		bigSize = 360,
 		bigTR = {
 			764.33331298828125,
 			940.6671142578125,
 		},
-		bigW = 726,
+		bigW = 836,
 		buttonPos = {
 			city = {
 				"CENTER",
@@ -297,14 +297,15 @@ Over(ns.DEFAULTS, {
 				-4.9999856948852539,
 			},
 		},
-		corner = true,
+		corner = false,
 		face = "map",
 		friction = 1,
 		hideSun = true,
 		hideTitle = true,
 		mapOnly = false,
 		on = false,
-		size = 266,
+		ourGround = true,
+		size = 272,
 		splitQuests = false,
 		wheel = true,
 	},

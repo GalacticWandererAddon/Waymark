@@ -1,4 +1,5 @@
 local _, ns = ...
+if ns.DungeonsOff then return end
 
 -- Where you are inside a dungeon, a guess. The game gives no position inside, but it does name the
 -- monsters around you: their nameplates, your target, and who you fight (the combat log). We know
@@ -14,6 +15,10 @@ local _, ns = ...
 -- spot nearest where it was (you walked in from there), then drifts to the spot whose monsters you
 -- meet, if they stand in few places (SPOT_SURE); between alike spots the nearer one (NEAR). Monsters
 -- found all over the part don't move it: it waits for one that tells.
+
+-- (these can come back secret inside: read through ns.Known, so a hidden one is just not seen)
+local function Plain(name) return function(...) return ns.Known((_G[name](...))) end end
+local UnitName, UnitGUID, UnitCanAttack, UnitIsDead = Plain("UnitName"), Plain("UnitGUID"), Plain("UnitCanAttack"), Plain("UnitIsDead")
 
 local GLOW = ns.MEDIA .. "DungeonGlow"
 local T = ns.WhereTune or {}                               -- (tools\where_replay.lua: other values to try)
@@ -200,6 +205,7 @@ local function Range()
     local ok, near = pcall(CheckInteractDistance, "target", 4)
     if not ok then return end
     local name = UnitName("target")
+    if not name then return end
     local key = name .. tostring(near)
     if lastRange.key == key and GetTime() - lastRange.t < 2 then return end
     lastRange.key, lastRange.t = key, GetTime()

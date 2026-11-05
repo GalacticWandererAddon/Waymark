@@ -2155,6 +2155,7 @@ PAGES[#PAGES + 1] = { key = "minimap", label = "Minimap replacement", build = fu
     b:Check("Dock the map over the minimap", "dock", "on")
     b:Tip("The minimap turns square and north up, and the map lies over it at the same size: one square, two faces.", "The map's X switches between them; Shift+M does nothing meanwhile (put Big map on M: Key bindings page). Changes to the minimap wait until a fight ends.")
     b:Requires("dock", "on")
+    if ns.DockOurArt and C_Minimap and C_Minimap.SetDrawGroundTextures then b:Check("Our map under the minimap's blips", "dock", "ourGround") end
     b:Slider("Size", 100, 400, 10, "dock", "size", "%d")
     b:Tip("The square's size; on the big map, the big map's.", "Or drag its corner grip (bottom left); right-click the grip for 160.")
     b:CheckWith("Map only, never the minimap", function() return ns.db.dock.mapOnly end,
@@ -2166,8 +2167,8 @@ PAGES[#PAGES + 1] = { key = "minimap", label = "Minimap replacement", build = fu
         b:Check("Hide the game's title bar", "dock", "hideTitle")
         b:Tip("The minimap's zone name bar. Its tracking button stays. Takes effect the next time you dock.")
     end
-    b:Check("Hide the day / night indicator", "dock", "hideSun")
-    b:Tip("The minimap's sun and moon. Its other buttons (clock, tracking, mail...): hold one to move it, right-click while holding to put it back.")
+    if not ns.FOREVER then b:Check("Hide the day / night indicator", "dock", "hideSun") end
+    b:Tip((ns.FOREVER and "The minimap's buttons" or "The minimap's sun and moon. Its other buttons") .. " (clock, tracking, mail...): hold one to move it, right-click while holding to put it back.")
     b:Check("Mouse wheel switches between minimap and map", "dock", "wheel")
     b:Tip("One wheel for both: zoom the minimap out past its farthest and the map opens just as close; wheel in on the map to come back.", "Right-click the minimap: the map. Double-click the map: the minimap. Replaces the minimap's + and - buttons.")
     b:Slider("Wheel friction", 0, 5, 1, "dock", "friction", "%d")
@@ -3597,6 +3598,10 @@ PAGES[#PAGES + 1] = { key = "dungeon", label = "Caves & dungeons", build = funct
 
     local b = Column(p, HALF, 0, HALF)
     b:Header("Inside dungeons")
+    if ns.DungeonsOff then
+        b:Note("The dungeon map is off for now, while it's tested on Forever.")
+        return
+    end
     b:Check("Show the dungeon's map", "dungeon", "fallback")
     b:Tip("The game's own art of the dungeon, with its bosses.", "Wheel: zoom. Drag: pan. Right-click: whole map. < >: floors.")
     b:Requires("dungeon", "fallback")
@@ -3638,7 +3643,6 @@ local PROFILE_WHEN = {
     battleground = "Inside a battleground or an arena.",
     dungeon = "Inside a dungeon or a raid.",
     city = "In a capital, or a town while town view is on (else where you rest).",
-    gathering = "Out in the world with two or more gathering nodes within 100 yards.",
 }
 
 -- One table: the layers down the left, a column per context (Show / Hide / -
@@ -4084,6 +4088,7 @@ end
 local function ResetPage(key)
     local f = pageFrames[key]
     if f and f.bfiKeys then ResetKeys(f.bfiKeys) end
+    if ns.LabReset then ns.LabReset(key) end
 end
 
 -- the thresholds that are hard to get back by hand, for their own reset buttons
@@ -4630,7 +4635,7 @@ local function BuildPanel()
         "#The window>windowhome", "window", "clearview", "minimap", "header", "controls",
         "#Getting around>aroundhome", "behaviour", "browse", "town", "city", "dungeon", "explore",
         "#What's shown>shownhome", "quests", "tracker", "questlog", "people", "group", "rares", "ink",
-        "#Your setup", "profiles", "setups", "keys", "combat",
+        "#Your setup", "profiles", "setups", "keys",
     }
     -- (Combat's page only with its addon switched on, the Lab's only where Lab\ is, Dev only where
     -- DevBar.lua is: releases leave it out)
@@ -4640,7 +4645,9 @@ local function BuildPanel()
     end
     if ns.DevCommands then NAV[#NAV + 1] = "#Development"; NAV[#NAV + 1] = "dev" end
     if ns.LabPage then
-        for _, key in ipairs({ "#Lab, for 1.3", "lab", "labminimap", "labhorizon", "labframes" }) do NAV[#NAV + 1] = key end
+        for _, key in ipairs({ "#Lab, for 1.3", "lab", "labminimap", "labhorizon", "labframes", "combat" }) do NAV[#NAV + 1] = key end
+    else
+        NAV[#NAV + 1] = "combat"
     end
     local byKey = {}
     for _, def in ipairs(PAGES) do byKey[def.key] = def end
@@ -5038,7 +5045,7 @@ local function BuildQuickPanel(map)
     -- while a context profile overrides a row's layer: where, after its label
     -- ("(in town)"), green when it shows the layer there, red when it hides it
     local WHERE = { combat = "in combat", battleground = "in a battleground", dungeon = "in a dungeon",
-                    city = "in town", gathering = "gathering" }
+                    city = "in town" }
     local ctx = {}
     local function Context(label, groups)
         local fs = quickPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -5899,6 +5906,8 @@ local function BuildToggleStrip(map)
                 return
             elseif b.id == "quill" then
                 -- (not a layer: no profile)
+            elseif b.key == "shown" and key == "combat" then
+                -- (a click in a fight is a plain one: nothing to say)
             elseif b.key == "shown" and label and ns.db.toggles.saveToProfile then
                 GameTooltip:AddLine("Your click is saved in the " .. label .. " profile.", 0.7, 0.7, 0.7, true)
             elseif b.key == "shown" and ns.ProfileOverrides(b.group) then

@@ -599,7 +599,7 @@ end
 -- whoever reset it and wherever you were. And the game's "X has been reset." from your own reset.
 local function CheckCopy(unit)
     if not (IsInInstance() and UnitExists(unit)) or UnitIsPlayer(unit) then return end
-    local guid = UnitGUID(unit)
+    local guid = ns.Known(UnitGUID(unit))  -- (can be secret inside on live Forever, as the name below)
     local kind, _, _, _, copy = strsplit("-", guid or "")
     if kind ~= "Creature" or not copy then return end
     local r = Run()
@@ -632,8 +632,8 @@ function ns.DungeonUnitDied(name)
 end
 
 local function CheckDeadUnit(unit)
-    if not (IsInInstance() and UnitExists(unit) and UnitIsDead(unit)) or UnitIsPlayer(unit) then return end
-    local name = UnitName(unit)
+    if not (IsInInstance() and UnitExists(unit) and ns.Known(UnitIsDead(unit))) or UnitIsPlayer(unit) then return end
+    local name = ns.Known(UnitName(unit))
     if not name or Kills()[name:lower()] then return end
     for _, n in ipairs(Encounters(select(8, GetInstanceInfo()))) do
         if n == name then MarkKilled(name) return end
@@ -2154,6 +2154,7 @@ function ns.SetupDungeon(map)
         pcall(events.RegisterEvent, events, e)
     end
     events:SetScript("OnEvent", function(_, event, ...)
+        if ns.DungeonsOff then return end
         if event == "UNIT_HEALTH" then
             local unit = ...
             if unit == "target" or unit == "mouseover" then
@@ -2240,7 +2241,7 @@ function ns.SetupDungeon(map)
     local ticker = ns.TimedFrame("Dungeon tick")
     ticker:SetScript("OnUpdate", function(_, dt)
         elapsed = elapsed + dt
-        if elapsed < 2 or not map:IsVisible() then return end
+        if elapsed < 2 or not map:IsVisible() or ns.DungeonsOff then return end
         elapsed = 0
         ns.UpdateDungeon()
     end)

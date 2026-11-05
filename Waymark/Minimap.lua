@@ -19,6 +19,25 @@ local function OnDragUpdate()
     UpdatePosition()
 end
 
+-- (click: the map; right-click: the settings, as the map's gear: Controls.lua)
+local function Click(mouse)
+    if mouse == "RightButton" then
+        ns.ToggleOptions()
+    elseif ToggleBattlefieldMap then
+        pcall(ToggleBattlefieldMap)
+    end
+end
+
+-- the game's addon dropdown on the minimap (Forever): named in the TOC, Era skips them
+function Waymark_CompartmentClick(_, mouse) Click(mouse) end
+function Waymark_CompartmentEnter(_, row)
+    GameTooltip:SetOwner(row, "ANCHOR_LEFT")
+    GameTooltip:AddLine("Waymark")
+    ns.Hints({ { "Click", "the Battlefield Map" }, { "Right-click", "settings" } })
+    GameTooltip:Show()
+end
+function Waymark_CompartmentLeave() GameTooltip:Hide() end
+
 function ns.CreateMinimapButton()
     button = CreateFrame("Button", "WaymarkMinimapButton", Minimap)
     button:SetSize(31, 31)
@@ -44,14 +63,7 @@ function ns.CreateMinimapButton()
     icon:SetTexture(ns.MEDIA .. "MinimapIcon")
     icon:SetPoint("TOPLEFT", 7, -5)
 
-    -- (click: the map; right-click: the settings, as the map's gear: Controls.lua)
-    button:SetScript("OnClick", function(_, mouse)
-        if mouse == "RightButton" then
-            ns.ToggleOptions()
-        elseif ToggleBattlefieldMap then
-            pcall(ToggleBattlefieldMap)
-        end
-    end)
+    button:SetScript("OnClick", function(_, mouse) Click(mouse) end)
     button:SetScript("OnDragStart", function()
         button:SetScript("OnUpdate", OnDragUpdate)
     end)

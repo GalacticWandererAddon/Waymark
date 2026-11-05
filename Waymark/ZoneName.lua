@@ -398,22 +398,7 @@ function ns.SetupZoneName(map)
             if ns.DungeonPreviewing and ns.DungeonPreviewing() and ns.EndDungeonPreview then ns.EndDungeonPreview() end
             if ns.Browsing and ns.Browsing() and ns.BrowseHome then ns.BrowseHome() end
         elseif button == "RightButton" and ns.QuillMenu then
-            GameTooltip:Hide()
-            local docked = ns.Docked and ns.Docked()
-            local items = {
-                { (ns.MapIsBig and ns.MapIsBig()) and "normal size" or "big map",
-                  function() if ns.ToggleBigMap then ns.ToggleBigMap() end end },
-                { docked and "undock from the minimap" or "dock to the minimap",
-                  function() if ns.ToggleDock then ns.ToggleDock() end end },
-                { "frame settings", function() if ns.ShowOption then ns.ShowOption("border", "style") end end },
-                { ns.db.mapFrame.locked and "unlock the map" or "lock the map in place",
-                  function() if ns.ToggleMapLock then ns.ToggleMapLock() end end },
-            }
-            -- (folding is the window's: not over the minimap)
-            if not docked and ns.ToggleCollapse then
-                items[#items + 1] = { (ns.MapFolded and ns.MapFolded()) and "unfold the map" or "fold the map", ns.ToggleCollapse }
-            end
-            ns.QuillMenu(items)
+            ns.MapFrameMenu()
         end
     end)
     header:SetScript("OnEnter", function(self)
@@ -434,4 +419,27 @@ function ns.SetupZoneName(map)
     map:HookScript("OnShow", ns.UpdateZoneName)
     map:HookScript("OnHide", ns.UpdateZoneName)
     ns.UpdateZoneName()
+end
+
+-- the map frame's own menu: its header's, and the docked square's rim
+function ns.MapFrameMenu()
+    GameTooltip:Hide()
+    local docked = ns.Docked and ns.Docked()
+    local items = {
+        { (ns.MapIsBig and ns.MapIsBig()) and "normal size" or "big map",
+          function() if ns.ToggleBigMap then ns.ToggleBigMap() end end },
+        { docked and "undock from the minimap" or "dock to the minimap",
+          function() if ns.ToggleDock then ns.ToggleDock() end end },
+        { "frame settings", function() if ns.ShowOption then ns.ShowOption("border", "style") end end },
+        { ns.db.mapFrame.locked and "unlock the map" or "lock the map in place",
+          function() if ns.ToggleMapLock then ns.ToggleMapLock() end end },
+    }
+    if docked and ns.DockHasSpot and ns.DockHasSpot() then
+        items[#items + 1] = { "back to the minimap's spot", ns.DockSpotReset }
+    end
+    -- (folding is the window's: not over the minimap)
+    if not docked and ns.ToggleCollapse then
+        items[#items + 1] = { (ns.MapFolded and ns.MapFolded()) and "unfold the map" or "fold the map", ns.ToggleCollapse }
+    end
+    ns.QuillMenu(items)
 end

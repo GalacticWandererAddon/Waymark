@@ -69,6 +69,11 @@ local undocking
 local canvasFixes = 0  -- times the canvas had lost its place on screen (SetupDock)
 
 function ns.Docked() return applied ~= nil end
+-- what the square is measured from: the minimap, unless the Lab's patch of blips has taken it away
+-- and left this in its place (ns.DockHoldSquare)
+local box
+local function Box() return box or Minimap end
+function ns.DockSquareBox() return Box() end
 
 local function StrataN(f)
     local s = f:GetFrameStrata()
@@ -219,7 +224,15 @@ end
 
 local function PlaceMinimap()
     if not applied or InCombat() then return end
+    if ns.DockPatchOff then ns.DockPatchOff() end
     local mm = Minimap
+    local spot = Cfg().spot  -- (where you dragged it by the header: its top-right, UI units)
+    if spot then
+        local k = UIParent:GetEffectiveScale() / mm:GetEffectiveScale()
+        mm:ClearAllPoints()
+        mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", spot[1] * k, spot[2] * k)
+        return
+    end
     if Cfg().corner then
         local x, y = CornerOffsets()
         local k = UIParent:GetEffectiveScale() / mm:GetEffectiveScale()
@@ -258,7 +271,10 @@ local function Square()
     GetMinimapShape = function() return "SQUARE" end  -- (LibDBIcon places buttons by it)
     if a.rotate == "1" then SetCVar("rotateMinimap", "0") end
     for _, name in ipairs(ART) do Stash(name, a.stashed) end
-    if Cfg().hideSun then Stash("GameTimeFrame", a.stashed) end  -- (the day / night sun and moon)
+    -- the day / night sun and moon: we have our own. Forever's is its own frame, always hidden here
+    -- (GameTimeFrame there is the calendar); on the old clients it's that button, as you set it
+    if MinimapCluster and MinimapCluster.DielFrame then Stash(MinimapCluster.DielFrame, a.stashed)
+    elseif Cfg().hideSun then Stash("GameTimeFrame", a.stashed) end
     -- (live Forever's title bar, over our header. The tracking button is anchored to it
     -- and stays where it is. The old global name in ART finds nothing there.)
     if Cfg().hideTitle ~= false and MinimapCluster and MinimapCluster.ZoneTextButton then
@@ -269,6 +285,9 @@ local function Square()
     end
     if Cfg().wheel then
         for _, name in ipairs(ZOOM_BUTTONS) do Stash(name, a.stashed) end
+        -- (Forever's, on the minimap itself: the old global names find nothing there)
+        Stash(mm.ZoomIn, a.stashed)
+        Stash(mm.ZoomOut, a.stashed)
         mm:EnableMouseWheel(true)
     end
     CreateFrames()
@@ -280,6 +299,7 @@ end
 
 local function Unsquare()
     if not applied then return end
+    if ns.DockPatchOff then ns.DockPatchOff() end
     local mm, a = Minimap, applied
     applied = nil
     mm:ClearAllPoints()
@@ -338,20 +358,59 @@ function ns.DockedSize(map)
         local w, h = BigWH()
         return w * u + i[1] + i[2], h * u + i[3] + i[4]
     end
-    local side = Minimap:GetWidth() * Minimap:GetEffectiveScale() / map:GetEffectiveScale()
+    local side = Box():GetWidth() * Box():GetEffectiveScale() / map:GetEffectiveScale()
     return side + i[1] + i[2], side + i[3] + i[4]
 end
 
 -- before the map first moves: its own anchors and strata, kept for undocking;
 -- and every time one strata over the minimap's (it may change after we dock:
 -- /bfi check saw it HIGH with the map still MEDIUM under it)
+local mapUnder  -- the Lab's patch of blips: the map goes under the minimap instead
 local function RaiseMap(map)
     if not mapWas then
         mapWas = { strata = map:GetFrameStrata(), points = {} }
         for i = 1, map:GetNumPoints() do mapWas.points[i] = { map:GetPoint(i) } end
     end
-    local want = math.min(#STRATA, StrataN(Minimap) + 1)
+    local want = mapUnder and 1 or math.min(#STRATA, StrataN(Box()) + 1)
     if StrataN(map) ~= want then map:SetFrameStrata(STRATA[want]) end
+end
+
+-- The Lab's patch of blips: the map's picture and pins go under the minimap. Lowering the scroll area
+-- alone doesn't do it (tested on live), so the whole map goes and the frame's other parts, its
+-- header and buttons, are put back where they were, or whatever sits by the map covers them
+local chrome
+local function Keep(f, sc)
+    for _, c in ipairs({ f:GetChildren() }) do
+        if c ~= sc then
+            chrome[#chrome + 1] = { c, c:GetFrameStrata(), c:GetFrameLevel() }
+            Keep(c, sc)
+        end
+    end
+end
+-- (parents first: a frame's strata runs down to what's in it, so each is put back in turn, levels
+-- too: the frame's parts lie in several stratas and the header sits over the border by its level)
+local function PutBack()
+    for _, k in ipairs(chrome) do
+        k[1]:SetFrameStrata(k[2])
+        k[1]:SetFrameLevel(k[3])
+    end
+end
+function ns.DockMapUnder(on)
+    local map = BattlefieldMapFrame
+    if not (map and mapWas) then return end
+    local sc = map.ScrollContainer
+    if on and not chrome then
+        chrome = {}
+        Keep(map, sc)
+    end
+    mapUnder = on or nil
+    -- (the square's dark rim lies in LOW, normally under the map: over a lowered map it's a line
+    -- across the frame and header)
+    if edge then edge:SetShown(not on) end
+    RaiseMap(map)
+    if not on and sc then sc:SetFrameStrata(map:GetFrameStrata()) end
+    if chrome then PutBack() end
+    if not on then chrome = nil end
 end
 
 -- MapControls: placed so its scroll area's top-right corner is the minimap's
@@ -365,12 +424,55 @@ end
 -- moves while docked).
 local BIG_GAP = 24  -- between the square's border and the big map's, map units
 
+-- The square's rim takes a right-click for the map's menu: docked with no header there's nowhere
+-- else to ask, and on the minimap side the map takes no mouse at all. Four strips on the frame's
+-- edge, not over the picture, so a right-click on the map itself stays what it was.
+local rim
+local function PlaceRim(map)
+    if not rim then
+        rim = CreateFrame("Frame", nil, map)
+        rim:SetAllPoints(map)
+        rim:SetFrameLevel(5600)
+        rim:EnableMouse(false)
+        rim.sides = {}
+        for i, side in ipairs({ "LEFT", "RIGHT", "TOP", "BOTTOM" }) do
+            local f = CreateFrame("Frame", nil, rim)
+            f:SetFrameLevel(5600)
+            f:EnableMouse(true)
+            f:SetPoint(side == "RIGHT" and "TOPRIGHT" or side == "BOTTOM" and "BOTTOMLEFT" or "TOPLEFT")
+            f:SetPoint(side == "LEFT" and "BOTTOMLEFT" or side == "TOP" and "TOPRIGHT" or "BOTTOMRIGHT")
+            f:SetScript("OnMouseUp", function(_, button)
+                if button == "RightButton" and ns.MapFrameMenu then ns.MapFrameMenu() end
+            end)
+            f:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                ns.Hints({ { "Right-click", "the map's menu" } })
+                GameTooltip:Show()
+            end)
+            f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            rim.sides[i] = f
+        end
+    end
+    local i = Insets(map)
+    local s = rim.sides
+    s[1]:SetWidth(math.max(7, i[1] + 2))
+    s[2]:SetWidth(math.max(7, i[2] + 2))
+    s[3]:SetHeight(math.max(7, i[3] + 2))
+    s[4]:SetHeight(math.max(7, i[4] + 2))
+    rim:Show()
+end
+
 function ns.DockPlace(map)
-    if not applied then return false end
-    local l, r, t = Minimap:GetLeft(), Minimap:GetRight(), Minimap:GetTop()
+    if not applied then
+        if rim then rim:Hide() end
+        return false
+    end
+    PlaceRim(map)
+    if ns.UpdateClock then ns.UpdateClock() end  -- (it stays by the square when the big map opens)
+    local l, r, t = Box():GetLeft(), Box():GetRight(), Box():GetTop()
     if not r then return false end
     RaiseMap(map)
-    local k = Minimap:GetEffectiveScale() / map:GetEffectiveScale()
+    local k = Box():GetEffectiveScale() / map:GetEffectiveScale()
     local i = Insets(map)
     map:ClearAllPoints()
     if IsBig() then
@@ -407,7 +509,7 @@ local function Yards() return IsIndoors and IsIndoors() and YARDS_IN or YARDS_OU
 local function MinimapScale(sc, z)
     local yards = sc.mapID and ns.MapYards and ns.MapYards(sc.mapID)
     local cw = sc.Child and sc.Child:GetWidth()
-    local w = Minimap:GetWidth() * Minimap:GetEffectiveScale() / sc:GetEffectiveScale()
+    local w = Box():GetWidth() * Box():GetEffectiveScale() / sc:GetEffectiveScale()
     local list = Yards()
     local across = list[(z or 0) + 1] or list[1]
     local s = yards and cw and cw > 0 and w > 0 and w * yards / (cw * across) or nil
@@ -417,6 +519,31 @@ local function MinimapScale(sc, z)
             tostring(math.floor(w)), across, s and string.format("%.2f", s) or "none")
     end
     return s
+end
+
+ns.DockMinimapScale = MinimapScale
+
+-- The Lab's patch of blips moves and shrinks the minimap: first the square is held where it is
+local boxFrame
+function ns.DockHoldSquare(on)
+    if on and not box then
+        boxFrame = boxFrame or CreateFrame("Frame", nil, UIParent)
+        local e = Minimap:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        boxFrame:ClearAllPoints()
+        boxFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", Minimap:GetLeft() * e, Minimap:GetBottom() * e)
+        boxFrame:SetSize(Minimap:GetWidth() * e, Minimap:GetHeight() * e)
+        boxFrame:SetFrameStrata(Minimap:GetFrameStrata())
+        box = boxFrame
+    elseif not on then
+        box = nil
+    end
+    for _, f in ipairs({ edge, glow, host }) do
+        if f then
+            f:ClearAllPoints()
+            f:SetAllPoints(Box())
+        end
+    end
+    if ns.UpdateClock then ns.UpdateClock() end  -- (it hangs on the square too)
 end
 
 -- the minimap zoom nearest to a canvas scale
@@ -678,7 +805,19 @@ function ns.DockViewFactor(vw)
     return vw / nw
 end
 
+local ApplyFaceNow
 local function ApplyFace()
+    if MinimapFace() and ns.DockPatchOff then ns.DockPatchOff() end
+    ApplyFaceNow()
+    if ns.MinimapGroundSync then ns.MinimapGroundSync() end  -- (the Lab: our art under the blips)
+    -- (the hour's tint looks once a second: art laid for the new side showed its plain colour till then)
+    if ns.UpdateMapHour then
+        ns.UpdateMapHour()
+        C_Timer.After(0, ns.UpdateMapHour)
+    end
+end
+ns.DockRefreshFace = ApplyFace
+ApplyFaceNow = function()
     local map = BattlefieldMapFrame
     local sc = map and map.ScrollContainer
     if not sc then return end
@@ -692,7 +831,11 @@ local function ApplyFace()
         map:EnableMouse(false)
         sc:EnableMouse(false)
         sc:EnableMouseWheel(false)
-        FadePicture(map, true)
+        -- (wheeled in with the left button held: the map loses its mouse here and never hears the
+        -- button come up, so it would go on panning after the cursor, pins and all)
+        local held = sc.mouseButtonInfo and sc.mouseButtonInfo.LeftButton
+        if held then held.down = false end
+        FadePicture(map, not (ns.DockOurArt and ns.DockOurArt()))
     else
         if mouseWas then
             map:EnableMouse(mouseWas[1])
@@ -709,8 +852,9 @@ end
 -- its art, so pins there sit a little off)
 local function MinimapFaceView(map)
     local sc = map.ScrollContainer
-    -- (first: in instances there's no position, and the art covered the minimap)
-    FadePicture(map, true)
+    -- (first: in instances there's no position, and the art covered the minimap. The Lab's art under
+    -- the blips keeps the picture, lying under the minimap)
+    FadePicture(map, not (ns.DockOurArt and ns.DockOurArt()))
     local s = MinimapScale(sc, Minimap:GetZoom())
     -- (the zoom levels made before this face, or for another map: rebuilt to reach it)
     local _, hi = ns.ZoomRange and ns.ZoomRange(sc)
@@ -820,7 +964,7 @@ local function CloseMap(z)
     if applied and map and map.ScrollContainer:IsVisible() then MinimapFaceView(map) end
 end
 -- (Dungeon.lua: the dungeon map's Minimap button while docked)
-function ns.DockShowMinimap() CloseMap() end
+function ns.DockShowMinimap(z) CloseMap(z) end
 
 -- MapControls ToggleBigMap while docked: the big map face, grown from the
 -- square's corner, and back to the square (still the map face). At once, not
@@ -879,8 +1023,10 @@ function ns.DockToggleBig()
         end
         Cfg().big = true
         UpdateMap()
-        -- the whole zone, once the big size's zoom steps are in
-        if ns.MapZoomOutFully then C_Timer.After(0.1, ns.MapZoomOutFully) end
+        -- the whole zone, no glide: next frame, and again once the big size's zoom steps are in
+        if ns.MapZoomOutFully then
+            for _, t in ipairs({ 0, 0.1 }) do C_Timer.After(t, function() ns.MapZoomOutFully(true) end) end
+        end
     end
     RedrawPicture(map)
 end
@@ -975,7 +1121,7 @@ function LiftButtons()
     OwnDrags(true)  -- (docked: holding moves them, their own drag off)
     local map = BattlefieldMapFrame
     if map and mapWas then RaiseMap(map) end
-    local over = math.max(map and mapWas and StrataN(map) or 1, StrataN(Minimap) + 1)
+    local over = math.max(map and mapWas and StrataN(map) or 1, StrataN(Box()) + 1)
     local wantN = math.min(#STRATA, over + 1)
     if StrataN(host) ~= wantN then host:SetFrameStrata(STRATA[wantN]) end
     -- never a frame the minimap itself sits in: its cluster keeps it in an
@@ -1029,8 +1175,8 @@ local function Ghost(map)
     local i = Insets(map)
     local k = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
     ghost:ClearAllPoints()
-    ghost:SetPoint("TOPLEFT", Minimap, "TOPLEFT", -i[1] * k, i[3] * k)
-    ghost:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", i[2] * k, -i[4] * k)
+    ghost:SetPoint("TOPLEFT", Box(), "TOPLEFT", -i[1] * k, i[3] * k)
+    ghost:SetPoint("BOTTOMRIGHT", Box(), "BOTTOMRIGHT", i[2] * k, -i[4] * k)
     return ghost
 end
 
@@ -1187,6 +1333,44 @@ local function ResizeBig(map, w, h, dragging)
     RedrawPicture(map)
 end
 
+-- Dragged by the header: the square goes where you put it, over Edit Mode's spot and the corner, till
+-- the frame's menu sends it back. Not in a fight, so it can't be dragged by accident.
+local squareDrag
+local squareMover
+function ns.DockSquareMoving() return squareDrag ~= nil end
+function ns.DockHasSpot() return Cfg().spot ~= nil end
+function ns.DockSquareDragStop()
+    if not squareDrag then return false end
+    squareDrag = nil
+    squareMover:SetScript("OnUpdate", nil)
+    Redraw()
+    if ns.DockMoveBuffs then ns.Safe("Dock buffs", ns.DockMoveBuffs) end
+    return true
+end
+function ns.DockSquareDragStart()
+    if not applied or InCombat() or squareDrag then return end
+    if ns.DockPatchOff then ns.DockPatchOff() end
+    local e = Minimap:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    local s = UIParent:GetEffectiveScale()
+    local x, y = GetCursorPosition()
+    squareDrag = { x / s, y / s, Minimap:GetRight() * e, Minimap:GetTop() * e }
+    squareMover = squareMover or CreateFrame("Frame")
+    squareMover:SetScript("OnUpdate", function()
+        if not IsMouseButtonDown("LeftButton") then return ns.DockSquareDragStop() end
+        local cx, cy = GetCursorPosition()
+        local d = squareDrag
+        Cfg().spot = { d[3] + cx / s - d[1], d[4] + cy / s - d[2] }
+        PlaceMinimap()
+        ns.DockPlace(BattlefieldMapFrame)
+    end)
+end
+function ns.DockSpotReset()
+    Cfg().spot = nil
+    PlaceMinimap()
+    Redraw()
+    if ns.DockMoveBuffs then ns.Safe("Dock buffs", ns.DockMoveBuffs) end
+end
+
 function ns.DockResize(map, w, h, dragging)
     if IsBig() then return ResizeBig(map, w, h, dragging) end
     local c = Cfg()
@@ -1196,16 +1380,26 @@ function ns.DockResize(map, w, h, dragging)
     elseif dragging then
         if not dragBase then dragBase = { w = w, h = h, side = c[key] or default } end
         local grow = math.max(dragBase.w - w, h - dragBase.h) * map:GetEffectiveScale() / UIParent:GetEffectiveScale()
-        c[key] = math.floor(Clamp(dragBase.side + grow, MIN_SIZE, MAX_SIZE) + 0.5)
+        -- (an outline while the corner's dragged, as the big map does: the square and all that hangs
+        -- on it change once, on release. Live, the map flickered at every pixel)
+        dragBase.side2 = math.floor(Clamp(dragBase.side + grow, MIN_SIZE, MAX_SIZE) + 0.5)
+        local side = dragBase.side2 * ns.AddonScale()
+        Outline(map, side, side)
+        return
     else
+        if dragBase and dragBase.side2 then c[key] = dragBase.side2 end
         dragBase = nil
     end
+    Outline(map, nil)
     if key == "size" then
         if InCombat() then pending = true return end
+        if ns.DockPatchOff then ns.DockPatchOff() end
         local s = SideOnMinimap()
         Minimap:SetSize(s, s)
     end
     if ns.UpdateMapShape then ns.Safe("Dock UpdateShape", ns.UpdateMapShape, true, true) end
+    -- (the square's size sets the scale that matches the minimap: on you at it, step by step)
+    if MinimapFace() then ns.Safe("Dock resize view", MinimapFaceView, map) end
     if not dragging then
         if key == "size" then Redraw() end
         if ns.DockMoveBuffs then ns.Safe("Dock buffs", ns.DockMoveBuffs) end
@@ -1511,7 +1705,8 @@ function ns.DockMoveBuffs()
     local left
     if applied then
         local top = UIParent:GetTop()
-        for _, f in ipairs({ Minimap, BattlefieldMapFrame }) do
+        -- (the square alone: the big map opens over them for a moment, they don't jump aside for it)
+        for _, f in ipairs({ Box(), not IsBig() and BattlefieldMapFrame or nil }) do
             if f and f:IsVisible() and f:GetLeft() and f:GetTop() then
                 local k = UIUnits(f)
                 if f:GetTop() * k > top - 160 then
@@ -1659,6 +1854,28 @@ events:SetScript("OnEvent", function(_, event)
     end
 end)
 
+-- the canvas has a place on screen; docked, if it lost one, it's placed again first
+function ns.DockCanvasPlaced(sc)
+    if not sc.Child or sc.Child:GetLeft() then return true end
+    if applied and ns.ApplyMapView then
+        canvasFixes = canvasFixes + 1
+        pcall(ns.ApplyMapView, sc, sc:GetCanvasScale(), sc.currentScrollX or 0.5, sc.currentScrollY or 0.5)
+    end
+    return sc.Child:GetLeft() ~= nil
+end
+
+-- The wheel can land between two of the ticker's checks, and the game's wheel code
+-- measures the cursor from the canvas (MapCanvas_ScrollContainerMixin.lua:195).
+-- Must run before anything hooks the wheel: SetScript drops hooks.
+function ns.GuardMapWheel(map)
+    local sc = map.ScrollContainer
+    local gameWheel = sc and sc:GetScript("OnMouseWheel")
+    if not gameWheel then return end
+    sc:SetScript("OnMouseWheel", function(self, ...)
+        if ns.DockCanvasPlaced(self) then return gameWheel(self, ...) end
+    end)
+end
+
 -- the map side, once the Battlefield Map's addon has loaded
 function ns.SetupDock(map)
     local sc = map.ScrollContainer
@@ -1678,11 +1895,7 @@ function ns.SetupDock(map)
     local gameUpdate = sc:GetScript("OnUpdate")
     if gameUpdate then
         sc:SetScript("OnUpdate", function(self, ...)
-            if applied and self.Child and not self.Child:GetLeft() and ns.ApplyMapView then
-                canvasFixes = canvasFixes + 1
-                pcall(ns.ApplyMapView, self, self:GetCanvasScale(), self.currentScrollX or 0.5, self.currentScrollY or 0.5)
-                if not self.Child:GetLeft() then return end  -- (still nowhere: skip the game's this frame)
-            end
+            if applied and not ns.DockCanvasPlaced(self) then return end  -- (still nowhere: skip the game's this frame)
             return gameUpdate(self, ...)
         end)
     end

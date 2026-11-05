@@ -57,7 +57,7 @@ local DEFAULTS = {
     -- face: "minimap" or "map", the one showing; corner: pushed into the
     -- screen's top-right corner; big / bigSize: the map face grown (UI units)
     -- splitQuests: objective spots on the minimap face, quest ground on the map's (ns.SplitHides)
-    dock       = { on = false, size = 160, wheel = true, friction = 2, face = "minimap", splitQuests = false,
+    dock       = { on = false, size = 160, wheel = true, friction = 2, face = "minimap", ourGround = true, splitQuests = false,
                    corner = true, big = false, bigSize = 360, mapOnly = false, hideSun = false, hideTitle = true },
     -- the map lets clicks through unless this modifier (ALT, CTRL, SHIFT) is held (ClickThrough.lua)
     clickThrough = { on = false, modifier = "ALT", combat = false },
@@ -350,7 +350,6 @@ local DEFAULTS = {
         battleground = { enabled = false, hideMap = false, layers = {} },
         dungeon      = { enabled = false, hideMap = false, layers = {} },
         city         = { enabled = false, hideMap = false, layers = {} },
-        gathering    = { enabled = false, hideMap = false, layers = {} },
     },
 }
 
@@ -646,9 +645,21 @@ end
 function ns.ToggleLayer(group, key)
     local cfg = ns.db[group]
     if not cfg then return end
+    local profile = ns.ActiveProfile and ns.ActiveProfile()
+    -- a fight is too short a context to remember clicks in: switching a layer off mid-fight and
+    -- having it back after confuses people. So there a click is plain: it's your own setting, and
+    -- a rule the combat profile had for the layer goes, or the click wouldn't hold
+    if key == "shown" and ActiveKey() == "combat" then
+        cfg.shown = not ns.IsShown(group)
+        if profile and profile.layers and profile.layers[group] ~= nil then
+            profile.layers[group] = nil
+            if ns.RefreshControls then ns.RefreshControls() end  -- (the profiles page)
+        end
+        ns.OnSettingChanged(group, key)
+        return
+    end
     -- toggles.saveToProfile: the click is kept in the active context profile, so
     -- the layer is that way every time you're in that context again
-    local profile = ns.ActiveProfile and ns.ActiveProfile()
     if key == "shown" and profile and profile.layers and ns.db.toggles.saveToProfile then
         profile.layers[group] = not ns.IsShown(group)
         manual[group] = nil
@@ -865,6 +876,8 @@ end
 -- (building: the pins made for this map, the face aside: ApplyGroups shows them per face.
 -- Left out here, the map face's spots were never made and the minimap had none.)
 local function PinsShown(group, building)
+    -- (the Lab: the real minimap lies over the map and draws you and your group itself)
+    if group == "party" and ns.MinimapDrawsYou and ns.MinimapDrawsYou() then return false end
     if group == "spots" and ns.SpotsAsGround() then return true end
     if group == "spots" and not building and ns.SplitHides("spots") then return false end
     return ns.IsShown(group)
@@ -1126,6 +1139,7 @@ local function SetupResize(map)
     grip:SetPoint("BOTTOMRIGHT", map, "BOTTOMRIGHT", -2, 2)
     ns.debugFrames.grip = grip
     grip:SetFrameStrata("DIALOG")
+    grip:SetHitRectInsets(-7, -7, -7, -7)  -- (a miss lands on the map and pans it: an easier target)
     grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
     grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
     grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
@@ -1530,17 +1544,32 @@ local function SetupFrameLevels(map)
         return
     end
     local maxQuests = C_QuestLog and C_QuestLog.GetMaxNumQuests and C_QuestLog.GetMaxNumQuests() or 25
+    -- all under the player and party arrows: each one lands just below that level,
+    -- so they stack in the order written here
+    local under = "PIN_FRAME_LEVEL_VEHICLE_BELOW_GROUP_MEMBER"
+    local function Add(level, range)
+        if not (mgr.InsertFrameLevelBelow and mgr:InsertFrameLevelBelow(level, under, range)) then
+            mgr:AddFrameLevel(level, range)
+        end
+    end
     local ok, err = pcall(function()
-        mgr:AddFrameLevel("PIN_FRAME_LEVEL_QUEST_BLOB")
-        mgr:AddFrameLevel("PIN_FRAME_LEVEL_ACTIVE_QUEST", maxQuests)
-        mgr:AddFrameLevel("PIN_FRAME_LEVEL_SUPER_TRACKED_QUEST")
-        mgr:AddFrameLevel("PIN_FRAME_LEVEL_BFI_GATHER")    -- gathering nodes, lowest of ours
-        mgr:AddFrameLevel("PIN_FRAME_LEVEL_BFI_TOWNSFOLK") -- townsfolk
-        mgr:AddFrameLevel("PIN_FRAME_LEVEL_BFI_SPOTS")    -- objective spots, under givers/turn-ins
-        mgr:AddFrameLevel("PIN_FRAME_LEVEL_BFI_RARES")    -- RareScanner, above spots
-        mgr:AddFrameLevel("PIN_FRAME_LEVEL_BFI_DUNGEONS") -- dungeon entrances
-        mgr:AddFrameLevel("PIN_FRAME_LEVEL_BFI_LEARNED")  -- quest givers we learned, with QuestieDB's
-        mgr:AddFrameLevel("PIN_FRAME_LEVEL_BFI_QUESTIE")
+        Add("PIN_FRAME_LEVEL_QUEST_BLOB")
+        Add("PIN_FRAME_LEVEL_ACTIVE_QUEST", maxQuests)
+        Add("PIN_FRAME_LEVEL_SUPER_TRACKED_QUEST")
+        Add("PIN_FRAME_LEVEL_BFI_GATHER")    -- gathering nodes, lowest of ours
+        Add("PIN_FRAME_LEVEL_BFI_TOWNSFOLK") -- townsfolk
+        Add("PIN_FRAME_LEVEL_BFI_SPOTS")    -- objective spots, under givers/turn-ins
+        Add("PIN_FRAME_LEVEL_BFI_RARES")    -- RareScanner, above spots
+        Add("PIN_FRAME_LEVEL_BFI_DUNGEONS") -- dungeon entrances
+        Add("PIN_FRAME_LEVEL_BFI_LEARNED")  -- quest givers we learned, with QuestieDB's
+        Add("PIN_FRAME_LEVEL_BFI_QUESTIE")
+        -- (pins made before this keep their old level until told)
+        if map.ReapplyPinFrameLevels then
+            for _, level in ipairs({ under, "PIN_FRAME_LEVEL_BATTLEFIELD_FLAG", "PIN_FRAME_LEVEL_GROUP_MEMBER",
+                                     "PIN_FRAME_LEVEL_VEHICLE_ABOVE_GROUP_MEMBER", "PIN_FRAME_LEVEL_CORPSE" }) do
+                map:ReapplyPinFrameLevels(level)
+            end
+        end
     end)
     if not ok then Log("frame levels failed:", err) end
 end
@@ -1603,6 +1632,7 @@ local function Setup()
     ns.basePinScale = map.GetGlobalPinScale and map:GetGlobalPinScale() or map.globalPinScale or 1
 
     SetupFrameLevels(map)
+    if ns.GuardMapWheel then ns.GuardMapWheel(map) end  -- (first: before the wheel hooks)
     SetupResize(map)
     -- Blizzard's quest tracker providers are Forever-only: on Era they fail
     -- half set up and taint (chat spam every login), so skip them there

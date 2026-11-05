@@ -10,6 +10,13 @@ ns.FOREVER = interface >= 16000 and interface < 20000
 ns.CLASSIC_ERA = interface >= 11500 and interface < 12000
 ns.CLIENT = ns.FOREVER and "forever" or ns.CLASSIC_ERA and "classic era" or "other"
 
+-- Live Forever hides some unit values as "secret": comparing one, testing it or using it
+-- as a table key errors. This gives nil instead, so a caller treats it as not known.
+function ns.Known(v)
+    if issecretvalue and issecretvalue(v) then return nil end
+    return v
+end
+
 -- Calls live Forever took away from the globals. Each file that uses one starts with
 -- `local GetItemInfo = GetItemInfo or ns.GetItemInfo`. (Not put back as globals: that
 -- would be ours in the game's own code. /waymark check lists any other that goes.)
@@ -52,11 +59,16 @@ function ns.GetMouseFocus()
     return foci and foci[1]
 end
 
+-- The dungeon map and all that runs inside dungeons: off on Forever till it's been played there. None of
+-- it has run in a live dungeon, and nobody should have to turn the addon off to do one. Entrances
+-- on the zone maps stay. One line to undo.
+ns.DungeonsOff = ns.FOREVER
+
 -- The game's own objective markers and blue quest areas are Forever's only (the map's
 -- providers aren't attached elsewhere, BattlefieldInfo.lua): their settings, buttons
 -- and preset rows don't show there. Their saved values are left alone.
--- Gathering is out of Forever's releases until GatherMate2 works there: the build leaves
--- Gather.lua out of the zip, and that switches the rest off. (Dev copies have the file.)
+-- Without Gather.lua in the build, the rest of gathering switches off (it was out of Forever's zips
+-- until 1.2.3, before GatherMate2 worked there).
 function ns.GatherPulled() return ns.FOREVER and not ns.SetupGather end
 
 function ns.NoGameLayer(group)

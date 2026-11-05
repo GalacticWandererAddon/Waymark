@@ -110,7 +110,10 @@ local function SetupMover(map)
     function ns.MapMoveStart()
         if Cfg().locked then return end  -- (locked in place: the header's menu, Placement)
         -- (docked over the minimap, Dock.lua: only the big map moves, to its own spot)
-        if ns.Docked and ns.Docked() and not (ns.DockBigMovable and ns.DockBigMovable()) then return end
+        if ns.Docked and ns.Docked() and not (ns.DockBigMovable and ns.DockBigMovable()) then
+            if ns.DockSquareDragStart then ns.DockSquareDragStart() end  -- (the square itself, by its header)
+            return
+        end
         -- detach from the tab exactly where it is, so it starts under the cursor
         local x, y = TopLeftUI(map)
         PinTopLeft(map, x, y)
@@ -121,6 +124,7 @@ local function SetupMover(map)
         moving = true
     end
     function ns.MapMoveStop()
+        if ns.DockSquareDragStop and ns.DockSquareDragStop() then return end
         if not moving then return end
         moving = false
         map:StopMovingOrSizing()
@@ -851,6 +855,8 @@ local function SetArrowSize(map, gm)
     local lo, s = sc and sc.zoomLevels and sc:GetScaleForMinZoom(), sc and sc:GetCanvasScale()
     local size = base
     if lo and s and lo > 0 and s > lo then size = base * (s / lo) ^ 0.35 end
+    -- (docked: one size at every zoom, the minimap's arrow's, so there's no jump between them)
+    if ns.Docked and ns.Docked() then size = base * 1.12 end
     if lastArrow and math.abs(size - lastArrow) < 0.25 then return end
     lastArrow = size
     pcall(gm.SetUnitPinSize, gm, "player", size)
@@ -1037,7 +1043,8 @@ end
 
 -- All the way out in one glide (Browse.lua's right-click): on a zone, to its
 -- fitted middle, as RefitZoom places a fully-out view. Your own zoom, as with the wheel.
-function ns.MapZoomOutFully()
+-- (instant: straight there, for the docked big map opening)
+function ns.MapZoomOutFully(instant)
     local map = BattlefieldMapFrame
     local sc = map and map.ScrollContainer
     local levels = sc and sc.zoomLevels
@@ -1050,6 +1057,7 @@ function ns.MapZoomOutFully()
     if cx and not Follows(sc) then x, y = cx, cy end
     local minX, maxX, minY, maxY = sc:CalculateScrollExtentsAtScale(s)
     if minX then x, y = Clamp(x, minX, maxX), Clamp(y, minY, maxY) end
+    if instant then ApplyView(sc, s, x, y) return end
     ns.GlideView(map, s, x, y, ns.GlideTime(sc:GetCanvasScale(), s, 0.3, 0.45))
 end
 
