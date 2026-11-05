@@ -36,7 +36,7 @@ Waymark builds on the game's own Battlefield Map (Shift-M): the small map you ca
 
 **From CurseForge:** install *Waymark: Battlefield Map* with the CurseForge app (formerly Battlefield Info: existing installs update by themselves).
 
-**By hand:** download `Waymark-Forever-1.2.1.zip` from the [latest release](../../releases/latest) and unzip it into
+**By hand:** download `Waymark-Forever-1.2.2.zip` from the [latest release](../../releases/latest) and unzip it into
 `World of Warcraft\_forever_\Interface\AddOns\`, so you end up with `AddOns\Waymark\Waymark.toc` and `AddOns\BattlefieldInfo\`
 (a small helper that carries 1.x settings over; it can be deleted once each character has logged in with Waymark).
 

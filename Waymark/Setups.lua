@@ -157,7 +157,7 @@ end
 
 ns.PRESETS = {
     { id = "creator", name = "Creator's", icon = "Interface\\Icons\\INV_Shield_06",
-      who = "How Waymark ships: the author's own settings. Quest givers, turn-ins, quest ink, the tracker and quest log, a framed map that follows you." },
+      who = "How Waymark ships: the author's own settings. Quest givers, turn-ins, objective spots, the tracker and quest log, a framed map that follows you." },
     { id = "purist", name = "Purist", icon = "Interface\\Icons\\INV_Misc_Map_01",
       who = "Classic vanilla: the plain Battlefield Map. No quest marks on it, just the quest tracker and quest window." },
     { id = "navigator", name = "Minimap Replacement", icon = "Interface\\Icons\\Spell_Nature_FarSight",
@@ -180,7 +180,7 @@ local GROUND_BY = { quest = "each quest its own", type = "by quest type" }
 -- { label, setting ("group.key", or "role": the map as a window, in clear view or
 -- docked), names, then the value for each preset in ns.PRESETS' order:
 -- creator, purist, navigator, minimalist }
--- (The Creator's column: Månesverd's own settings (Soulseeker, Classic Era, 2026-11-03),
+-- (The Creator's column: Lunarbow Wanderer's own settings (live Forever, 2026-11-05),
 -- but for arrows to lone spots, off.)
 local T, F = true, false
 local ROWS = {
@@ -188,13 +188,13 @@ local ROWS = {
     { "Quest givers", "questie.shown", nil,                  T, F, T, T },
     { "Coloured by difficulty", "questie.color", nil,        T, F, T, T },
     { "Turn-ins", "turnins.shown", nil,                      T, F, T, T },
-    { "Objective spots", "spots.shown", nil,                 F, F, F, F },
+    { "Objective spots", "spots.shown", nil,                 T, F, F, F },
     { "A colour per quest", "spots.color", nil,              F, F, F, F },
-    { "Quest ground", "ground.shown", nil,                   T, F, T, T },
+    { "Quest ground", "ground.shown", nil,                   F, F, T, T },
     { "Its look", "ground.look", GROUND,                 "ink", "ink", "ink", "ink" },
     { "Its colours", "ground.colorBy", GROUND_BY,        "type", "type", "type", "type" },
     { "Arrows to lone spots and turn-ins", "ground.arrows", nil, F, F, F, F },
-    { "Objective markers (the game's)", "objectives.shown", nil, T, F, T, T },
+    { "Objective markers (the game's)", "objectives.shown", nil, F, F, T, T },
     { "Quest areas (the game's)", "areas.shown", nil,        F, F, F, F },
     { "Learned quest givers", "learned.shown", nil,          T, F, T, T },
     { "Quest tracker", "tracker.shown", nil,                 T, T, T, T },
@@ -297,7 +297,21 @@ local POS = { pos = true, stockPos = true, lootPos = true, buttonPos = true, big
               zoneSizes = true, minimap = true, width = true, height = true, bigWidth = true, bigHeight = true,
               bigW = true, bigH = true, bigSize = true, freeHeight = true, maxHeight = true }
 local MINE = { scale = true, ["dock.size"] = true, ["questlog.scale"] = true }
-local function Yours(k, p) return POS[k] or MINE[p] end
+-- Keep my quest pins (Start here; on by default with Questie loaded): presets leave which
+-- quest pins show, their icons, sizes and colours, and the tooltips as they are
+local KEEP_QUEST = {}
+for _, p in ipairs({ "questie.shown", "questie.color", "questie.alpha", "questie.scale", "questie.iconSet",
+                     "questie.tooltip", "turnins.shown", "turnins.alpha", "turnins.scale", "turnins.iconSet",
+                     "spots.shown", "spots.color", "spots.alpha", "spots.scale" }) do
+    KEEP_QUEST[p] = true
+end
+function ns.KeepQuestPins()
+    local v = ns.db.keepQuestPins
+    if v == nil then return ns.QuestieArt() end
+    return v
+end
+local function KeptQuest(p) return KEEP_QUEST[p] and ns.KeepQuestPins() end
+local function Yours(k, p) return POS[k] or MINE[p] or KeptQuest(p) end
 -- the paths the rows set (counted as rows, not again as "every other setting")
 local ROW_PATHS = { ["dock.on"] = true, ["clearView.on"] = true, ["profiles.city.enabled"] = true,
                     ["profiles.city.layers.townsfolk"] = true }
@@ -441,7 +455,8 @@ function ns.PresetChanges(id)
     for _, row in ipairs(ROWS) do
         local want, now = row[3 + (i or 0)], Get(row[2])
         if s then want = Get(row[2], s) end
-        if (now and true or false) ~= (want and true or false) or (type(want) == "string" and now ~= want) then
+        if not KeptQuest(row[2])
+            and ((now and true or false) ~= (want and true or false) or (type(want) == "string" and now ~= want)) then
             out[#out + 1] = { row[1], Reads(row, now), Reads(row, want) }
         end
     end
@@ -468,7 +483,7 @@ local function SetRows(id)
     for _, row in ipairs(ROWS) do
         local want = row[3 + (i or 0)]
         if s then want = Get(row[2], s) end
-        if Get(row[2]) ~= want then Set(row[2], want, changed) end
+        if not KeptQuest(row[2]) and Get(row[2]) ~= want then Set(row[2], want, changed) end
     end
     for _, gk in ipairs(changed) do pcall(ns.OnSettingChanged, gk[1], gk[2]) end
     pcall(ns.RedrawAll)

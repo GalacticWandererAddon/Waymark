@@ -771,12 +771,47 @@ end
 local QUESTIE_SPOT_TYPE = { slay = "ICON_TYPE_SLAY", loot = "ICON_TYPE_LOOT",
     object = "ICON_TYPE_OBJECT", event = "ICON_TYPE_EVENT" }
 
+-- Questie's quest log: each quest's own table, with the colours it gave them. They come from a
+-- shuffled wheel, once a session, so they're read, not worked out. Nil where it isn't there.
+local function QuestieLog()
+    local player = QuestieLoader and QuestieLoader.ImportModule and QuestieLoader:ImportModule("QuestiePlayer")
+    return player and player.currentQuestlog or nil
+end
+
+local function QuestieQuestOf(id)
+    local log = ns.QuestieArt() and QuestieLog()
+    local q = log and log[id]
+    return type(q) == "table" and q or nil
+end
+
+-- the colour Questie gave this objective (its glow; the icon takes the quest's)
+local function QuestieObjectiveColor(quest, name)
+    name = name and name:lower()
+    if not name or name == "" then return quest.Color end
+    for _, list in ipairs({ quest.Objectives or {}, quest.SpecialObjectives or {} }) do
+        for _, o in pairs(list) do
+            if o.Color and o.Description and o.Description:lower():find(name, 1, true) then return o.Color end
+        end
+    end
+    return quest.Color
+end
+
 -- what the spots take from Questie, as a string: a change redraws them (BattlefieldInfo.lua)
 function ns.QuestieLookSig()
     local p = QuestieProfile()
     if not p then return "" end
     local used = Questie.usedIcons and Questie.ICON_TYPE_SLAY and Questie.usedIcons[Questie.ICON_TYPE_SLAY]
-    return tostring(p.iconTheme) .. tostring(p.questObjectiveColors) .. tostring(p.alwaysGlowMap) .. tostring(used)
+    -- (how many colours it has given so far: it hands them out after we've drawn)
+    local coloured = 0
+    for _, q in pairs(QuestieLog() or {}) do
+        if type(q) == "table" then
+            if q.Color then coloured = coloured + 1 end
+            for _, o in pairs(q.Objectives or {}) do
+                if o.Color then coloured = coloured + 1 end
+            end
+        end
+    end
+    return tostring(p.iconTheme) .. tostring(p.questObjectiveColors) .. tostring(p.alwaysGlowMap) .. tostring(used) .. coloured
 end
 
 -- Questie's own objectives and ours are both in use: the game's are left off then, as
@@ -813,6 +848,13 @@ local function QuestColor(id)
     elseif i == 4 then r, g, b = t, 0, 1 else r, g, b = 1, 0, q end
     return { 0.35 + r * 0.65, 0.35 + g * 0.65, 0.35 + b * 0.65 }
 end
+
+-- the glow behind a spot, where Questie's theme has one, Questie has no colour for it yet and
+-- "A colour per quest" is off: by what the objective asks (slay red, gather green, use blue)
+local SPOT_GLOW = {
+    slay = { 0.85, 0.1, 0.1 }, loot = { 0.2, 0.7, 0.2 },
+    object = { 0.25, 0.5, 0.95 }, event = { 0.6, 0.3, 0.9 },
+}
 
 -- The pins ---------------------------------------------------------------------
 
@@ -1243,11 +1285,17 @@ function ns.QuestIcons(mapID)
         else
             local game = GameObjectives(id)
             local qp = QuestieProfile()
-            local color = (ns.db.spots.color or qp and qp.questObjectiveColors) and QuestColor(id) or nil
-            local glow = qp and qp.alwaysGlowMap and (color or QuestColor(id)) or nil
+            -- (Questie's own colours where it has them, so ours match its pins)
+            local questie = QuestieQuestOf(id)
+            local color = (ns.db.spots.color or qp and qp.questObjectiveColors)
+                and (questie and questie.Color or QuestColor(id)) or nil
+            local glowOn = qp and qp.alwaysGlowMap
+            local questGlow = ns.db.spots.color and color or nil
             for _, t in ipairs(Targets(id)) do
                 local g = MatchObjective(t, game)
                 if not (g and g.finished) then
+                    local spotGlow = glowOn and (questie and QuestieObjectiveColor(questie, t.name)
+                        or questGlow or SPOT_GLOW[t.icon]) or nil
                     local spec = IconSpec(t.icon)
                     -- (on the map a masked icon is drawn whole, the mask exactly over
                     -- it: pins are small and scaled, a cropped one's mask landed off)
@@ -1270,7 +1318,7 @@ function ns.QuestIcons(mapID)
                             objective = g and g.text or t.text, objIcon = t.icon,
                             kind = "file", value = IconPath(t.icon),
                             l = crop[1], r = crop[2], t = crop[3], b = crop[4], mask = mask,
-                            iconColor = color, questieGlow = glow, thinned = not keep[k] or nil,
+                            iconColor = color, questieGlow = spotGlow, thinned = not keep[k] or nil,
                         }
                     end
                 end
@@ -1302,13 +1350,17 @@ end
 
 -- For "find on map" (the quest log's menu, Tracker.lua): the map where a quest in your
 -- log is to be done: its unfinished objectives' spots (done: its turn-in), the map
--- with most of them, where you are if it has any. Not in the log or none known:
--- where it's handed in, then its giver. nil: nowhere known
+-- with most of them, where you are if it has any. Not in the log: its giver first, you've
+-- yet to take it. None known: where it's handed in, then its giver. nil: nowhere known
 function ns.QuestFindMap(id)
     if not (id and Source()) then return nil end
     local count, here = {}, C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
     local function Add(m) count[m] = (count[m] or 0) + 1 end
     local e = Log()[id]
+    if not e then
+        local ok, ends = pcall(ns.QuestEnds, id)
+        if ok and ends and ends.from and ends.from.map then return ends.from.map end
+    end
     if e and not e.complete then
         local game = GameObjectives(id)
         for _, t in ipairs(Targets(id)) do

@@ -1148,6 +1148,7 @@ local function Column(parent, x, y, width, side)
             local h = PlaceCheck(c)
             Made(c, ch[2], Index(ch[2], self.y, h))
             self.y = self.y - h
+            if ch[3] then self:Note(ch[3], nil, nil, nil, 24) end  -- (what the option means)
         end
         Made(self.last, self.lastLabel, self.lastEntry, group, key)  -- (kept once for the reset)
     end
@@ -1230,6 +1231,61 @@ local function Column(parent, x, y, width, side)
         end)
         fs:SetText(fn() or "")
         self.y = self.y - 20 - te
+    end
+    -- A box of what's true right now: rows of { label, value }, each text or a function, the
+    -- values in gold, kept up to date as Live's. title, note: soft text above and below them.
+    function col:StatusBox(title, rows, note)
+        local LABEL_W = 150
+        local inner = width - 14
+        local box = CreateFrame("Frame", nil, parent)
+        box:SetPoint("TOPLEFT", x + 4, self.y - 2)
+        box:SetWidth(inner)
+        local bg = box:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(0, 0, 0, 0.35)
+        for i, side in ipairs({ { "TOPLEFT", "TOPRIGHT" }, { "BOTTOMLEFT", "BOTTOMRIGHT" },
+                                { "TOPLEFT", "BOTTOMLEFT" }, { "TOPRIGHT", "BOTTOMRIGHT" } }) do
+            local edge = box:CreateTexture(nil, "BORDER")
+            edge:SetColorTexture(0.36, 0.29, 0.18, 0.8)
+            edge:SetPoint(side[1])
+            edge:SetPoint(side[2])
+            if i <= 2 then edge:SetHeight(1) else edge:SetWidth(1) end
+        end
+        local y = -6
+        local function Text(of) return type(of) == "function" and of() or of or "" end
+        local function Line(text, colour, left, w)
+            local fs = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            fs:SetPoint("TOPLEFT", left, y)
+            fs:SetWidth(w)
+            fs:SetJustifyH("LEFT")
+            Ink(parent, fs, colour)
+            fs:SetText(text)
+            return fs
+        end
+        if title then
+            Line(title, INK_SOFT, 8, inner - 16)
+            y = y - 20
+        end
+        local live = {}
+        for _, row in ipairs(rows) do
+            live[#live + 1] = { Line(Text(row[1]), INK_SOFT, 8, LABEL_W), row[1] }
+            live[#live + 1] = { Line(Text(row[2]), INK, 8 + LABEL_W, inner - LABEL_W - 16), row[2] }
+            y = y - 20
+        end
+        if note then
+            local fs = Line(note, INK_SOFT, 8, inner - 16)
+            y = y - fs:GetStringHeight() - 4
+        end
+        box:SetHeight(4 - y)
+        local t = 0
+        box:SetScript("OnUpdate", function(_, dt)
+            t = t + dt
+            if t < 0.5 then return end
+            t = 0
+            for _, l in ipairs(live) do l[1]:SetText(Text(l[2])) end
+        end)
+        Index(title or "Showing now", self.y, 8 - y)
+        self.y = self.y + y - 14
     end
     -- a colour, stored as { r, g, b }: a swatch to click, then the game's picker
     function col:Color(label, group, key)
@@ -1435,11 +1491,11 @@ local function Column(parent, x, y, width, side)
         self.y = self.y - h
     end
     -- a wrapped line of small text (warnings, hints)
-    function col:Note(text, r, g, b)
+    function col:Note(text, r, g, b, indent)
         if adv and not advancedShown then return end  -- (not counted: not a setting)
         local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        fs:SetPoint("TOPLEFT", x + 4, self.y - 2)
-        fs:SetWidth(width - 14)
+        fs:SetPoint("TOPLEFT", x + 4 + (indent or 0), self.y - 2)
+        fs:SetWidth(width - 14 - (indent or 0))
         fs:SetJustifyH("LEFT")
         fs:SetTextColor(r or 0.75, g or 0.75, b or 0.75)
         if not r then Ink(parent, fs, INK_SOFT) end  -- (warnings keep their colour)
@@ -1827,6 +1883,12 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
     end
     controls[#controls + 1] = box
     w.y = w.y - inner - 12
+    w:CheckWith("Keep my quest pins", ns.KeepQuestPins, function(v)
+        ns.db.keepQuestPins = v and true or false
+        presetDone = nil
+        ns.RebuildOptionsPages()
+    end)
+    w:Tip("Presets leave which quest givers, turn-ins and objective spots show, their icons and sizes, and the tooltips as they are.")
 
     -- then the choices that matter most, each with > to its page
     w:Header("Main settings")
@@ -2717,14 +2779,59 @@ end }
 
 PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     local a = Column(p, 0, 0, HALF)
-    a:Header("Quest data")
-    a:Choice("Quests from", "questie", "source", {
-        { "own", "Waymark's own" }, { "both", "Waymark's, filled from QuestieDB" }, { "questiedb", "QuestieDB" },
-    })
-    a:Tip("Waymark's own: quest givers, turn-ins, objectives and quest ground from data built into the addon, no other addon needed. Filled from QuestieDB: ours first, QuestieDB for what ours lacks. QuestieDB: read from QuestieDB alone. Both need QuestieDB installed. Townsfolk follow this too. A change takes a /reload.")
-    a:Button("Reload now", function() ReloadUI() end)
-    a:Header("Quest givers & turn-ins", ns.ToggleIcon("questie"))
-    a:Check("Show quest givers", "questie", "shown")
+    local questie = ns.QuestieArt()
+    local function Docked() return ns.Docked and ns.Docked() end
+    -- (our pins, in whose look: the givers' and turn-ins' Icons; spots always take Questie's)
+    local function OurPins()
+        local spots = ns.IsShown("spots") or ns.SpotsAsGround()
+        if not (spots or ns.IsShown("questie") or ns.IsShown("turnins")) then return "No quest pins on" end
+        if not questie then return "Waymark's pins" end
+        if ns.db.questie.iconSet ~= "modern" then return "Waymark's pins with Questie's icons" end
+        return spots and "Waymark's pins, spots with Questie's icons" or "Waymark's pins"
+    end
+    if questie then
+        a:Header("Quest tooltips")
+        a:Radio("questie", "tooltip", {
+            { false, "Waymark's", "Our tooltips on our pins." },
+            { true, "Questie's", "Questie's tooltips on our pins. Right-click still gives details." },
+        })
+    else
+        a:Header("Showing now")
+    end
+    local rows = { { function() return Docked() and "Map and minimap" or "The map" end, OurPins } }
+    if questie then
+        rows[2] = { function() return Docked() and "Questie's pins" or "Round minimap" end,
+            function() return Docked() and "Hidden while docked" or "Questie's pins, by its own settings" end }
+        rows[3] = { "Tooltips", function() return ns.db.questie.tooltip and "Questie's" or "Waymark's" end }
+    end
+    a:StatusBox(questie and "Showing now" or nil, rows, ns.FOREVER
+        and "Under them, the game's own ! and ? on the minimap. Addons can't hide those: Track Quests in its tracking menu does." or nil)
+    a:Header("Which pins")
+    a:Check("Quest givers", "questie", "shown", nil, ns.ToggleIcon("questie"))
+    a:Check("Turn-ins", "turnins", "shown", nil, ns.ToggleIcon("turnins"))
+    a:Tip("Where to hand in finished quests.")
+    a:Check("Objective spots", "spots", "shown", nil, ns.ToggleIcon("spots"))
+    a:Live(function()
+        if ns.DockSplit() then return "Spots on the docked minimap, quest ground on the map." end
+        return Docked() and "On the map and the docked minimap, zoomed in or out." or "On the map."
+    end)
+    a:CheckWith("Docked: spots on the minimap, ground on the map", function() return ns.db.dock.splitQuests end,
+        function(v)
+            local d, g = ns.db.dock, ns.db.ground
+            d.splitQuests = v
+            -- (it needs the ground: on with this if it was off, and off again with it)
+            if v and not g.shown then
+                g.shown, d.splitGround = true, true
+                ns.OnSettingChanged("ground", "shown")
+            elseif not v and d.splitGround then
+                g.shown, d.splitGround = false, nil
+                ns.OnSettingChanged("ground", "shown")
+            end
+            ns.ApplyGroups()
+            ns.RefreshControls()
+        end)
+    a:Tip("Docked: objective spots show on the minimap and quest ground on the map, each only there. Turns quest ground on if it's off, and back off with this. Givers and turn-ins stay on both.")
+    a:Header("Look of givers and turn-ins", ns.ToggleIcon("questie"))
     a:Requires("questie", "shown")
     a:Check("Colour by quest difficulty", "questie", "color")
     a:CheckWith("Low-level (grey) quests", ns.GetTrivialQuests, ns.SetTrivialQuests)
@@ -2734,8 +2841,6 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     end)
     a:Tip("Right-click a quest giver and pick hide to hide its quests; this brings them all back (also /waymark unhide).")
     a:Requires()
-    a:Check("Show turn-ins", "turnins", "shown", nil, ns.ToggleIcon("turnins"))
-    a:Tip("Where to hand in finished quests.")
     -- (one look for both: turn-ins copy these, ns.ShareQuestLook)
     a:Requires(function() return ns.IsShown("questie") or ns.IsShown("turnins") end)
     a:Slider("Opacity", 0, 1, 0.05, "questie", "alpha")
@@ -2743,15 +2848,16 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     a:Choice("Icons", "questie", "iconSet", {
         { "questie", "Questie's" }, { "modern", "Modern" },
     })
-    a:Tip("Questie's: its round icons where Questie is installed; without it, the modern \"!\" and \"?\".")
-    a:Check(Needs("Questie's tooltip", "Questie"), "questie", "tooltip")
-    a:Tip("Every quest tooltip on the map, givers, turn-ins, objective spots and quest ground, shows Questie's own (its tooltip settings apply) instead of Waymark's.")
+    if questie then
+        a:Note("Only the look. Where the pins stand and how many stay Waymark's.")
+    else
+        a:Tip("Questie's: its round icons where Questie is installed; without it, the modern \"!\" and \"?\".")
+    end
     a:Check("Quest progress on tooltips", "questie", "unitTips")
     a:Tip("Hovering a monster, an item or a thing in the world your quests want: the quest and how far along that objective is (Kobold Vermin slain: 3/10). Where Questie is loaded, Questie's own lines do this instead.")
     a:Requires()
     a:Header("Objective spots", ns.ToggleIcon("spots"))
     if ns.QuestieArt() then a:Note("Questie is on: these spots take its theme's icons, colours and glow. Where they stand and how many stay Waymark's.") end
-    a:Check("Show", "spots", "shown")
     a:Requires("spots", "shown")
     a:Slider("Opacity", 0, 1, 0.05, "spots", "alpha")
     a:Slider("Size", 0.2, 2, 0.05, "spots", "scale")
@@ -2787,28 +2893,34 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     a:Check("Fade other quests while one is lit", "ground", "hush")
     a:Tip("Hovering a quest (its tracker line, its log line or its ground) or finding it on the map lights it up in gold. With this on, the other quests' ground fades meanwhile so the lit one stands out. Off: they stay as they are, only the gold is added.")
     a:Requires()
+    if ns.FOREVER then
+        a:Header("Objective markers (the game's)", ns.ToggleIcon("questMarkers"))
+        if ns.QuestieKeepsObjectivesOff() then a:Note("Questie's theme keeps these and the quest areas off. Choose its Blizzard theme to use them.") end
+        a:Check("Show", "objectives", "shown")
+        a:Requires("objectives", "shown")
+        a:Slider("Opacity", 0, 1, 0.05, "objectives", "alpha")
+        a:Slider("Size", 0.2, 2, 0.05, "objectives", "scale")
+        a:Requires()
+        a:Header("Quest areas (blue zones)", ns.ToggleIcon("questAreas"))
+        a:Check("Show", "areas", "shown")
+        a:Requires("areas", "shown")
+        a:Slider("Opacity", 0, 1, 0.05, "areas", "alpha")
+        a:Requires()
+    end
     a:Header("Pin filters")
     a:Check("Hide quest pins outside the zone", "outside", "hideQuests")
     a:Tip("The zone map shows bits of the zones around it; quest pins that fall there are hidden." .. (ns.FOREVER and " The blue quest areas are one picture, so they stay." or ""))
     a:Check("Objectives of tracked quests only", "outside", "trackedOnly")
     a:Tip(ns.FOREVER and "Objective spots and the game's objective markers only for the quests you track." or "Objective spots only for the quests you track.")
     a:Note("Hiding pins in unexplored areas is on the Exploration page.")
+    a:Header("Quest data")
+    a:Choice("Quests from", "questie", "source", {
+        { "own", "Waymark's own" }, { "both", "Waymark's, filled from QuestieDB" }, { "questiedb", "QuestieDB" },
+    })
+    a:Tip("Waymark's own: quest givers, turn-ins, objectives and quest ground from data built into the addon, no other addon needed. Filled from QuestieDB: ours first, QuestieDB for what ours lacks. QuestieDB: read from QuestieDB alone. Both need QuestieDB installed. Townsfolk follow this too. A change takes a /reload.")
+    a:Button("Reload now", function() ReloadUI() end)
 
     local b = Column(p, HALF, 0, HALF)
-    if ns.FOREVER then
-        b:Header("Objective markers (the game's)", ns.ToggleIcon("questMarkers"))
-        if ns.QuestieKeepsObjectivesOff() then b:Note("Questie's theme keeps these and the quest areas off. Choose its Blizzard theme to use them.") end
-        b:Check("Show", "objectives", "shown")
-        b:Requires("objectives", "shown")
-        b:Slider("Opacity", 0, 1, 0.05, "objectives", "alpha")
-        b:Slider("Size", 0.2, 2, 0.05, "objectives", "scale")
-        b:Requires()
-        b:Header("Quest areas (blue zones)", ns.ToggleIcon("questAreas"))
-        b:Check("Show", "areas", "shown")
-        b:Requires("areas", "shown")
-        b:Slider("Opacity", 0, 1, 0.05, "areas", "alpha")
-        b:Requires()
-    end
     b:Header("Learned quest givers")
     b:Check("Show", "learned", "shown")
     -- (the quest data in use, by name: "Quests from" above; a change takes a /reload,
@@ -2820,7 +2932,7 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     b:Choice("Which quests", "learned", "mode", {
         { "gaps", "Only ones " .. data .. " lacks" }, { "all", "All I've learned" },
     })
-    b:Tip("\"Only ones " .. data .. " lacks\" fills its gaps without doubling its pins.")
+    b:Tip("\"Only ones " .. data .. " lacks\" fills its gaps. \"All I've learned\" shows the rest too, but never a second pin for a quest Quest givers or Turn-ins already show.")
     b:Check("Turn-ins (\"?\")", "learned", "turnins")
     b:Tip("A \"?\" where a finished quest is handed in.")
     b:Check("Low-level (grey) quests", "learned", "trivial")
@@ -5410,6 +5522,17 @@ local function TogglePlace(c)
     return edge, from, side, point, dx, dy
 end
 
+-- Docked, the map sits in the screen's corner: a strip outside its top or right has no room
+-- there, so it goes outside the left. Only for now: the setting stays, and undocked it's back.
+-- (A strip or button held and moved stays where it was put.)
+local function TogglePlaceNow(c)
+    local edge, from, side = TogglePlace(c)
+    if side == "outside" and (edge == "top" or edge == "right") and ns.Docked and ns.Docked() then
+        return TogglePlace({ edge = "left", from = edge == "right" and from or "start", side = side })
+    end
+    return TogglePlace(c)
+end
+
 -- for the options: the ends of the chosen edge, by name
 function ns.ToggleFromChoices()
     local edge = TogglePlace(ns.db.toggles)
@@ -5461,7 +5584,7 @@ LayoutTogglesNow = function()
     local map = BattlefieldMapFrame
     local c = ns.db.toggles
     local size = c.size or 16
-    local edge, from, side, point, dx, dy = TogglePlace(c)
+    local edge, from, side, point, dx, dy = TogglePlaceNow(c)
     local n = 0
     local byId = {}
     for _, b in ipairs(toggleButtons) do byId[b.id] = b end

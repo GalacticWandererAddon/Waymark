@@ -1,0 +1,29 @@
+<Bindings>
+    <Binding name="BFI_ZOOMIN" header="BFI" category="BINDING_HEADER_BFI">Waymark_Key("zoomin")</Binding>
+    <Binding name="BFI_ZOOMOUT" category="BINDING_HEADER_BFI">Waymark_Key("zoomout")</Binding>
+    <Binding name="BFI_CENTER" category="BINDING_HEADER_BFI">Waymark_Key("center")</Binding>
+    <Binding name="BFI_CONTINENT" category="BINDING_HEADER_BFI">Waymark_Key("continent")</Binding>
+    <Binding name="BFI_BIGMAP" category="BINDING_HEADER_BFI">Waymark_Key("bigmap")</Binding>
+    <Binding name="BFI_COLLAPSE" category="BINDING_HEADER_BFI">Waymark_Key("collapse")</Binding>
+    <Binding name="BFI_CLEARVIEW" category="BINDING_HEADER_BFI">Waymark_Key("clearview")</Binding>
+    <Binding name="BFI_DOCK" category="BINDING_HEADER_BFI">Waymark_Key("dock")</Binding>
+    <Binding name="BFI_OPTIONS" category="BINDING_HEADER_BFI">Waymark_Key("options")</Binding>
+    <Binding name="BFI_SETUP" category="BINDING_HEADER_BFI">Waymark_Key("setup")</Binding>
+    <Binding name="BFI_INK" category="BINDING_HEADER_BFI">Waymark_Key("ink")</Binding>
+    <Binding name="BFI_BOOK" category="BINDING_HEADER_BFI">Waymark_Key("book")</Binding>
+    <Binding name="BFI_LAYER_QUESTIE" category="BINDING_HEADER_BFI">Waymark_Key("layer_questie")</Binding>
+    <Binding name="BFI_LAYER_TURNINS" category="BINDING_HEADER_BFI">Waymark_Key("layer_turnins")</Binding>
+    <Binding name="BFI_LAYER_LEARNED" category="BINDING_HEADER_BFI">Waymark_Key("layer_learned")</Binding>
+    <Binding name="BFI_LAYER_SPOTS" category="BINDING_HEADER_BFI">Waymark_Key("layer_spots")</Binding>
+    <Binding name="BFI_LAYER_TOWNSFOLK" category="BINDING_HEADER_BFI">Waymark_Key("layer_townsfolk")</Binding>
+    <Binding name="BFI_LAYER_RARES" category="BINDING_HEADER_BFI">Waymark_Key("layer_rares")</Binding>
+    <Binding name="BFI_LAYER_PARTY" category="BINDING_HEADER_BFI">Waymark_Key("layer_party")</Binding>
+    <Binding name="BFI_LAYER_LINE" category="BINDING_HEADER_BFI">Waymark_Key("layer_line")</Binding>
+    <Binding name="BFI_LAYER_EXPLORE" category="BINDING_HEADER_BFI">Waymark_Key("layer_explore")</Binding>
+    <Binding name="BFI_LAYER_DUNGEONS" category="BINDING_HEADER_BFI">Waymark_Key("layer_dungeons")</Binding>
+    <Binding name="BFI_LAYER_DETAIL" category="BINDING_HEADER_BFI">Waymark_Key("layer_detail")</Binding>
+    <Binding name="BFI_LAYER_ZOOM" category="BINDING_HEADER_BFI">Waymark_Key("layer_zoom")</Binding>
+    <Binding name="BFI_LAYER_ZONENAME" category="BINDING_HEADER_BFI">Waymark_Key("layer_zoneName")</Binding>
+    <Binding name="BFI_LAYER_COORDS" category="BINDING_HEADER_BFI">Waymark_Key("layer_coords")</Binding>
+    <Binding name="BFI_LAYER_INK" category="BINDING_HEADER_BFI">Waymark_Key("layer_ink")</Binding>
+</Bindings>

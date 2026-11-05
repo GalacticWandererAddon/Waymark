@@ -165,7 +165,8 @@ function ns.PinGlow(pin, on)
 end
 
 function BFIQuestiePinMixin:ApplyCurrentAlpha()
-    self:SetAlpha(ns.PinAlpha(self.bfiGroup or "questie"))
+    local group = self.bfiGroup or "questie"
+    self:SetAlpha(ns.PinAlpha(group))
 end
 
 -- After one of our pins is rescaled: pin offsets are in the pin's own scaled

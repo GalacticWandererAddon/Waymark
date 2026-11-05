@@ -63,6 +63,7 @@ local edge, glow, host
 local push, pushAt = 0, 0
 local lastZoom = 0 -- the minimap's zoom before this frame's wheel click
 local atTop = false  -- the docked map at the minimap's scale or closer before this frame's input
+local topS, topX, topY  -- where its view was heading then (the wheel's friction holds it there)
 local insets       -- the map's border round its scroll area: { left, right, top, bottom }
 local undocking
 local canvasFixes = 0  -- times the canvas had lost its place on screen (SetupDock)
@@ -166,10 +167,11 @@ local function Blink(n, need)
     glow:Show()
 end
 
--- a click past the end: true once the friction is used up (else a blink)
-local function Push()
+-- a click past the end: true once the friction is used up (else a blink). keep: no starting
+-- again after a pause (the map held at the minimap's scale: a wheel out resets that one)
+local function Push(keep)
     local now = GetTime()
-    if now - pushAt > PUSH_RESET then push = 0 end
+    if not keep and now - pushAt > PUSH_RESET then push = 0 end
     push, pushAt = push + 1, now
     local need = math.max(1, (Cfg().friction or 2) + 1)
     if push >= need then
@@ -290,6 +292,7 @@ local function Unsquare()
     mm:EnableMouseWheel(a.wheel and true or false)
     if edge then edge:Hide() end
     Redraw()
+    if ns.DockQuestiePins then ns.DockQuestiePins() end  -- (Questie's pins back)
 end
 
 -- The map over it ----------------------------------------------------------------
@@ -679,7 +682,7 @@ local function ApplyFace()
     local map = BattlefieldMapFrame
     local sc = map and map.ScrollContainer
     if not sc then return end
-    if ns.ApplyGroups then ns.ApplyGroups() end  -- (ns.PinAlpha: givers unseen on the minimap face)
+    if ns.ApplyGroups then ns.ApplyGroups() end  -- (ns.DockQuestiePins)
     if not (ns.MapCollapsed and ns.MapCollapsed()) then sc:Show() end
     OverlaysThrough(MinimapFace())
     if MinimapFace() then
@@ -779,11 +782,18 @@ local function SetFace(face)
 end
 
 -- the map face, as close as the minimap was, on you
+local viewDue  -- that view is still to come (a wheel on the map calls it off: OnMapWheel)
 local function OpenMap()
     if not ShowMap() then return end
     SetFace("map")
     -- (after the game's own reset and MapControls' recheck of the view)
-    C_Timer.After(0.15, ViewAtMinimap)
+    viewDue = true
+    C_Timer.After(0.15, function()
+        if viewDue then
+            viewDue = false
+            ViewAtMinimap()
+        end
+    end)
 end
 
 -- back to the minimap face, at zoom z (default its farthest, where the map took over)
@@ -805,6 +815,9 @@ local function CloseMap(z)
     end
     z = z or 0
     if applied and Minimap:GetZoom() ~= z then Minimap:SetZoom(z) end
+    -- (the pins on the new zoom now, not a frame behind the minimap)
+    local map = BattlefieldMapFrame
+    if applied and map and map.ScrollContainer:IsVisible() then MinimapFaceView(map) end
 end
 -- (Dungeon.lua: the dungeon map's Minimap button while docked)
 function ns.DockShowMinimap() CloseMap() end
@@ -874,16 +887,6 @@ end
 
 -- Buttons ----------------------------------------------------------------------
 
--- (the big map shows the givers the minimap face leaves to the game, ns.PinAlpha; some of
--- its ways through never reach ApplyFace)
-do
-    local toggle = ns.DockToggleBig
-    function ns.DockToggleBig()
-        toggle()
-        if ns.ApplyGroups then ns.ApplyGroups() end
-    end
-end
-
 -- The minimap's buttons (mail, tracking, clock, other addons'...) are its and
 -- its cluster's children. Moved onto our host frame, one strata over the map,
 -- so the map face doesn't cover them (they keep their anchors, so their
@@ -930,6 +933,43 @@ local function MakeMovable(child)
     end
 end
 
+-- another addon's pin on the minimap, not a button: it belongs to the minimap, placed
+-- by HereBeDragons. Lifted like a button it drew over the map face and our places fought
+-- its own. (Questie's own pool frames count when not in use too: they come back as pins.)
+local function IsMapPin(child)
+    local name = child:GetName()
+    if name and name:find("^QuestieFrame%d") then return true end
+    -- (a frame as big as the minimap is a layer of it, not a button: lifted with the buttons,
+    -- over the square, it took the clicks on the header's lower half)
+    if not child:IsObjectType("Button") and child:GetWidth() >= Minimap:GetWidth() * 0.9
+        and child:GetHeight() >= Minimap:GetHeight() * 0.9 then return true end
+    if not LibStub then return false end
+    for libName, lib in LibStub:IterateLibraries() do
+        if libName:find("^HereBeDragons.*%-Pins") and lib.minimapPins and lib.minimapPins[child] then return true end
+    end
+    return false
+end
+
+-- Docked, one set of quest pins, ours on both faces: Questie's minimap icons lie on the real
+-- minimap, so they doubled ours on its face, showed through a see-through map on the map's,
+-- and a zoom between the faces would swap one set for the other. While docked they wait on a
+-- hidden frame, Questie still placing them; undocked they're there.
+local pinPark, parking
+function ns.DockQuestiePins()
+    local lib = LibStub and LibStub("HereBeDragonsQuestie-Pins-2.0", true)
+    if not (lib and lib.minimapPins) then return end
+    local want = applied ~= nil
+    if want == (parking or false) then return end
+    if not pinPark then
+        pinPark = CreateFrame("Frame", nil, UIParent)
+        pinPark:Hide()
+        local function New(_, _, icon) if parking then icon:SetParent(pinPark) end end
+        hooksecurefunc(lib, "AddMinimapIconWorld", New)  -- (the Map one calls it)
+    end
+    parking = want
+    for icon in pairs(lib.minimapPins) do icon:SetParent(want and pinPark or Minimap) end
+end
+
 function LiftButtons()
     if not (applied and host) or InCombat() then return end
     OwnDrags(true)  -- (docked: holding moves them, their own drag off)
@@ -947,7 +987,7 @@ function LiftButtons()
     for _, parent in ipairs({ Minimap, MinimapCluster, MinimapBackdrop }) do
         if parent then
             for _, child in ipairs({ parent:GetChildren() }) do
-                if not holds[child] and child ~= MinimapBackdrop and child ~= host then
+                if not holds[child] and child ~= MinimapBackdrop and child ~= host and not IsMapPin(child) then
                     if child:IsProtected() then
                         if not lifted[child] then lifted[child] = child:GetFrameStrata() end
                         if StrataN(child) ~= wantN then child:SetFrameStrata(STRATA[wantN]) end
@@ -1030,6 +1070,47 @@ local function LowerButtons()
 end
 
 -- for /bfi check
+-- the moved frames that take the mouse: which, where and in what strata (/bfi check: one of
+-- them lies over the header's lower half)
+function ns.DockMouseFrames()
+    local out = {}
+    for child, parent in pairs(moved) do
+        if child:IsMouseEnabled() and child:IsVisible() and child:GetLeft() then
+            local key = "?"
+            for k, v in pairs(parent) do if v == child then key = tostring(k) end end
+            local e = child:GetEffectiveScale()
+            out[#out + 1] = string.format("%s (%s, key %s) %s/%d at %d,%d size %dx%d", child:GetName() or "unnamed",
+                child:GetObjectType(), key, child:GetFrameStrata(), child:GetFrameLevel(),
+                child:GetLeft() * e, child:GetBottom() * e, child:GetWidth() * e, child:GetHeight() * e)
+        end
+    end
+    table.sort(out)
+    return #out > 0 and table.concat(out, "; ") or "none"
+end
+
+-- where the minimap and the map's view really sit, in screen pixels, and what the game
+-- says the minimap shows against our table (/bfi check: pins off the minimap's ground)
+function ns.DockGeometry()
+    local map = BattlefieldMapFrame
+    local sc = map and map.ScrollContainer
+    if not (sc and Minimap:GetLeft() and sc:GetLeft()) then return "no geometry yet" end
+    local function Mid(f)
+        local e = f:GetEffectiveScale()
+        return (f:GetLeft() + f:GetWidth() / 2) * e, (f:GetBottom() + f:GetHeight() / 2) * e, f:GetWidth() * e, f:GetHeight() * e
+    end
+    local mx, my, mw, mh = Mid(Minimap)
+    local sx, sy, sw, sh = Mid(sc)
+    local z = Minimap:GetZoom()
+    local radius = C_Minimap and C_Minimap.GetViewRadius and C_Minimap.GetViewRadius()
+    local pos = C_Map.GetPlayerMapPosition(map:GetMapID(), "player")
+    return string.format("zoom %d of %d, %s; minimap mid %.1f,%.1f size %.1fx%.1f; view mid %.1f,%.1f size %.1fx%.1f; "
+        .. "game's view across %s yd, our table %.1f; canvas scale %.3f, wanted %s; scroll %.4f,%.4f, you %s",
+        z, Minimap:GetZoomLevels() - 1, (IsIndoors and IsIndoors()) and "indoors" or "outdoors", mx, my, mw, mh, sx, sy, sw, sh,
+        radius and string.format("%.1f", radius * 2) or "?", Yards()[z + 1] or 0, sc:GetCanvasScale(),
+        tostring(MinimapScale(sc, z)), sc.currentScrollX or 0, sc.currentScrollY or 0,
+        pos and pos.x and string.format("%.4f,%.4f", pos.x, pos.y) or "?")
+end
+
 function ns.DockInfo()
     local map = BattlefieldMapFrame
     local names = {}
@@ -1157,18 +1238,29 @@ local function OnMinimapWheel(_, delta)
 end
 
 -- the wheel on the docked map: in at the minimap's scale or closer, the
--- minimap at the zoom nearest the map's. Only with you in view (else it
--- would jump to you from where you'd panned to); not on the big map (only
+-- minimap at the zoom nearest the map's. A step in stops at that scale, and the
+-- friction's clicks hold the view there (the game's wheel has moved it already, and
+-- each click took you further from the minimap's farthest zoom). Only with you in view
+-- (else it would jump to you from where you'd panned to); not on the big map (only
 -- its key or arrow makes it small again), not with map only on.
 local function OnMapWheel(_, delta)
-    if not (applied and Cfg().wheel and delta > 0 and atTop) or IsBig() or Cfg().mapOnly then
+    viewDue = false  -- (still wheeling out from the minimap: it would pull you back in)
+    if not (applied and Cfg().wheel and delta > 0) or IsBig() or Cfg().mapOnly then
         if delta < 0 then push = 0 end
         return
     end
     if ns.Browsing and ns.Browsing() then return end  -- (another map: Browse.lua's)
     local map = BattlefieldMapFrame
     if not PlayerInView(map) then push = 0 return end
-    if Push() then CloseMap(ZoomForScale(map.ScrollContainer, map.ScrollContainer:GetCanvasScale())) end
+    local sc = map.ScrollContainer
+    if not atTop then
+        local s0 = MinimapScale(sc)
+        if s0 and sc.targetScale and sc.targetScale > s0 then sc:SetZoomTarget(s0) end
+        return
+    end
+    sc:SetZoomTarget(topS)
+    sc:SetPanTarget(topX, topY)
+    if Push(true) then CloseMap(ZoomForScale(sc, topS)) end
 end
 
 -- a double-click on the map face (two clicks, not drags): back to the minimap
@@ -1380,6 +1472,7 @@ function ns.ApplyDock()
     if applied then UpdateMap() end
     LiftButtons()
     ApplyFace()
+    if ns.LayoutToggles then ns.LayoutToggles() end  -- (docked, the strip's own edge: Options.lua)
     RefreshOnlyButton()
     BlockMapKey()
     if ns.RefreshViewGlow then ns.RefreshViewGlow() end  -- (the dock button's, Options.lua)
@@ -1619,7 +1712,9 @@ function ns.SetupDock(map)
             if sc:IsVisible() then MinimapFaceView(map) end
         else
             local s0 = MinimapScale(sc)
-            atTop = s0 and (sc.targetScale or sc:GetCanvasScale()) >= s0 * 0.98 or false
+            topS = sc.targetScale or sc:GetCanvasScale()
+            topX, topY = sc.targetScrollX or sc.currentScrollX or 0.5, sc.targetScrollY or sc.currentScrollY or 0.5
+            atTop = s0 and topS >= s0 * 0.98 or false
         end
         -- Scrolling the big map, the canvas lost its place on screen (its
         -- GetLeft nil): the game's wheel and click code errored on it and

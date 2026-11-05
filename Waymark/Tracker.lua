@@ -821,6 +821,10 @@ function ns.FindQuestOnMap(id, grown)
     held = id
     pcall(GlowPins, highlighted)
     HookOpenClick()
+    -- (not in your log: no pins of its own to light, so its giver glows)
+    if ns.NotebookPingGiver and not LogIndex(id) then
+        ns.NotebookPingGiver(id)
+    end
 end
 -- a click on a quest's objective spot: its glow on until clicked again
 -- (another quest's spot: the glow moves to that one)
@@ -2122,6 +2126,15 @@ local function ListRow(i)
             if ns.QuillMenu then ns.QuillMenu(items) end
             return
         end
+        -- (the quest being looked at, not in your log: find it, its giver's map)
+        if self.kind == "look" and button == "RightButton" and self.previewID then
+            local id = self.previewID
+            local items = { { "find on map", function() ns.FindQuestOnMap(id) end } }
+            local page = ns.NotebookQuestPage and ns.NotebookQuestPage(id)
+            if page then items[#items + 1] = { "in the found notes", function() ns.OpenNotebook(page, nil, true) end } end
+            if ns.QuillMenu then ns.QuillMenu(items) end
+            return
+        end
         if button == "RightButton" then return end
         if self.kind == "quest" and IsShiftKeyDown() then
             ToggleWatch(self.questID)  -- (shift-click: track, as in the game's log)
@@ -2255,6 +2268,7 @@ local function FillList(colors, dark)
         pv = okP and pv or {}
         y = y + 4
         r = Line("look", 0, zs + 5, 0)
+        r.previewID = nil
         Face(r.text, "Zone", st.zone, st.shadow)
         r.text:SetText("Looking at")
         Face(r.tag, "Zone", st.small, nil, 3, FRIZ)
@@ -2264,6 +2278,7 @@ local function FillList(colors, dark)
         y = y + 1
         selY = y
         r = Line("look", 2, qs + 5, 38)
+        r.previewID = qwPreview
         r.level:ClearAllPoints()
         r.level:SetPoint("LEFT", 12, 0)
         local lc = c.listLevelColors and LevelColor(pv.level, st.levels) or st.text

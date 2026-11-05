@@ -424,6 +424,8 @@ function ns.RunCheck(noReload)
         if ns.ZoneArtInfo then Check("zone maps on the continent (info)", true, ns.ZoneArtInfo()) end
         if ns.TrackerInfo then Check("quest tracker (info)", true, ns.TrackerInfo()) end
         if ns.DockInfo and ns.db.dock.on then Check("minimap replacement (info)", true, ns.DockInfo()) end
+        if ns.DockGeometry and ns.db.dock.on then Check("minimap and view places (info)", true, ns.DockGeometry()) end
+        if ns.DockMouseFrames and ns.db.dock.on then Check("moved frames with the mouse (info)", true, ns.DockMouseFrames()) end
         if ns.QuestWindowInfo then Check("quest log window (info)", true, ns.QuestWindowInfo()) end
         -- a dungeon's floor on the map (Dungeon.lua): which, its pins (DungeonObjects.lua), the found
         -- notes' route and stairs on it (Data\FoundNotes.lua), and the header naming it (ZoneName.lua)

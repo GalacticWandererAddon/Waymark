@@ -20,7 +20,8 @@ local DEFAULTS = {
     -- hidden[questID]: quests hidden with Shift-click
     -- source: where quests come from, "own" (our data, WorldQuests.lua), "both" (ours, filled from
     -- QuestieDB where it's installed: Forever's default) or "questiedb" (a /reload follows)
-    -- tooltip: Questie's tooltip on the quest pins, where Questie is loaded (Pin.lua)
+    -- tooltip: Questie's tooltips on our quest pins, where Questie is loaded (Pin.lua, the
+    -- Quests page). Off: ours
     -- unitTips: a quest's objective count on monster, item and object tooltips (QuestData.lua)
     questie    = { shown = true, alpha = 1, scale = 1, color = false, iconSet = "questie", hidden = {}, source = ns.FOREVER and "both" or "own", tooltip = false, unitTips = true },
     -- new quest layers start hidden so existing setups look unchanged
@@ -55,7 +56,8 @@ local DEFAULTS = {
     -- minimap and goes between the two, friction: extra clicks past the end;
     -- face: "minimap" or "map", the one showing; corner: pushed into the
     -- screen's top-right corner; big / bigSize: the map face grown (UI units)
-    dock       = { on = false, size = 160, wheel = true, friction = 2, face = "minimap",
+    -- splitQuests: objective spots on the minimap face, quest ground on the map's (ns.SplitHides)
+    dock       = { on = false, size = 160, wheel = true, friction = 2, face = "minimap", splitQuests = false,
                    corner = true, big = false, bigSize = 360, mapOnly = false, hideSun = false, hideTitle = true },
     -- the map lets clicks through unless this modifier (ALT, CTRL, SHIFT) is held (ClickThrough.lua)
     clickThrough = { on = false, modifier = "ALT", combat = false },
@@ -592,6 +594,15 @@ local function InitDB()
     -- (your whole log in the quest window: always now, its switch gone)
     if db.questlog then db.questlog.list, db.questlog.escape = nil, nil end  -- (and Escape always closes it)
     ns.ClockFirstTime(db)
+    -- a first install with Questie: what its player expects, Questie's icons and objective
+    -- spots on, before anyone picks anything (no pins table: no settings yet; updates never get
+    -- here). Questie loads first: OptionalDeps.
+    if db.pins == nil and ns.QuestieArt() then
+        db.questie = db.questie or {}
+        db.turnins = db.turnins or {}
+        db.spots = db.spots or {}
+        db.questie.iconSet, db.turnins.iconSet, db.spots.shown = "questie", "questie", true
+    end
     CopyDefaults(db, DEFAULTS)
     ns.db = db
     ns.ShareQuestLook()  -- (turn-ins: the givers' opacity, size, icons)
@@ -813,10 +824,6 @@ end
 
 -- A pin layer's opacity: its own, times every pin's (pins.alpha)
 function ns.PinAlpha(group)
-    -- (live Forever's minimap draws givers and turn-ins itself, and those blips can't be
-    -- hidden: on the minimap face ours stay, unseen, for their tooltips)
-    if ns.FOREVER and (group == "questie" or group == "turnins") and ns.DockMinimapFace
-        and ns.DockMinimapFace() and not ns.DockBigMovable() then return 0 end
     local cfg = ns.db[group]
     return (cfg and cfg.alpha or 1) * (ns.db.pins.alpha or 1)
 end
@@ -842,14 +849,65 @@ function ns.SpotsAsGround()
     local g = ns.db and ns.db.ground
     return g and g.look == "pins" and ns.IsShown("ground") or false
 end
-local function PinsShown(group)
+-- Docked with dock.splitQuests: one of the two faces each, spots on the minimap, ground on the
+-- map (the big map counts as the map). Only with both to choose from; "pins" ground is the spots.
+function ns.DockSplit()
+    return ns.db.dock.splitQuests and ns.Docked and ns.Docked() and ns.IsShown("ground")
+        and ns.db.ground.look ~= "pins" or false
+end
+function ns.SplitHides(layer)
+    if not ns.DockSplit() then return false end
+    local minimap = ns.DockMinimapFace() and not ns.DockBigMovable()
+    if layer == "ground" then return minimap end
+    return not minimap
+end
+
+-- (building: the pins made for this map, the face aside: ApplyGroups shows them per face.
+-- Left out here, the map face's spots were never made and the minimap had none.)
+local function PinsShown(group, building)
     if group == "spots" and ns.SpotsAsGround() then return true end
+    if group == "spots" and not building and ns.SplitHides("spots") then return false end
     return ns.IsShown(group)
+end
+
+-- One pin per quest: what our givers and turn-ins show on this map (ours), and the learned
+-- turn-ins (handIn). The game's "?" for a finished quest stands where ours does, and
+-- learned's "All I've learned" can repeat a giver. Nil with neither of those layers on.
+local function ShownQuests(map, mapID)
+    if not (ns.IsShown("objectives") or ns.IsShown("learned")) then return nil end
+    local ours, handIn = {}, {}
+    EachPin(map, function(pin, template)
+        local group = GroupOf(pin, template)
+        if (group == "questie" or group == "turnins") and PinsShown(group)
+            and not HiddenUnexplored(pin, group, mapID) and not HiddenOutside(pin, group, mapID) then
+            for _, id in ipairs(pin.icon and pin.icon.quests or { pin.questId }) do ours[id] = true end
+        elseif group == "learned" and PinsShown(group) and pin.info then
+            for _, id in ipairs(pin.info.turnins) do handIn[id] = true end
+        end
+    end)
+    return ours, handIn
+end
+
+local function HiddenDouble(pin, group, ours, handIn)
+    if not ours then return false end
+    if group == "objectives" then
+        return pin.questID ~= nil and (ours[pin.questID] or handIn[pin.questID]) or false
+    elseif group == "learned" and pin.info then
+        for _, list in ipairs({ pin.info.available, pin.info.turnins }) do
+            for _, id in ipairs(list) do
+                if not ours[id] then return false end
+            end
+        end
+        return true
+    end
+    return false
 end
 
 function ns.ApplyGroups()
     local map = BattlefieldMapFrame
     if not map or not ns.db then return end
+    if ns.DockQuestiePins then ns.DockQuestiePins() end
+    if ns.QuestGroundFace then ns.QuestGroundFace() end
     -- (the game's objectives and quest areas both draw nothing with this off, whatever
     -- our toggles say, and a new character has it off. It's only ever turned on here.)
     if ns.FOREVER and (ns.IsShown("objectives") or ns.IsShown("areas")) and not GetCVarBool("questPOI")
@@ -858,12 +916,14 @@ function ns.ApplyGroups()
     end
     local mapID = map:GetMapID()
     local tracked = ns.db.outside.trackedOnly and ns.TrackedQuests and ns.TrackedQuests() or nil
+    local ours, handIn = ShownQuests(map, mapID)
     EachPin(map, function(pin, template)
         local group = GroupOf(pin, template)
         local cfg = group and ns.db[group]
         if cfg then
             pin:SetShown(PinsShown(group) and not HiddenUnexplored(pin, group, mapID)
-                and not HiddenOutside(pin, group, mapID) and not HiddenUntracked(pin, group, tracked))
+                and not HiddenOutside(pin, group, mapID) and not HiddenUntracked(pin, group, tracked)
+                and not HiddenDouble(pin, group, ours, handIn))
             -- our pins add their own dimming (party objectives) on top of the group alpha
             if template == "BFIQuestiePinTemplate" then
                 pin:ApplyCurrentAlpha()
@@ -1291,7 +1351,7 @@ function ns.QuestIconsShown(mapID)
     local out = {}
     if not ns.QuestIcons then return out end
     for _, icon in ipairs(ns.QuestIcons(mapID)) do
-        if PinsShown(icon.group) and not icon.thinned then out[#out + 1] = icon end
+        if PinsShown(icon.group, true) and not icon.thinned then out[#out + 1] = icon end
     end
     return out
 end

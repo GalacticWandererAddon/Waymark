@@ -472,19 +472,30 @@ local function KeepArrow(id, x, y, off, r, g, b, a)
     table.insert(arrowsAt[id], { x, y, off, r, g, b, a })
 end
 
+-- (groundUp: there's ground to show; docked with dock.splitQuests it only shows on the map face)
+local groundUp = false
+function ns.QuestGroundFace()
+    if host and groundUp then host:SetShown(not ns.SplitHides("ground")) end
+end
+
 local function Draw()
     t0 = debugprofilestop()
     Clear()
     local c = Cfg()
     local mapID = map:GetMapID()
-    if not (c and ns.IsShown("ground") and c.look ~= "pins" and mapID and ns.QuestGround) then host:Hide() return end
+    if not (c and ns.IsShown("ground") and c.look ~= "pins" and mapID and ns.QuestGround) then
+        groundUp = false
+        host:Hide()
+        return
+    end
     local canvas = map:GetCanvas()
     local W, H = canvas:GetWidth(), canvas:GetHeight()
     if not (W and W > 0 and H > 0) then return end
     host:SetParent(canvas)
     host:SetAllPoints(canvas)
     host:SetFrameLevel(ns.ArtLevel and ns.ArtLevel(map, 6) or canvas:GetFrameLevel() + 1)
-    host:Show()
+    groundUp = true
+    ns.QuestGroundFace()
     glow:SetFrameLevel(host:GetFrameLevel() + 1)
     local cw = W / COLS
     local a = c.alpha or 0.7

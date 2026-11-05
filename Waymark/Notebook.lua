@@ -1592,18 +1592,12 @@ end
 -- their zone (Browse.lua's way, so it isn't put straight back on yours) and a soft glow there.
 -- The book folds shut so the map can be seen; a click on its cover opens it on the same page.
 local ping, pingToken = nil, 0
-local function ShowGiver(id)
+-- the glow on a quest's giver, on the map that's up (find on map too: Tracker.lua, for a quest
+-- not in your log, which has no pins of its own to light)
+function ns.NotebookPingGiver(id)
     local ok, e = pcall(ns.QuestEnds or function() end, id)
     local f = ok and e and e.from
-    if not (f and f.map and BattlefieldMapFrame) then return end
-    if not BattlefieldMapFrame:IsShown() and ToggleBattlefieldMap then ToggleBattlefieldMap() end
-    if not BattlefieldMapFrame:IsShown() then return end
-    if ns.BrowseTo then ns.BrowseTo(f.map) else BattlefieldMapFrame:SetMapID(f.map) end
-    if open:IsShown() then
-        open:Hide()
-        cover:Show()
-        Sound("IG_SPELLBOOK_CLOSE")
-    end
+    if not (f and f.map and f.x and BattlefieldMapFrame) then return end
     if not ping then
         ping = CreateFrame("Frame")
         ping.glow = ping:CreateTexture(nil, "OVERLAY")
@@ -1639,6 +1633,27 @@ local function ShowGiver(id)
     end)
 end
 
+local function ShowGiver(id, grown)
+    local ok, e = pcall(ns.QuestEnds or function() end, id)
+    local f = ok and e and e.from
+    if not (f and f.map and BattlefieldMapFrame) then return end
+    if open:IsShown() then
+        open:Hide()
+        cover:Show()
+        Sound("IG_SPELLBOOK_CLOSE")
+    end
+    -- (docked: the big map, as find on map; the square's minimap face would hide the glow)
+    if not grown and ns.Docked and ns.Docked() and not (ns.MapIsBig and ns.MapIsBig()) and ns.ToggleBigMap then
+        ns.ToggleBigMap()
+        C_Timer.After(0.2, function() ns.Safe("Show giver", ShowGiver, id, true) end)
+        return
+    end
+    if not BattlefieldMapFrame:IsShown() and ToggleBattlefieldMap then ToggleBattlefieldMap() end
+    if not BattlefieldMapFrame:IsShown() then return end
+    if ns.BrowseTo then ns.BrowseTo(f.map) else BattlefieldMapFrame:SetMapID(f.map) end
+    ns.NotebookPingGiver(id)
+end
+
 local function AskedTip(owner, a)
     local ok, pv = pcall(ns.QuestPreview or function() end, a.quest)
     pv = ok and pv or nil
@@ -1656,7 +1671,8 @@ local function AskedTip(owner, a)
     if st == "have" then GameTooltip:AddLine("In your quest log", 0.12, 1, 0)
     elseif st == "done" then GameTooltip:AddLine("Done", 0.62, 0.62, 0.62)
     else GameTooltip:AddLine("Not taken yet", 0.8, 0.8, 0.8) end
-    ns.Hints({ { "Click", st == "have" and "open it in your log" or "read it" }, { "Shift-click", "show the giver on the map" } })
+    ns.Hints({ { "Click", st == "have" and "open it in your log" or "read it" }, { "Right-click", "details, find on map" },
+               { "Shift-click", "show the giver on the map" } })
     GameTooltip:Show()
 end
 
@@ -1665,6 +1681,25 @@ local function AskedClick(a)
     if not a.quest then return end  -- (a line with no quest behind it yet)
     if IsShiftKeyDown() then ShowGiver(a.quest) return end
     if ns.OpenQuest then ns.OpenQuest(a.quest) end   -- (the quest window off: the game's log)
+end
+
+-- right-click, the quill down: the quest's menu, as on a pin (find on map folds the book).
+-- (ns.: this file is at Lua's 200 locals)
+function ns.NotebookAskedMenu(a)
+    if not a.quest or ns.QuillOut() then return end
+    local items = {}
+    if ns.OpenQuest then items[#items + 1] = { "quest details", function() ns.OpenQuest(a.quest) end } end
+    if ns.FindQuestOnMap then
+        items[#items + 1] = { "find on map", function()
+            if open:IsShown() then
+                open:Hide()
+                cover:Show()
+                Sound("IG_SPELLBOOK_CLOSE")
+            end
+            ns.FindQuestOnMap(a.quest)
+        end }
+    end
+    if #items > 0 then ns.QuillMenu(items) end
 end
 
 -- the ribbon at the top of the left page, by the gutter (Media\\Notes\\Ribbon.tga: silk, a
@@ -1897,7 +1932,7 @@ local function Before(dg)
         else
             ns.NotebookPencil(right, QuestState(a.quest), 44, y, wds, h, 15, id .. ":asked:" .. k)
         end
-        local row = Hit(right, 44, y, rw + 50, h, function() AskedClick(a) end)
+        local row = Hit(right, 44, y, rw + 50, h, function() AskedClick(a) end, function() ns.NotebookAskedMenu(a) end)
         row:SetScript("OnEnter", function(self) AskedTip(self, a) end)
         row:SetScript("OnLeave", function() GameTooltip:Hide() end)
         y = y - h - 9

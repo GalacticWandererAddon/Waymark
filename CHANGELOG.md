@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.2.2 (2026-11-05)
+
+**Key bindings at last, a smoother docked map, and a simpler Quests page.** Please update: no earlier release had working key bindings.
+
+Fixed
+- Key bindings: Waymark now has its section in Keybindings, and binding keys works.
+- Docked: pins no longer slide into place, and a fast zoom out stays out.
+- Docked: the header's lower half takes clicks again.
+- Docked: the wheel's friction holds the map still on the way in.
+
+New and changed
+- Docked: one set of quest pins. Always ours, on the map and the minimap, in the same colours. Questie's minimap pins wait while docked and come back undocked.
+- Docked: toggle buttons outside the map's top or right move to its left.
+- New: docked, objective spots on the minimap and quest ground on the map (Quests page).
+- Quests page reworked: a Showing now box, clearer sections, and the tooltip choice in one place.
+- Objective spots take Questie's own colours where it's loaded.
+- Presets: a Keep my quest pins tick, on by default with Questie, so a preset leaves your quest pins and tooltips alone.
+- A first install with Questie starts on its icons with objective spots on.
+- The Creator's preset, what Waymark ships with, is refreshed.
+- The book: right-click a quest in Who asked us for details and find on map.
+- Find on map works for a quest you're only looking at: it goes to the giver's map, and the giver glows.
+
 ## 1.2.1 (2026-11-05)
 
 **Fixes for live Forever, and a few new things.** If you're on 1.2.0, please update: on the live client Waymark's buttons and icons drew blank, and a "blocked" popup showed at login. Your notes and ink carry over.

@@ -557,7 +557,9 @@ local function ApplyView(sc, s, x, y)
         local minX, maxX, minY, maxY = sc:CalculateScrollExtentsAtScale(s)
         if minX then x, y = Clamp(x, minX, maxX), Clamp(y, minY, maxY) end
     end
-    if sc.InstantPanAndZoom then sc:InstantPanAndZoom(s, x, y) end
+    -- (true: go right to x, y. Without it the game only goes part of the way on a change of
+    -- scale, and the pan target below then slid the view, pins and all, the rest of it)
+    if sc.InstantPanAndZoom then sc:InstantPanAndZoom(s, x, y, true) end
     -- and where it's heading: the scroll area glides "current" toward "target"
     -- on its own, so a stale target pulls the view back to the old centre
     -- after the animation (it missed the arrow, then centering had to fix it)
