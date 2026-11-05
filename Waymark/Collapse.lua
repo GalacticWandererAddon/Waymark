@@ -204,8 +204,8 @@ end
 local function Buttons(map)
     local d, list = ns.debugFrames, {}
     for _, k in ipairs({ "gear", "townButton", "cityButton", "dockButton", "toggleStrip", "bigMap", "grip", "coords",
-                         "coordsCursor" }) do
-        if d[k] then list[#list + 1] = d[k] end
+                         "coordsCursor", "clock" }) do
+        if d[k] and not (k == "clock" and ns.ClockFree and ns.ClockFree()) then list[#list + 1] = d[k] end
     end
     local close = map.BorderFrame and map.BorderFrame.CloseButton
     if close then list[#list + 1] = close end

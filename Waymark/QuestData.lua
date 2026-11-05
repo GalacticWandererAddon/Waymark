@@ -1,10 +1,15 @@
 local _, ns = ...
+local GetNumSkillLines = GetNumSkillLines or ns.GetNumSkillLines
+local GetSkillLineInfo = GetSkillLineInfo or ns.GetSkillLineInfo
+local GetItemInfo = GetItemInfo or ns.GetItemInfo
+local GetSpellInfo = GetSpellInfo or ns.GetSpellInfo
 
 -- Quests and townsfolk from QuestieDB: the database addon Questie is built on,
 -- read through its public API (LibQuestieDB). Questie itself isn't needed.
 -- Quests come from our own data by default (WorldQuests.lua dresses it as
--- QuestieDB's API; questie.source = "questiedb" reads QuestieDB's instead);
--- townsfolk from the same source (ours: sorted by the tool, OwnFolk).
+-- QuestieDB's API; questie.source = "questiedb" reads QuestieDB's instead, "both"
+-- ours with QuestieDB filling what ours lacks); townsfolk from the same source
+-- (ours: sorted by the tool, OwnFolk; with "both", QuestieDB's for NPCs ours doesn't list).
 -- The data only holds (who starts and ends which quest, where NPCs
 -- and objects stand, what vendors sell); which quests are available to you,
 -- which objectives are still to do and which NPCs count as which townsfolk is
@@ -39,22 +44,96 @@ function ns.QDB()
     return lib
 end
 
--- Where quests come from: our own data (questie.source "own", the default) or
--- QuestieDB ("questiedb"), whichever is there if the other isn't. Picked once a
--- session (the option says a /reload follows).
+local function LoadTable(v)
+    if type(v) == "table" then return v end
+    if type(v) ~= "string" then return nil end
+    local f = loadstring(v)
+    local ok, t = pcall(f or error)
+    return ok and type(t) == "table" and t or nil
+end
+
+-- Ours with QuestieDB behind it, by the same API: each answer is ours, and QuestieDB's only where
+-- ours has none, so Forever's new quests in either show and our rows are never replaced.
+local function Mixed(own, real)
+    local function Both(part)
+        local a, b = own[part], real[part]
+        return setmetatable({}, { __index = function(t, key)
+            local f, g = a[key], b[key]
+            local fn = f or g
+            if f and g then
+                fn = function(id, ...)
+                    local v = f(id, ...)
+                    if v ~= nil and not (type(v) == "table" and next(v) == nil) then return v end
+                    local ok, w = pcall(g, id, ...)
+                    if ok and w ~= nil then return w end
+                    return v
+                end
+            end
+            t[key] = fn
+            return fn
+        end })
+    end
+    local ids
+    local mixed = {
+        contractVersion = "both", readMode = "ours, then QuestieDB", mixed = true,
+        Enum = own.Enum, Wilds = own.Wilds, Folk = own.Folk,
+        Quest = Both("Quest"), Npc = Both("Npc"), Object = Both("Object"), Item = Both("Item"),
+        Support = {
+            Get = function(name)
+                if name ~= "QuestXP" then return own.Support.Get(name) end
+                local db = {}
+                local ok, s = pcall(real.Support.Get, name)
+                for id, e in pairs(ok and type(s) == "table" and LoadTable(s.db) or {}) do db[id] = e end
+                for id, e in pairs(own.Support.Get(name).db) do db[id] = e end
+                return { db = db }
+            end,
+        },
+    }
+    function mixed.Quest.GetAllIds()
+        if not ids then
+            local seen = {}
+            ids = {}
+            for _, L in ipairs({ own, real }) do
+                for _, id in ipairs(L.Quest.GetAllIds() or {}) do
+                    if not seen[id] then
+                        seen[id] = true
+                        ids[#ids + 1] = id
+                    end
+                end
+            end
+            table.sort(ids)
+        end
+        return ids
+    end
+    function mixed.Quest.GetAll(id, keys)
+        return own.Quest.GetAll(id, keys) or real.Quest.GetAll(id, keys)
+    end
+    return mixed
+end
+
+-- Where quests come from: our own data (questie.source "own", the default), QuestieDB
+-- ("questiedb"), or ours filled from QuestieDB ("both"); whichever is there if the other isn't.
+-- Picked once a session (the option says a /reload follows).
 local src
 function ns.QuestSource()
     if src or not ns.db then return src end
     local qdb, mine = ns.QDB(), ns.OwnQuestDB and ns.OwnQuestDB()
-    if ns.db.questie.source == "questiedb" then src = qdb or mine else src = mine or qdb end
+    local want = ns.db.questie.source
+    if want == "both" and qdb and mine then
+        src = Mixed(mine, qdb)
+    elseif want == "questiedb" then
+        src = qdb or mine
+    else
+        src = mine or qdb
+    end
     return src
 end
 local Source = ns.QuestSource
 
--- "own" or "QuestieDB" (nil: neither)
+-- "own", "QuestieDB" or "both" (nil: neither)
 function ns.QuestSourceName()
     local s = Source()
-    return s and (s == lib and "QuestieDB" or "own") or nil
+    return s and (s.mixed and "both" or s == lib and "QuestieDB" or "own") or nil
 end
 
 local function Q() return (src or Source()).Quest end
@@ -71,14 +150,6 @@ end
 
 -- QuestieDB keys spawns by the game's area (zone) IDs; the map needs uiMapIDs
 local areaToMap, parentArea, dungeonArea
-
-local function LoadTable(v)
-    if type(v) == "table" then return v end
-    if type(v) ~= "string" then return nil end
-    local f = loadstring(v)
-    local ok, t = pcall(f or error)
-    return ok and type(t) == "table" and t or nil
-end
 
 -- (from QuestieDB and from the quest source, when that's ours: the same area IDs)
 local function LoadZones()
@@ -692,9 +763,36 @@ function ns.QuestieArt()
     return loaded and loaded("Questie") and true or false
 end
 
--- an objective spot's icon: Questie's file, or the game's cursor art (spec)
+-- The player's Questie settings, where it's loaded. Its themes (Questie, pfQuest,
+-- Blizzard) and icon choices all end up here, so the spots follow them.
+local function QuestieProfile()
+    return ns.QuestieArt() and Questie and Questie.db and Questie.db.profile or nil
+end
+local QUESTIE_SPOT_TYPE = { slay = "ICON_TYPE_SLAY", loot = "ICON_TYPE_LOOT",
+    object = "ICON_TYPE_OBJECT", event = "ICON_TYPE_EVENT" }
+
+-- what the spots take from Questie, as a string: a change redraws them (BattlefieldInfo.lua)
+function ns.QuestieLookSig()
+    local p = QuestieProfile()
+    if not p then return "" end
+    local used = Questie.usedIcons and Questie.ICON_TYPE_SLAY and Questie.usedIcons[Questie.ICON_TYPE_SLAY]
+    return tostring(p.iconTheme) .. tostring(p.questObjectiveColors) .. tostring(p.alwaysGlowMap) .. tostring(used)
+end
+
+-- Questie's own objectives and ours are both in use: the game's are left off then, as
+-- its themes set them (only its Blizzard theme has them on). See ns.ApplyGroups.
+function ns.QuestieKeepsObjectivesOff()
+    local p = QuestieProfile()
+    return p and p.iconTheme and p.iconTheme ~= "blizzard" or false
+end
+
+-- an objective spot's icon: the one chosen in Questie, or the game's cursor art (spec)
 local function IconPath(kind)
-    if ns.QuestieArt() then return QUESTIE_ICONS .. kind .. ".blp" end
+    if ns.QuestieArt() then
+        local key = Questie and QUESTIE_SPOT_TYPE[kind] and Questie[QUESTIE_SPOT_TYPE[kind]]
+        local used = key and Questie.usedIcons and Questie.usedIcons[key]
+        return used or QUESTIE_ICONS .. kind .. ".blp"
+    end
     return GAME_SPOT_ICONS[kind] and GAME_SPOT_ICONS[kind].path
 end
 local NO_CROP = { 0, 1, 0, 1 }
@@ -843,7 +941,9 @@ function ns.QuestKind(id)
         else
             local by, to = Q().startedBy(id), Q().finishedBy(id)
             local a, b = by and by[1] and by[1][1], to and to[1] and to[1][1]
-            if b and a ~= b then word = "Speak" end
+            -- (started by an item: nobody hands it to you, you bring it to someone)
+            if by and by[3] and by[3][1] then word = "Deliver"
+            elseif b and a ~= b then word = "Speak" end
         end
     end
     local tag = QUEST_TAGS[extra[2] or 0]
@@ -1113,6 +1213,7 @@ function ns.QuestIcons(mapID)
                 out[#out + 1] = {
                     x = g.x * 100, y = g.y * 100, id = best.id, name = QuestName(best.id), group = "questie",
                     level = bestLevel, starterType = g.starterType, who = g.name, sub = g.sub, quests = quests,
+                    trivial = best.trivial or nil,
                     kind = art and "file" or nil, value = art and (QUESTIE_ICONS .. icon .. ".blp") or nil,
                     l = 0, r = 1, t = 0, b = 1,
                 }
@@ -1141,7 +1242,9 @@ function ns.QuestIcons(mapID)
             end
         else
             local game = GameObjectives(id)
-            local color = ns.db.spots.color and QuestColor(id) or nil
+            local qp = QuestieProfile()
+            local color = (ns.db.spots.color or qp and qp.questObjectiveColors) and QuestColor(id) or nil
+            local glow = qp and qp.alwaysGlowMap and (color or QuestColor(id)) or nil
             for _, t in ipairs(Targets(id)) do
                 local g = MatchObjective(t, game)
                 if not (g and g.finished) then
@@ -1167,7 +1270,7 @@ function ns.QuestIcons(mapID)
                             objective = g and g.text or t.text, objIcon = t.icon,
                             kind = "file", value = IconPath(t.icon),
                             l = crop[1], r = crop[2], t = crop[3], b = crop[4], mask = mask,
-                            iconColor = color, thinned = not keep[k] or nil,
+                            iconColor = color, questieGlow = glow, thinned = not keep[k] or nil,
                         }
                     end
                 end
@@ -1398,7 +1501,9 @@ local PROFESSION_WORDS = {
 ns.PROFESSION_TRAINER_IDS = PROFESSION_WORDS
 -- rogue poison ingredients sold by poison vendors
 local POISON_ITEMS = { [2928] = true, [2930] = true, [5173] = true, [8923] = true, [8924] = true, [5140] = true }
+local folkSkip   -- filling from QuestieDB: { npcs = {}, objects = {} }, what ours already lists
 local function Put(key, id)
+    if folkSkip and folkSkip[key == "Mailbox" and "objects" or "npcs"][id] then return end
     local l = folk[key]
     if not l then l = {} folk[key] = l end
     l[#l + 1] = id
@@ -1434,6 +1539,16 @@ local function OwnFolk(s)
     end
 end
 
+-- everything our list holds, whichever side or level it's for
+local function OursListed(s)
+    local out = { npcs = {}, objects = {} }
+    for _, r in ipairs(s.Folk() or {}) do
+        local into = r[1] == "Mailbox" and out.objects or out.npcs
+        for _, v in ipairs(r[2]) do into[type(v) == "table" and v[1] or v] = true end
+    end
+    return out
+end
+
 -- QuestieDB's
 local function BuildFolk()
     local flags = lib.Enum.npcFlags or {}
@@ -1443,6 +1558,7 @@ local function BuildFolk()
     local n = 0
     folk.isVendor = {}
     local general = {}  -- [npc] = true: a general supplier by title
+    local trainers = {} -- [npc] = true: a trainer selling a bag isn't a general supplier
 
     -- NPCs by flag and title
     for _, id in ipairs(lib.Npc.GetAllIds() or {}) do
@@ -1455,6 +1571,7 @@ local function BuildFolk()
                 end
             end
             if HasBit(f, TRAINER) then
+                trainers[id] = true
                 local sub = lib.Npc.subName(id) or ""
                 if sub:find("Weapon Master", 1, true) then
                     Put("Weapon Master", id)
@@ -1493,7 +1610,8 @@ local function BuildFolk()
         local t = vendors[key]
         if not t then t = {} vendors[key] = t end
         for _, v in ipairs(list) do
-            if folk.isVendor[v] then t[v] = true end
+            -- (Forever's Junior Mining and Skinning Trainers came out as general goods)
+            if folk.isVendor[v] and not (key == "General" and trainers[v]) then t[v] = true end
         end
     end
     local function ForLevel(req) return req == 0 or (req <= level and req >= level - 20) end
@@ -1564,9 +1682,17 @@ local function EnsureFolk()
     StartJob("Townsfolk index", function()
         wipe(folk)
         if s.Folk then OwnFolk(s) else BuildFolk() end
+        if s.mixed then
+            folkSkip = OursListed(s)
+            BuildFolk()
+        end
     end, function(ok)
         folkState = "done"
-        if not ok then wipe(folk) end
+        folkSkip = nil
+        if not ok then
+            wipe(folk)
+            if s.mixed then pcall(OwnFolk, s) end   -- (QuestieDB's failed: ours still stand)
+        end
         if ns.TownsfolkIndexReady then ns.TownsfolkIndexReady() end
     end)
     return false
@@ -1703,32 +1829,35 @@ local function AddWants(tip, list)
     tip:Show()
 end
 
-local function NpcOf(unit)
-    local guid = unit and UnitGUID(unit)
+local function NpcOf(guid)
     if not guid then return end
     local kind, _, _, _, _, id = strsplit("-", guid)
     if kind == "Creature" or kind == "Vehicle" then return tonumber(id) end
 end
 
-local function OnUnit(tip)
+local function OnUnit(tip, guid)
     if not TipsOn() then return end
-    local _, unit = tip:GetUnit()
-    local npc = NpcOf(unit)
+    local npc = NpcOf(guid)
     if not npc then return end
     BuildWants()
     AddWants(tip, wantNpc[npc])
 end
-local function OnItem(tip)
-    if not TipsOn() then return end
-    local _, link = tip:GetItem()
-    local id = link and tonumber(link:match("item:(%d+)"))
-    if not id then return end
+local function OnItem(tip, id)
+    if not TipsOn() or not id then return end
     BuildWants()
     AddWants(tip, wantItem[id])
 end
+-- live Forever has no OnTooltipSetUnit/Item: tooltips are built from data there
+local DATA_TIPS = C_TooltipInfo and TooltipDataProcessor and Enum.TooltipDataType
+local function ShowsUnitOrItem(tip)
+    if DATA_TIPS then
+        return tip:IsTooltipType(DATA_TIPS.Unit) or tip:IsTooltipType(DATA_TIPS.Item)
+    end
+    return tip:GetUnit() or (tip.GetItem and tip:GetItem())
+end
 -- a thing in the world: no unit, no item, its name on the first line
 local function OnPlain(tip)
-    if not TipsOn() or tip:GetUnit() or (tip.GetItem and tip:GetItem()) then return end
+    if not TipsOn() or ShowsUnitOrItem(tip) then return end
     if tip:GetOwner() ~= UIParent then return end
     local name = GameTooltipTextLeft1 and GameTooltipTextLeft1:GetText()
     if not name or tip:NumLines() > 2 then return end
@@ -1736,9 +1865,26 @@ local function OnPlain(tip)
     AddWants(tip, wantObj[name])
 end
 
-GameTooltip:HookScript("OnTooltipSetUnit", function(tip) ns.Safe("quest unit tip", OnUnit, tip) end)
-for _, t in ipairs({ GameTooltip, ItemRefTooltip }) do
-    t:HookScript("OnTooltipSetItem", function(tip) ns.Safe("quest item tip", OnItem, tip) end)
+if DATA_TIPS then
+    TooltipDataProcessor.AddTooltipPostCall(DATA_TIPS.Unit, function(tip, data)
+        if tip == GameTooltip then ns.Safe("quest unit tip", OnUnit, tip, data and data.guid) end
+    end)
+    TooltipDataProcessor.AddTooltipPostCall(DATA_TIPS.Item, function(tip, data)
+        if tip == GameTooltip or tip == ItemRefTooltip then
+            ns.Safe("quest item tip", OnItem, tip, data and data.id)
+        end
+    end)
+else
+    GameTooltip:HookScript("OnTooltipSetUnit", function(tip)
+        local _, unit = tip:GetUnit()
+        ns.Safe("quest unit tip", OnUnit, tip, unit and UnitGUID(unit))
+    end)
+    for _, t in ipairs({ GameTooltip, ItemRefTooltip }) do
+        t:HookScript("OnTooltipSetItem", function(tip)
+            local _, link = tip:GetItem()
+            ns.Safe("quest item tip", OnItem, tip, link and tonumber(link:match("item:(%d+)")))
+        end)
+    end
 end
 GameTooltip:HookScript("OnShow", function(tip) ns.Safe("quest object tip", OnPlain, tip) end)
 

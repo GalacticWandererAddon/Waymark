@@ -1,4 +1,5 @@
 local _, ns = ...
+local GetMouseFocus = GetMouseFocus or ns.GetMouseFocus
 
 -- One control scheme for every map: the Battlefield zone map, its dungeon map and the
 -- notebook's maps (agreed at gate A, mockups/controls-review.md):

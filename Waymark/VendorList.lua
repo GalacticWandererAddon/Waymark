@@ -1,4 +1,13 @@
 local _, ns = ...
+local GetNumSkillLines = GetNumSkillLines or ns.GetNumSkillLines
+local GetSkillLineInfo = GetSkillLineInfo or ns.GetSkillLineInfo
+local GetMerchantItemInfo = GetMerchantItemInfo or ns.GetMerchantItemInfo
+local GetCoinTextureString = GetCoinTextureString or ns.GetCoinTextureString
+local GetSpellLink = GetSpellLink or ns.GetSpellLink
+local GetItemInfo = GetItemInfo or ns.GetItemInfo
+local GetItemIcon = GetItemIcon or ns.GetItemIcon
+local GetItemQualityColor = GetItemQualityColor or ns.GetItemQualityColor
+local GetSpellInfo = GetSpellInfo or ns.GetSpellInfo
 
 -- "What they sell" (vendors) and "what they teach" (weapon masters, profession trainers): a window
 -- beside the map, in the look of "What they carry" (BossLoot.lua; mock-up mockups\vendor-lists.html).
@@ -161,7 +170,7 @@ local function Row(i)
     r:SetScript("OnEnter", function(self)
         self.hl:Show()
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        if self.item then GameTooltip:SetItemByID(self.item) else GameTooltip:SetSpellByID(self.spell) end
+        if self.item then ns.ItemTip(self.item, self.name:GetText()) else ns.SpellTip(self.spell, self.name:GetText()) end
         GameTooltip:Show()
     end)
     r:SetScript("OnLeave", function(self)
@@ -198,6 +207,7 @@ local Show
 
 local function Make()
     f = CreateFrame("Frame", "BFIVendorListFrame", UIParent, "BackdropTemplate")
+    ns.AddonWindow(f, function() if Cfg().stockPos then SavePos() end end)
     f:SetWidth(W)
     f:SetFrameStrata("HIGH")
     f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -424,7 +434,7 @@ function Show()
                 local sub = SubText(subType, equipLoc, e.heading)
                 if e.count and e.count > 1 then sub = ("%s%sin stacks of %d"):format(sub, sub ~= "" and " · " or "", e.count) end
                 if e.limited then sub = "Limited" .. (sub ~= "" and " · " .. sub or "") end
-                r.sub:SetText(sub)
+                r.sub:SetText((sub and sub ~= "" and sub) or (not name and ns.GAP_SHORT) or "")
                 r:SetAlpha(1)
             end
             r.name:SetTextColor(cr, cg, cb)

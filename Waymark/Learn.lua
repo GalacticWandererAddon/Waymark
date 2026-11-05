@@ -183,7 +183,8 @@ end
 -- (quiet: nothing said in chat; the spot just shows up)
 local mobEvents = CreateFrame("Frame")
 pcall(mobEvents.RegisterEvent, mobEvents, "LOOT_OPENED")
-pcall(mobEvents.RegisterEvent, mobEvents, "COMBAT_LOG_EVENT_UNFILTERED")
+-- (live Forever forbids the combat log to addons: asking brings the "blocked" popup, pcall or not)
+if not ns.FOREVER then pcall(mobEvents.RegisterEvent, mobEvents, "COMBAT_LOG_EVENT_UNFILTERED") end
 mobEvents:SetScript("OnEvent", function(_, event)
     if not ns.db then return end
     if event == "LOOT_OPENED" then

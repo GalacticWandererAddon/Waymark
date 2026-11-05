@@ -36,7 +36,8 @@ local DOUBLE_CLICK = 0.35  -- seconds between the two clicks
 local SIZE, BIG_SIZE = 160, 360  -- defaults, UI units
 local MIN_SIZE, MAX_SIZE = 100, 400
 local SQUARE_MASK = "Interface\\Buttons\\WHITE8X8"
-local ROUND_MASK = "Textures\\MinimapMask"
+-- (live Forever's own, as its minimap sets it; the old path masks the picture away)
+local ROUND_MASK = ns.FOREVER and "ui-hud-minimap-frame-generic-mask" or "Textures\\MinimapMask"
 -- across the minimap at each of its zooms (0: farthest), yards, outdoors / indoors
 local YARDS_OUT = { 466 + 2 / 3, 400, 333 + 1 / 3, 266 + 2 / 3, 200, 133 + 1 / 3 }
 local YARDS_IN = { 300, 240, 180, 120, 80, 50 }
@@ -183,7 +184,7 @@ end
 -- The minimap ------------------------------------------------------------------
 
 local function SideOnMinimap()
-    return (Cfg().size or SIZE) * UIParent:GetEffectiveScale() / Minimap:GetEffectiveScale()
+    return (Cfg().size or SIZE) * ns.AddonScale() * UIParent:GetEffectiveScale() / Minimap:GetEffectiveScale()
 end
 
 -- the game redraws the minimap at a new size on a zoom change; there and back
@@ -222,6 +223,15 @@ local function PlaceMinimap()
         local k = UIParent:GetEffectiveScale() / mm:GetEffectiveScale()
         mm:ClearAllPoints()
         mm:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", x * k, y * k)
+    elseif ns.FOREVER and MinimapCluster and MinimapCluster:GetRight() then
+        -- (flush with Edit Mode's minimap box, as with the corner above: where the minimap
+        -- sat in it left the square off the box)
+        local x, y = CornerOffsets()
+        local c, e = MinimapCluster, mm:GetEffectiveScale()
+        local k = UIParent:GetEffectiveScale() / e
+        mm:ClearAllPoints()
+        mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", c:GetRight() * c:GetEffectiveScale() / e + x * k,
+            c:GetTop() * c:GetEffectiveScale() / e + y * k)
     else
         -- where it was: its top-right corner stays, so a bigger square grows down and left
         mm:ClearAllPoints()
@@ -247,6 +257,11 @@ local function Square()
     if a.rotate == "1" then SetCVar("rotateMinimap", "0") end
     for _, name in ipairs(ART) do Stash(name, a.stashed) end
     if Cfg().hideSun then Stash("GameTimeFrame", a.stashed) end  -- (the day / night sun and moon)
+    -- (live Forever's title bar, over our header. The tracking button is anchored to it
+    -- and stays where it is. The old global name in ART finds nothing there.)
+    if Cfg().hideTitle ~= false and MinimapCluster and MinimapCluster.ZoneTextButton then
+        Stash(MinimapCluster.ZoneTextButton, a.stashed)
+    end
     for _, f in ipairs({ MinimapCluster, MinimapBackdrop }) do
         if f then for _, r in ipairs({ f:GetRegions() }) do Stash(r, a.stashed) end end
     end
@@ -664,6 +679,7 @@ local function ApplyFace()
     local map = BattlefieldMapFrame
     local sc = map and map.ScrollContainer
     if not sc then return end
+    if ns.ApplyGroups then ns.ApplyGroups() end  -- (ns.PinAlpha: givers unseen on the minimap face)
     if not (ns.MapCollapsed and ns.MapCollapsed()) then sc:Show() end
     OverlaysThrough(MinimapFace())
     if MinimapFace() then
@@ -858,6 +874,16 @@ end
 
 -- Buttons ----------------------------------------------------------------------
 
+-- (the big map shows the givers the minimap face leaves to the game, ns.PinAlpha; some of
+-- its ways through never reach ApplyFace)
+do
+    local toggle = ns.DockToggleBig
+    function ns.DockToggleBig()
+        toggle()
+        if ns.ApplyGroups then ns.ApplyGroups() end
+    end
+end
+
 -- The minimap's buttons (mail, tracking, clock, other addons'...) are its and
 -- its cluster's children. Moved onto our host frame, one strata over the map,
 -- so the map face doesn't cover them (they keep their anchors, so their
@@ -885,9 +911,11 @@ end
 -- saved with the docked set (dock.buttonPos, by its name), placed from the
 -- docked frame's corners. Only while docked.
 local function MakeMovable(child)
-    if movable[child] or not child:GetName() or not ns.HoldToMove then return end
+    -- (live Forever's tracking button sits in a frame with no name)
+    local name = child:GetName() or (MinimapCluster and child == MinimapCluster.Tracking and "MinimapTracking")
+    if movable[child] or not name or not ns.HoldToMove then return end
     movable[child] = true
-    local key = "minimap:" .. child:GetName()
+    local key = "minimap:" .. name
     local function Hold(b)
         b.bfiDockOnly, b.bfiMinimapButton = true, true
         ns.HoldToMove(b, key, child)
@@ -898,7 +926,7 @@ local function MakeMovable(child)
     end
     if child:IsMouseEnabled() then Hold(child) end
     for _, b in ipairs({ child:GetChildren() }) do
-        if b:IsObjectType("Button") then Hold(b) end
+        if b:IsObjectType("Button") or b:IsObjectType("DropdownButton") then Hold(b) end
     end
 end
 
@@ -1121,7 +1149,7 @@ local function OnMinimapWheel(_, delta)
         push = 0
         if Minimap:GetZoom() == before then Minimap:SetZoom(before - 1) end
     elseif ns.HomeIsArt and ns.HomeIsArt() then
-        push = 0  -- (in a dungeon or cave its map opens on a right-click or its button, not the wheel)
+        push = 0  -- (in a dungeon or cave its map opens on its button, not the wheel)
     elseif not IsBig() and Push() then  -- (the big map is open beside it already)
         OpenMap()
     end
@@ -1187,14 +1215,19 @@ local press   -- { x, y }: the left button went down on the minimap face there
 local drag    -- { x, y, scrollX, scrollY, scale }: the pan under way
 local upWas   -- the minimap's OnMouseUp, set aside during the drag
 
--- (a right-click: the map face at once, at the minimap's zoom (the canvas is
--- there already), with a flash of the edge. On the press, not the release:
--- Drag sets the minimap's OnMouseUp aside, which would drop a hook there.)
+-- (No right-click to the map face: a right-click that just missed a pin dropped you
+-- out of the minimap's zoom, the user. The wheel, a drag and its button do it.)
 local function OnMinimapDown(_, button)
     if not MinimapFace() then return end
-    if button == "RightButton" then
-        SetFace("map")
-        Blink(1, 2)
+    -- (clicks here reach the minimap, not the map's Browse: an ink mark's or a quest
+    -- ground's menu is asked for here. Not with a modifier, as on the map.)
+    if button == "RightButton" and not IsModifierKeyDown() then
+        -- (a frame later: the menu closes on any press, this one too)
+        C_Timer.After(0, function()
+            ns.Safe("Dock menus", function()
+                if not (ns.InkMenuAt and ns.InkMenuAt()) and ns.QuestGroundMenuAt then ns.QuestGroundMenuAt() end
+            end)
+        end)
     elseif button == "LeftButton" and not InCombat() then
         press = { GetCursorPosition() }
     end
@@ -1609,4 +1642,39 @@ function ns.SetupDock(map)
         LiftButtons()
         ApplyFace()
     end
+end
+
+-- Edit Mode: the game's minimap box is the cluster, which the docked square isn't in. While
+-- Edit Mode is open the square keeps up with the box (PlaceMinimap), and the corner
+-- setting goes off, you've picked a place. (Nothing to save: the layout keeps the box.)
+if ns.FOREVER and EventRegistry and MinimapCluster then
+    local watch = CreateFrame("Frame")
+    watch:Hide()
+    local x0, y0
+    local function Follow()
+        if not applied or InCombat() then return end
+        local c = MinimapCluster
+        local l, t, s = c:GetLeft(), c:GetTop(), c:GetEffectiveScale()
+        if not (l and t) then return end
+        local x, y = l * s, t * s
+        if not x0 then x0, y0 = x, y return end
+        if math.abs(x - x0) < 0.5 and math.abs(y - y0) < 0.5 then return end
+        x0, y0 = x, y
+        if Cfg().corner then
+            Cfg().corner = false
+            if ns.RefreshControls then ns.RefreshControls() end
+        end
+        PlaceMinimap()
+        UpdateMap()
+    end
+    watch:SetScript("OnUpdate", function() ns.Safe("Dock Edit Mode", Follow) end)
+    EventRegistry:RegisterCallback("EditMode.Enter", function()
+        x0, y0 = nil, nil
+        watch:Show()
+    end, watch)
+    EventRegistry:RegisterCallback("EditMode.Exit", function()
+        watch:Hide()
+        -- (leaving without saving puts the box back: a frame later, it's there)
+        C_Timer.After(0, function() ns.Safe("Dock Edit Mode", Follow) end)
+    end, watch)
 end

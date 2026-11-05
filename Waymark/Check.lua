@@ -365,22 +365,33 @@ function ns.RunCheck(noReload)
             pins[g] = (pins[g] or 0) + 1
         end)
         local shownEmpty = {}
-        for _, g in ipairs({ "questie", "turnins", "spots", "townsfolk", "rares", "gather", "party" }) do
+        for _, g in ipairs({ "questie", "turnins", "spots", "townsfolk", "rares", "party" }) do
             if ns.db[g] and ns.IsShown(g) and not pins[g] then shownEmpty[#shownEmpty + 1] = g end
         end
         Check("shown layers have pins (info)", true,
             #shownEmpty == 0 and "all have some" or ("none here for: " .. table.concat(shownEmpty, ", ")))
 
+        if ns.GatherInfo then Check("gathering nodes (info)", true, ns.GatherInfo()) end
+
         Check("sharp map art (info)", true, string.format("%d art pieces made sharp (%s, addon %s)",
             ns.sharpTiles or 0, ns.db.detail.sharpArt and "on" or "off",
             (ns.MapArtAvailable and ns.MapArtAvailable()) and "installed" or "missing"))
+
+        -- (every game function the addon calls, from tools; a client patch can drop one,
+        -- and nothing else says so until the line that calls it runs)
+        local gone = {}
+        for name in ("BreakUpLargeNumbers CanMerchantRepair ClearOverrideBindings CombatLogGetCurrentEventInfo CreateColor CreateFrame CreateFromMixins CreateVector2D FormatLargeNumber GetAbandonQuestName GetAvailableLevel GetAvailableQuestInfo GetAvailableTitle GetBindingKey GetBindingText GetBuildInfo GetCVar GetCoinTextureString GetCurrentBindingSet GetCursorPosition GetGameTime GetInstanceInfo GetItemIcon GetItemInfo GetItemQualityColor GetLocale GetLootSourceInfo GetMaxPlayerLevel GetMerchantItemInfo GetMerchantItemLink GetMerchantNumItems GetMinimapZoneText GetMouseFoci GetMouseFocus GetNumAvailableQuests GetNumGroupMembers GetNumQuestLeaderBoards GetNumQuestLogEntries GetNumQuestWatches GetNumSkillLines GetNumSubgroupMembers GetNumTrackingTypes GetNumTrainerServices GetPhysicalScreenSize GetPlayerFacing GetProfessionInfo GetProfessions GetQuestDifficultyColor GetQuestGreenRange GetQuestID GetQuestLogChoiceInfo GetQuestLogIndexByID GetQuestLogLeaderBoard GetQuestLogPushable GetQuestLogSelection GetQuestLogTitle GetRealZoneText GetRealmName GetSkillLineInfo GetSpellInfo GetSpellLink GetSubZoneText GetTime GetTitleText GetTrackingInfo GetTrackingTexture GetUnitSpeed GetZonePVPInfo GetZoneText HandleModifiedItemClick HideUIPanel InCombatLockdown IsAltKeyDown IsControlKeyDown IsInGroup IsInInstance IsInRaid IsIndoors IsModifiedClick IsModifierKeyDown IsMouseButtonDown IsPlayerSpell IsQuestFlaggedCompleted IsQuestWatched IsResting IsShiftKeyDown IsSpellKnown IsTradeskillTrainer PlaySound QuestLogPushQuest ReloadUI RemoveQuestWatch SaveBindings Screenshot SelectQuestLogEntry SetAbandonQuest SetBinding SetCVar SetOverrideBindingClick ShowUIPanel ToggleBattlefieldMap UnitAffectingCombat UnitCanAttack UnitClass UnitExists UnitFactionGroup UnitGUID UnitHealth UnitHealthMax UnitInParty UnitInRaid UnitIsConnected UnitIsDead UnitIsDeadOrGhost UnitIsPlayer UnitIsUnit UnitLevel UnitName UnitOnTaxi UnitPosition UnitRace UnitSex"):gmatch("%S+") do
+            if _G[name] == nil and ns[name] == nil then gone[#gone + 1] = name end
+        end
+        Check("game functions (info)", true, #gone == 0 and "all there" or ("missing here: " .. table.concat(gone, ", ")))
 
         Check("client (info)", true, ns.CLIENT .. ", interface " .. tostring(ns.INTERFACE)
             .. ", edition " .. tostring(ns.EDITION) .. ", maps " .. ns.MapEdition()
             .. (ns.ForeverMapDev() and " (dev, /waymark forevermap)" or ""))
         -- Forever's art on a stand-in comes from the dev-only Waymark_DevArt (Art.lua)
+        if ns.FOREVER and ns.CheckAllArt then ns.CheckAllArt() end
         local dev, missing = WaymarkDevArt, {}
-        for name in pairs(ns.artMissing) do missing[#missing + 1] = tostring(name) end
+        for name, why in pairs(ns.artMissing) do missing[#missing + 1] = tostring(name) .. " (" .. tostring(why) .. ")" end
         table.sort(missing)
         local nA, nF = 0, 0
         if dev then
@@ -394,7 +405,7 @@ function ns.RunCheck(noReload)
             else nGame = nGame + 1 end
         end
         table.sort(subs)
-        Check("Forever art", #missing == 0, (ns.FOREVER and "the game's own"
+        Check("Forever art", #missing == 0 and not (ns.FOREVER and #subs > 0), (ns.FOREVER and "the game's own"
             or not ns.UsingSubstitutes() and string.format("dev copies: %d atlases, %d files (build %s)", nA, nF, tostring(dev.build))
             or (dev and "dev art off (/waymark devart): " or "no Waymark_DevArt: ")
                 .. "substitutes, as an Era-only player sees it")
@@ -559,7 +570,7 @@ function ns.RunCheck(noReload)
     ns.db.diag = {
         at = date("%Y-%m-%d %H:%M:%S"),
         zone = (GetZoneText and GetZoneText() or "") .. " / " .. (GetSubZoneText and GetSubZoneText() or ""),
-        mapID = mapID, mapScale = map and map:GetScale(), uiScale = UIParent:GetEffectiveScale(),
+        mapID = mapID, mapScale = map and map:GetScale(), uiScale = UIParent:GetEffectiveScale(), addonScale = ns.AddonScale(),
         screen = { GetPhysicalScreenSize and GetPhysicalScreenSize() },
         profile = ns.ActiveProfileKey and ns.ActiveProfileKey() or nil,
         checks = checks, frames = frames, pins = pins, errors = errors,

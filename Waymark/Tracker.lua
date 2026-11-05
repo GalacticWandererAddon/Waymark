@@ -1,4 +1,8 @@
 local _, ns = ...
+local GetCoinTextureString = GetCoinTextureString or ns.GetCoinTextureString
+local GetItemInfo = GetItemInfo or ns.GetItemInfo
+local GetItemIcon = GetItemIcon or ns.GetItemIcon
+local GetItemQualityColor = GetItemQualityColor or ns.GetItemQualityColor
 
 -- Quest tracker: the quests you track with something to do in the zone you're
 -- in, with their objectives, nearest first, under their sub-zone's name. Like
@@ -244,7 +248,7 @@ local function HookQuestLog()
         if ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow() then return end
         refusedAt = nil
         local index = TitleIndex(self)
-        local id = index and select(8, GetQuestLogTitle(index))
+        local id = index and (C_QuestLog.GetQuestIDForLogIndex and C_QuestLog.GetQuestIDForLogIndex(index) or GetQuestLogTitle and select(8, GetQuestLogTitle(index)))
         if not id or id == 0 then return end
         local own = OwnWatched()
         own[id] = not own[id] or nil
@@ -1105,7 +1109,7 @@ local function Place()
     if c.detached then
         frame:SetParent(UIParent)
         frame:SetFrameStrata(map:GetFrameStrata())
-        frame:SetScale(ns.db.scale or 1)  -- (as big as the map's own text)
+        frame:SetScale(ns.MapScale())  -- (as big as the map's own text)
         frame:SetWidth(c.width or 220)
         local p = c.pos
         if p then
@@ -1601,8 +1605,8 @@ function ns.UpdateTracker(now)
     -- placed again on a settings change or a new map scale; not every second
     -- (that would fight a drag)
     -- (attached: every time, so it follows the map's border settings too)
-    if (now or placedScale ~= ns.db.scale or not Cfg().detached) and not frame.bfiMoving then
-        placedScale = ns.db.scale
+    if (now or placedScale ~= ns.MapScale() or not Cfg().detached) and not frame.bfiMoving then
+        placedScale = ns.MapScale()
         ns.Safe("Tracker Place", Place)
     end
     ns.Safe("Tracker Collect", Collect)
@@ -1735,7 +1739,7 @@ local function RewardSlot(i)
         if not self.kind then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         if self.kind == "item" then  -- (a preview's, from our data: the item itself)
-            GameTooltip:SetItemByID(self.index)
+            ns.ItemTip(self.index, self.name and self.name:GetText())
         else
             if qwQuest then SelectQuest(qwQuest) end
             pcall(GameTooltip.SetQuestLogItem, GameTooltip, self.kind, self.index)
@@ -2670,13 +2674,13 @@ end
 local function PlaceQuestWindow()
     if qw.moving then return end  -- (being dragged by its top bar)
     local c = QCfg()
-    local k = c.scale or 1
+    local k = (c.scale or 1) * ns.AddonScale()
     qw:SetScale(k)
     UpdateGrips()
     if c.detached and c.pos then
         qw.seam:Hide()
         qw:ClearAllPoints()
-        qw:SetHeight(c.height or 420)
+        qw:SetHeight(c.height or 570)
         qw:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", c.pos[1] / k, c.pos[2] / k)
         return
     end
@@ -2686,7 +2690,7 @@ local function PlaceQuestWindow()
     if not (map and map:IsShown() and map:GetTop()) then
         qw.seam:Hide()
         qw:ClearAllPoints()
-        qw:SetHeight(c.height or 420)
+        qw:SetHeight(c.height or 570)
         if c.pos then
             qw:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", c.pos[1] / k, c.pos[2] / k)
         else
@@ -2713,7 +2717,7 @@ local function PlaceQuestWindow()
     if c.matchHeight and not c.detached then
         qw:SetHeight(math.max(260 * k, t - b) / k)
     else
-        qw:SetHeight(c.height or 420)
+        qw:SetHeight(c.height or 570)
     end
     -- (offsets in the window's own scale)
     local onRight
@@ -2872,23 +2876,31 @@ local function BuildQuestWindow()
     local topArt = top:CreateTexture(nil, "BORDER")
     topArt:SetAllPoints()
     ns.SetArt(topArt, "QuestLog-reward-top-frame")
-    -- Forever's red X (the map's own close X art, MapControls; Era: ours), on the
-    -- window's top-right corner, over its frame, as Forever's windows have it (inside
-    -- the top bar it looked off, the user); the button a little bigger than its art
-    local close = CreateFrame("Button", nil, top)
-    close:SetSize(28, 28)
-    close:SetPoint("CENTER", qw, "TOPRIGHT", -10, -10)
-    close:SetFrameLevel(qw:GetFrameLevel() + 25)  -- (over the frame's art, at + 20)
-    local xs = ns.UsingSubstitutes and ns.UsingSubstitutes() and 15 or 21
-    for _, s in ipairs({ { "Normal", "redbutton-exit-2x" }, { "Pushed", "redbutton-exit-pressed-2x" },
-                         { "Highlight", "redbutton-highlight-2x" } }) do
-        local tex = close:CreateTexture(nil, s[1] == "Highlight" and "HIGHLIGHT" or "ARTWORK")
-        ns.SetArt(tex, s[2])
-        close["Set" .. s[1] .. "Texture"](close, tex)
-        -- (sized after: setting it can stretch it over the button)
-        tex:ClearAllPoints()
-        tex:SetSize(xs, xs)
-        tex:SetPoint("CENTER")
+    -- Era's art: the old "Close" button, top left of the bar. Forever: its red X (the
+    -- map's own close X art, MapControls; dev art gives it on Era too), on the window's
+    -- top-right corner, over its frame, as Forever's windows have it (inside the top
+    -- bar it looked off, the user); the button a little bigger than its art
+    local close
+    if ns.UsingSubstitutes and ns.UsingSubstitutes() then
+        close = CreateFrame("Button", nil, top, "UIPanelButtonTemplate")
+        close:SetSize(90, 22)
+        close:SetPoint("LEFT", 11, 4)
+        close:SetText(CLOSE or "Close")
+    else
+        close = CreateFrame("Button", nil, top)
+        close:SetSize(28, 28)
+        close:SetPoint("CENTER", qw, "TOPRIGHT", -10, -10)
+        close:SetFrameLevel(qw:GetFrameLevel() + 25)  -- (over the frame's art, at + 20)
+        for _, s in ipairs({ { "Normal", "redbutton-exit-2x" }, { "Pushed", "redbutton-exit-pressed-2x" },
+                             { "Highlight", "redbutton-highlight-2x" } }) do
+            local tex = close:CreateTexture(nil, s[1] == "Highlight" and "HIGHLIGHT" or "ARTWORK")
+            ns.SetArt(tex, s[2])
+            close["Set" .. s[1] .. "Texture"](close, tex)
+            -- (sized after: setting it can stretch it over the button)
+            tex:ClearAllPoints()
+            tex:SetSize(21, 21)
+            tex:SetPoint("CENTER")
+        end
     end
     close:SetScript("OnClick", function() qw:Hide() end)
     qw.close = close
@@ -2906,7 +2918,7 @@ local function BuildQuestWindow()
         if not qw.moving then return end
         qw.moving = nil
         qw:StopMovingOrSizing()
-        local k = QCfg().scale or 1
+        local k = (QCfg().scale or 1) * ns.AddonScale()
         QCfg().pos = { qw:GetLeft() * k, qw:GetTop() * k }
         PlaceQuestWindow()
     end)
@@ -3140,8 +3152,9 @@ local function BuildQuestWindow()
     d:SetPoint("RIGHT", qw.focus, "LEFT", 5, 0)
     ns.SetArt(d, "UI-Frame-BtnDivMiddle")
 
-    -- detached: its bottom-right corner scales it (the page is cut from fixed
-    -- art 307 across, so it scales rather than stretches)
+    -- detached: its bottom-right corner follows the mouse. Sideways scales it (the
+    -- page is cut from fixed art 307 across, so it scales rather than stretches);
+    -- what's left of the drag goes to its height
     local corner = CreateFrame("Button", nil, qw)
     corner:SetSize(16, 16)
     corner:SetPoint("BOTTOMRIGHT", 2, -2)
@@ -3152,13 +3165,16 @@ local function BuildQuestWindow()
     corner:SetScript("OnMouseDown", function(_, button)
         local c = QCfg()
         if button ~= "LeftButton" or not c.detached or c.locked or not c.pos then return end
-        local x0 = GetCursorPosition()
+        local x0, y0 = GetCursorPosition()
         local k0 = c.scale or 1
         local ui = UIParent:GetEffectiveScale()
-        local w0 = QW_W * k0  -- (UIParent units; the top-left stays put)
+        local g = ns.AddonScale()
+        local w0 = QW_W * k0 * g  -- (UIParent units; the top-left stays put)
+        local h0 = qw:GetHeight() * k0 * g
         corner:SetScript("OnUpdate", function()
-            local x = GetCursorPosition()
+            local x, y = GetCursorPosition()
             c.scale = math.max(0.6, math.min(2, k0 * (w0 + (x - x0) / ui) / w0))
+            c.height = math.max(260, math.min(900, (h0 + (y0 - y) / ui) / (c.scale * g)))
             PlaceQuestWindow()
         end)
     end)
@@ -3166,13 +3182,14 @@ local function BuildQuestWindow()
         corner:SetScript("OnUpdate", nil)
         local c = QCfg()
         c.scale = math.floor((c.scale or 1) * 20 + 0.5) / 20  -- (the slider's steps)
+        c.height = math.floor((c.height or 570) + 0.5)
         PlaceQuestWindow()
         if ns.RefreshControls then ns.RefreshControls() end
     end)
     corner:SetScript("OnEnter", function()
         GameTooltip:SetOwner(corner, "ANCHOR_TOPLEFT")
         GameTooltip:AddLine("Size")
-        ns.Hints({ { "Drag", "scale it" }, { "Drag the top bar", "move it" } })
+        ns.Hints({ { "Drag", "sideways its scale, up and down its height" }, { "Drag the top bar", "move it" } })
         GameTooltip:Show()
     end)
     corner:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -3220,7 +3237,7 @@ local function BuildQuestWindow()
         edge.dragging = nil
         if not edge:IsMouseOver() then line:Hide() end
         local c = QCfg()
-        c.height = math.floor((c.height or 420) + 0.5)
+        c.height = math.floor((c.height or 570) + 0.5)
         PlaceQuestWindow()
         if ns.RefreshControls then ns.RefreshControls() end
     end)
@@ -3471,3 +3488,30 @@ function ns.SetupTracker(map)
     end)
     ns.UpdateTracker(true)
 end
+
+-- The quest window's art takes a second to arrive the first time it's drawn after a
+-- reload (the user), so a dot nobody sees draws it soon after login. It has its own
+-- frame: the window itself is still built when it's first opened.
+local QUEST_ART = { "QuestDetailsBackgrounds", "QuestLog-frame", "QuestLog-frame-filigree",
+    "QuestLog-reward-bottom", "QuestLog-reward-header-top", "QuestLog-reward-tile-vertical",
+    "QuestLog-reward-top-frame", "UI-Frame-BtnDivMiddle",
+    "minimal-scrollbar-arrow-bottom", "minimal-scrollbar-arrow-top" }
+local warm = CreateFrame("Frame", nil, UIParent)
+warm:SetSize(1, 1)
+warm:SetPoint("BOTTOMLEFT")
+warm:SetAlpha(0.01)
+warm:RegisterEvent("PLAYER_ENTERING_WORLD")
+warm:SetScript("OnEvent", function(self)
+    self:UnregisterAllEvents()
+    C_Timer.After(3, function()
+        ns.Safe("Tracker warm art", function()
+            if not (ns.db and ns.db.questlog and ns.db.questlog.shown) then return end
+            for _, name in ipairs(QUEST_ART) do
+                local t = self:CreateTexture(nil, "BACKGROUND")
+                t:SetAllPoints()
+                ns.SetArt(t, name)
+            end
+            C_Timer.After(5, function() self:Hide() end)
+        end)
+    end)
+end)

@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.2.1 (2026-11-05)
+
+**Fixes for live Forever, and a few new things.** If you're on 1.2.0, please update: on the live client Waymark's buttons and icons drew blank, and a "blocked" popup showed at login. Your notes and ink carry over.
+
+Fixed
+- Waymark's buttons, frames and icons drew blank.
+- A "Waymark has been blocked" popup at login (the game no longer lets addons read the combat log).
+- Quest lines on mob, item and object tooltips.
+- Errors from item data in reward tooltips, vendor lists and boss loot.
+- Professions weren't read, so skill checks did nothing. Also PvP colours on the zone name and money in rewards.
+
+New and changed
+- New: Waymark size, one slider for the whole addon (Size, shape & fade). The game's own UI stays as it is. Forever starts at 1.25x.
+- Zoomed in, quest rings stay thin and the player arrow grows.
+- Quest window and settings window: the corner sets height and scale; the quest window's art loads without a delay. The settings window's frame takes clicks.
+- Docked: the map follows the minimap in Edit Mode, the game's title bar can be hidden, quest pins aren't doubled, right-click no longer drops you out of the minimap, and undocking gives the minimap back whole.
+- With Questie: objective spots follow its theme (icons, colours, glow), live.
+- The game's quest areas show for every quest on the map, and the Objective markers and Quest areas toggles work without touching Blizzard's settings.
+- Items and spells the game hasn't shared yet say so instead of "Retrieving item information".
+- Zone maps on the continent now use Forever's real shapes.
+- Removed developer tools that went out by mistake in 1.2.0: the Dev settings page, the command bar and the developer commands.
+- The book: you now write as yourself, and notes from 1.2.0 carry over.
+- New: a sun clock on the map, and the map follows the hour (Creator's preset).
+- Quests filled from QuestieDB when you have it.
+- New drops in "What they carry" for the classic dungeons.
+- Quests started by an item read Deliver; Forever's trainers no longer show as general goods.
+
+Not in this release: gathering marks. They wait until GatherMate2 works on Forever.
+
 ## 1.2.0 for Classic Era (2026-11-04)
 
 **Waymark comes to Classic Era.** Battlefield Info is now Waymark. Same addon, new name. Your settings, ink, notes, setups and key bindings come along by themselves.

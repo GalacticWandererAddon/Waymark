@@ -16,7 +16,8 @@ local LEARNED_PREFIX = "!BFIL:1!"
 local LibDeflate = LibStub("LibDeflate")
 
 -- not part of a setup: per-run and learned data, and the setups themselves
-local EXCLUDE = { setups = true, characters = true, dungeonRun = true, blockedLog = true, towns = true,
+local EXCLUDE = { addonScale = true,  -- (Waymark size: follows your screen, not a setup or character)
+                  setups = true, characters = true, dungeonRun = true, blockedLog = true, towns = true,
                   diag = true, lastErrors = true,  -- (/bfi check's results)
                   devArtOff = true,  -- (/bfi devart, Art.lua)
                   -- your own things on the maps, kept whatever setup is loaded
@@ -24,12 +25,12 @@ local EXCLUDE = { setups = true, characters = true, dungeonRun = true, blockedLo
                   notebook = true,  -- (the found notes: your pages, marks, the book's place)
                   objectSpots = true, objectHidden = true,  -- (dungeon pins you moved or hid)
                   optionsWindow = true,  -- (the settings window's own state: folds, last page)
-                  beforeCleared = true,
+                  beforeCleared = true, questieBoth = true,
                   myPresets = true,  -- (your presets: names of setups, kept with the setups)  -- (SetupSetups: the old "Before ..." setups cleared, once)
                   zoneShapes = true,  -- (dev: ZoneArt.lua's measurements)
                   cutEdits = true, cutEditsBeforeRestore = true, cutRestored = true }  -- (dev: CutEdit.lua)
 -- inside a group: also yours, kept when a setup is loaded (quests you hid, folds)
-local KEEP_IN = { questie = { hidden = true }, tracker = { folded = true, foldedAreas = true },
+local KEEP_IN = { questie = { hidden = true, source = true }, tracker = { folded = true, foldedAreas = true },
                   questlog = { zoneOpen = true } }
 
 local function Copy(v)
@@ -94,6 +95,7 @@ local function Apply(s)
         ns.db[g] = ns.db[g] or {}
         for k, v in pairs(t) do ns.db[g][k] = v end
     end
+    ns.ClockFirstTime(ns.db)   -- (a setup or character saved before the clock)
     ns.CopyDefaults(ns.db, ns.DEFAULTS)
     ns.keepSizeOff = true  -- (its scale and its sizes as saved: ns.SetScale)
     pcall(ns.ApplyAll)
@@ -192,7 +194,7 @@ local ROWS = {
     { "Its look", "ground.look", GROUND,                 "ink", "ink", "ink", "ink" },
     { "Its colours", "ground.colorBy", GROUND_BY,        "type", "type", "type", "type" },
     { "Arrows to lone spots and turn-ins", "ground.arrows", nil, F, F, F, F },
-    { "Quest objectives (the game's)", "objectives.shown", nil, T, F, T, T },
+    { "Objective markers (the game's)", "objectives.shown", nil, T, F, T, T },
     { "Quest areas (the game's)", "areas.shown", nil,        F, F, F, F },
     { "Learned quest givers", "learned.shown", nil,          T, F, T, T },
     { "Quest tracker", "tracker.shown", nil,                 T, T, T, T },
@@ -300,6 +302,10 @@ local function Yours(k, p) return POS[k] or MINE[p] end
 local ROW_PATHS = { ["dock.on"] = true, ["clearView.on"] = true, ["profiles.city.enabled"] = true,
                     ["profiles.city.layers.townsfolk"] = true }
 for _, row in ipairs(ROWS) do ROW_PATHS[row[2]] = true end
+-- (after that, so these two still don't count as "every other setting")
+for i = #ROWS, 1, -1 do
+    if ns.NoGameLayer((ROWS[i][2]:match("^(%w+)%.shown$"))) then table.remove(ROWS, i) end
+end
 
 -- the preset's whole settings (nil: its rows only; the file missing)
 local function Base(id)
@@ -844,6 +850,7 @@ end
 
 local function Window(name, title, height)
     local w = CreateFrame("Frame", name, UIParent, "BasicFrameTemplateWithInset")
+    ns.AddonWindow(w)
     w:SetSize(480, height)
     w:SetPoint("CENTER")
     w:SetFrameStrata("FULLSCREEN_DIALOG")

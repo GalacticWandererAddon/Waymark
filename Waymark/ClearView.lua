@@ -49,6 +49,7 @@ local function OnContinent()
     local T = Enum and Enum.UIMapType
     return t and T and t <= T.Continent or false
 end
+ns.MapOnContinent = OnContinent
 local function EdgeTarget()
     if not (ns.ClearView() and Cfg().noFrame) then return 1 end
     return ((ns.InTownView and ns.InTownView()) or (ns.InCityView and ns.InCityView()) or OnContinent()) and 1 or 0
@@ -157,6 +158,8 @@ local function EachArtFrame(map, fn)
         end
     end
 end
+
+ns.EachMapArtFrame = EachArtFrame
 
 local function EachTexture(f, fn)
     for _, r in ipairs({ f:GetRegions() }) do
@@ -306,6 +309,10 @@ local function UpdateGhosts(map)
     -- (a dungeon floor's tiles are its canvas's own: the copies go on it, a layer down)
     for t in pairs(dMasked) do Ghost(t, t:GetParent()) end
 end
+
+-- a zone map / a dungeon floor is cut to its outline right now (SoftEdges.lua)
+function ns.ClearViewZoneCut() return next(masked) ~= nil end
+function ns.ClearViewFloorCut() return dShown ~= nil end
 
 local function CutAll(map)
     Cut(map)

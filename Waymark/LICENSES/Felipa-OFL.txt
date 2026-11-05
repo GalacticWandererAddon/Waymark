@@ -1,3 +1,5 @@
+Media/Fonts/WaymarkDigits-Bold.ttf is a Modified Version of Felipa under this licence: its digits, colon and am/pm, thickened, and named apart as the Reserved Font Name requires.
+
 Copyright (c) 2011 Fontstage (info@fontstage.com), with Reserved Font Names, 'Felipa'
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.

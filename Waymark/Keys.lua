@@ -21,6 +21,7 @@ local ACTIONS = {
     bigmap   = { "Big map", function() if ns.ToggleBigMap then ns.ToggleBigMap(true) end end },
     collapse = { "Collapse the map", function() if ns.ToggleCollapse then ns.ToggleCollapse() end end },
     ink      = { "Draw on the map", function() if ns.ToggleInkBar then ns.ToggleInkBar() end end },
+    book     = { "Open the book", function() if ns.ToggleNotebook then ns.ToggleNotebook() end end },
 }
 -- (names fit the game's Keybindings column, about 25 letters; each key
 -- toggles, a second press puts it back)
@@ -36,7 +37,7 @@ local NO_BUTTON = { learned = "Learned quest givers", party = "Player & group", 
 -- (the key does less than the button: auto-zoom's button also centers on shift-click;
 -- the rest are shorter, to fit the Keybindings column)
 local KEY_LABEL = { zoom = "Auto-zoom", learned = "Learned quests", rares = "RareScanner",
-                    gather = "GatherMate", explore = "Unexplored", dungeons = "Dungeon doors", ink = "Your ink" }
+                    gather = "Gathering", explore = "Unexplored", dungeons = "Dungeon doors", ink = "Your ink" }
 
 local function LayerLabel(id)
     for _, t in ipairs(ns.TOGGLES or {}) do

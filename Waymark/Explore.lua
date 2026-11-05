@@ -1,4 +1,5 @@
 local _, ns = ...
+local GetMouseFocus = GetMouseFocus or ns.GetMouseFocus
 
 -- Exploration: the areas you haven't found yet (hidden as the game does, or shown
 -- faded, fogged, in sepia or fully), how much of a zone you've seen, a gold flash
@@ -255,7 +256,12 @@ local function LayOverlay(o, parent, sx, sy, getTexture)
                     tex:SetTexelSnappingBias(0)
                 end
                 -- (the sharp copy, where the map art addon has one: Detail.lua)
-                tex:SetTexture(ns.MapArtFile and ns.MapArtFile(fid) or fid, nil, nil, "LINEAR")
+                -- (only when it's another file: set again on a resize, a tile dropped out till it reloaded)
+                local file = ns.MapArtFile and ns.MapArtFile(fid) or fid
+                if tex.artFile ~= file then
+                    tex:SetTexture(file, nil, nil, "LINEAR")
+                    tex.artFile = file
+                end
                 tex:SetTexCoord(0, pw / fw, 0, ph / fh)
                 tex:ClearAllPoints()
                 tex:SetPoint("TOPLEFT", parent, "TOPLEFT", (o.x + 256 * (col - 1)) * sx, -(o.y + 256 * (row - 1)) * sy)
@@ -546,7 +552,7 @@ local function ShowHover(map)
     cursorLabel:Hide()
     if name then
         -- the same size on screen whatever the map's scale, like the tooltip
-        local inv = 1 / math.max(0.1, map:GetScale())
+        local inv = ns.AddonScale() / math.max(0.1, map:GetScale())
         if hoverLabel:GetScale() ~= inv then
             hoverLabel:SetScale(inv)
             if ns.UpdateZoneName then ns.UpdateZoneName() end  -- (it places the label)
@@ -650,8 +656,10 @@ function ns.SetupExplore(map)
     cursorLabel:SetScript("OnUpdate", ns.Timed("Explore cursor", function(self)
         local x, y = GetCursorPosition()
         local s = UIParent:GetEffectiveScale()
+        local g = ns.AddonScale()
+        if self:GetScale() ~= g then self:SetScale(g) end
         x, y = x / s, y / s + 14
-        local w, h = cursorText:GetStringWidth(), cursorText:GetStringHeight()
+        local w, h = cursorText:GetStringWidth() * g, cursorText:GetStringHeight() * g
         local area = self.area
         local l, r, t = area and area:GetLeft(), area and area:GetRight(), area and area:GetTop()
         if l and r and t then
@@ -661,7 +669,7 @@ function ns.SetupExplore(map)
             if y + h > t then y = y - 14 - 20 - h end  -- (at the top: below the cursor)
         end
         self:ClearAllPoints()
-        self:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x, y)
+        self:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x / g, y / g)
     end))
     cursorLabel:Hide()
     ns.debugFrames.cursorLabel = cursorLabel

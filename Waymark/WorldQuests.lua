@@ -12,6 +12,29 @@ local _, ns = ...
 -- zone's area ID as QuestieDB keys them, 0-100.
 
 local D = ns.WorldQuestData
+-- Forever's new quests (Data\ForeverQuests.lua, by hand) join the generated rows, never over one
+if D and ns.FOREVER and ns.ForeverQuestData then
+    for _, kind in ipairs({ "quests", "npcs", "items", "bossloot" }) do
+        for id, row in pairs(ns.ForeverQuestData[kind] or {}) do
+            if not D[kind][id] then D[kind][id] = row end
+        end
+    end
+    -- (new drops on a classic boss, after the ones with chances: a row's chances stay in step)
+    for instance, bosses in pairs(ns.ForeverQuestData.lootAdded or {}) do
+        D.bossloot[instance] = D.bossloot[instance] or {}
+        for boss, items in pairs(bosses) do
+            local row
+            for _, r in ipairs(D.bossloot[instance]) do
+                if r[1] == boss then row = r end
+            end
+            if not row then
+                row = { boss, {}, {} }  -- (a boss the Classic data had no drops for)
+                table.insert(D.bossloot[instance], row)
+            end
+            for _, item in ipairs(items) do row[2][#row[2] + 1] = item end
+        end
+    end
+end
 local B64 = {}
 do
     local s = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"

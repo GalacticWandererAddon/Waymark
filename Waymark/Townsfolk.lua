@@ -1,4 +1,7 @@
 local _, ns = ...
+local GetNumSkillLines = GetNumSkillLines or ns.GetNumSkillLines
+local GetSkillLineInfo = GetSkillLineInfo or ns.GetSkillLineInfo
+local GetSpellInfo = GetSpellInfo or ns.GetSpellInfo
 
 -- Townsfolk on the Battlefield Map: innkeepers, flight masters, trainers, vendors...
 -- Who and where comes from the quest data, ours or QuestieDB's (which NPCs are which type: QuestData.lua's
@@ -41,6 +44,8 @@ ns.TOWNSFOLK_TYPES = {
     },
 }
 local PROFESSION_ICON = TRACKING .. "profession"
+-- graveMark: how a spirit healer is drawn: "stone", an inked headstone (tools/ink_marks.py), or "game", the game's icon
+local HEADSTONE = MEDIA .. "Marks\\Headstone"
 
 -- vendor lists depend on level; QuestData.lua re-sorts them on level-up
 local LEVEL_DEPENDENT = { Food = true, Ammo = true }
@@ -558,10 +563,15 @@ end
 function BFITownsfolkPinMixin:OnAcquired(p, icon, label)
     self.info, self.label = p, label
     self.Icon:SetTexture(icon)
+    -- (the inked headstone needs a little more room than an icon)
+    local size = icon == HEADSTONE and 16 or 14
+    self:SetSize(size, size)
     self:ApplyCurrentScale()
     self:ApplyCurrentAlpha()
     self:SetPosition(p.x, p.y)
 end
+
+local StockRows
 
 function BFITownsfolkPinMixin:OnEnter()
     local members = self.info.members
@@ -569,7 +579,9 @@ function BFITownsfolkPinMixin:OnEnter()
     if #members == 1 then
         local p = members[1]
         GameTooltip:AddLine(p.name or self.label)
-        GameTooltip:AddLine(p.sub or self.label, 1, 1, 1)
+        -- (a Spirit Healer's name is what it is: said once)
+        local what = p.sub or self.label
+        if what:lower() ~= (p.name or self.label):lower() then GameTooltip:AddLine(what, 1, 1, 1) end
     elseif self.info.mixed then
         -- different types: each by name, with what they are
         GameTooltip:AddLine(string.format("Townsfolk (%d)", #members))
@@ -592,12 +604,13 @@ function BFITownsfolkPinMixin:OnEnter()
         GameTooltip:AddLine(learned == #members and "Learned by Waymark"
             or string.format("%d learned by Waymark", learned), 0.6, 0.6, 0.6)
     end
-    ns.PinHints()
+    -- (only where the menu has something in it: most townsfolk have none without TomTom)
+    if (TomTom and TomTom.AddWaypoint) or #(StockRows(self) or {}) > 0 then ns.PinHints() end
     GameTooltip:Show()
 end
 
 -- the menu's "what they sell" / "what they teach" (VendorList.lua): one row per person here with a list
-local function StockRows(pin)
+function StockRows(pin)
     if not ns.StockKinds then return nil end
     local out, members = {}, pin.info.members
     local map = pin.GetMap and pin:GetMap()
@@ -721,7 +734,7 @@ function BFITownsfolkProviderMixin:Draw()
             end
         end
         g.also = #also > 0 and table.concat(also, ", ") or nil
-        pcall(map.AcquirePin, map, TEMPLATE, g, e.t.icon, e.t.label)
+        pcall(map.AcquirePin, map, TEMPLATE, g, e.t.key == "Spirit Healer" and c.graveMark ~= "game" and HEADSTONE or e.t.icon, e.t.label)
     end
     table.sort(perType, function(a, b) return PinRank(a.t.key) < PinRank(b.t.key) end)
     for _, e in ipairs(perType) do

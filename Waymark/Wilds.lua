@@ -1,4 +1,6 @@
 local _, ns = ...
+local GetItemInfo = GetItemInfo or ns.GetItemInfo
+local GetItemQualityColor = GetItemQualityColor or ns.GetItemQualityColor
 
 -- Rares and treasure chests on a zone map, from our own data (Data\WorldQuests.lua's
 -- rares and chests; mock-up mockups\world-extras.html 1-2). Settings ns.db.wilds:

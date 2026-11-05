@@ -10,6 +10,66 @@ ns.FOREVER = interface >= 16000 and interface < 20000
 ns.CLASSIC_ERA = interface >= 11500 and interface < 12000
 ns.CLIENT = ns.FOREVER and "forever" or ns.CLASSIC_ERA and "classic era" or "other"
 
+-- Calls live Forever took away from the globals. Each file that uses one starts with
+-- `local GetItemInfo = GetItemInfo or ns.GetItemInfo`. (Not put back as globals: that
+-- would be ours in the game's own code. /waymark check lists any other that goes.)
+ns.GetItemInfo = C_Item and C_Item.GetItemInfo
+ns.GetItemIcon = C_Item and C_Item.GetItemIconByID
+ns.GetItemQualityColor = C_Item and C_Item.GetItemQualityColor
+function ns.GetSpellInfo(id)
+    local i = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+    if i then return i.name, nil, i.iconID, i.castTime, i.minRange, i.maxRange, i.spellID end
+end
+ns.GetNumSkillLines = C_SkillInfo and C_SkillInfo.GetNumSkillLines
+function ns.GetSkillLineInfo(index)
+    local i = C_SkillInfo and C_SkillInfo.GetSkillLineInfo(index)
+    if i then return i.name, i.isHeader, not i.isCollapsed, i.rank, i.tempPoints, i.modifier, i.maxRank end
+end
+function ns.GetMerchantItemInfo(index)
+    local m = C_MerchantFrame and C_MerchantFrame.GetItemInfo(index)
+    if m then return m.name, m.texture, m.price, m.stackCount, m.numAvailable, m.isPurchasable, m.isUsable, m.hasExtendedCost end
+end
+ns.GetZonePVPInfo = C_PvP and C_PvP.GetZonePVPInfo
+ns.GetCoinTextureString = C_CurrencyInfo and C_CurrencyInfo.GetCoinTextureString
+ns.GetSpellLink = C_Spell and C_Spell.GetSpellLink
+-- An item or spell the game won't give details of (some of Forever's new vendors and drops):
+-- our text instead of its bare "Retrieving item information". label: the name we have.
+ns.GAP_SHORT = "Details to come"
+ns.GAP_TEXT = "Still filling in the gaps after Forever's launch. The game hasn't shared this one's details yet."
+local function GapTip(label)
+    GameTooltip:AddLine(label or "Unknown", 1, 1, 1)
+    GameTooltip:AddLine(ns.GAP_TEXT, 0.6, 0.6, 0.6, true)
+end
+function ns.ItemTip(item, label)
+    if (GetItemInfo or ns.GetItemInfo)(item) then GameTooltip:SetItemByID(item) else GapTip(label) end
+end
+function ns.SpellTip(spell, label)
+    if (GetSpellInfo or ns.GetSpellInfo)(spell) then GameTooltip:SetSpellByID(spell) else GapTip(label) end
+end
+
+function ns.GetMouseFocus()
+    local foci = GetMouseFoci and GetMouseFoci()
+    return foci and foci[1]
+end
+
+-- The game's own objective markers and blue quest areas are Forever's only (the map's
+-- providers aren't attached elsewhere, BattlefieldInfo.lua): their settings, buttons
+-- and preset rows don't show there. Their saved values are left alone.
+-- Gathering is out of Forever's releases until GatherMate2 works there: the build leaves
+-- Gather.lua out of the zip, and that switches the rest off. (Dev copies have the file.)
+function ns.GatherPulled() return ns.FOREVER and not ns.SetupGather end
+
+function ns.NoGameLayer(group)
+    return not ns.FOREVER and (group == "objectives" or group == "areas")
+        or (group == "gather" and ns.GatherPulled())
+end
+function ns.DropNoGameLayers(list, field)
+    for i = #list, 1, -1 do
+        if ns.NoGameLayer(list[i][field]) then table.remove(list, i) end
+    end
+    return list
+end
+
 -- Which edition this copy is, from the TOC's X-Edition: "Forever" (branch main; also
 -- run on the stand-ins for testing) or "Era" (the frozen Classic Era release, branch
 -- era, in F:\AddonWorkspace\BattlefieldInfo-Era). Shown by /bfi check.

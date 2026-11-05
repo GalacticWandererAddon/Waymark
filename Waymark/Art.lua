@@ -63,6 +63,7 @@ ns.ART = {
 -- [Forever name] = the client's name or path; { name or path, left, right, top,
 -- bottom } for part of it (top > bottom: upside down); false: nothing drawn. Checked against Era 1.15.9.70003's atlas tables (wago.tools).
 local RED_BUTTONS = ns.MEDIA .. "RedButtons"
+local PALETTE = ns.MEDIA .. "Palette"
 ns.ART_SUBSTITUTE = {
     -- the dock button (Options.lua VIEW_ICONS): Era hasn't Forever's map icon; its sibling
     ["Interface\\Icons\\INV_Misc_Map_01"] = "Interface\\Icons\\INV_Misc_Map02",
@@ -110,8 +111,8 @@ ns.ART_SUBSTITUTE = {
     ["vignettekill"] = "VignetteKill",
     ["vignettekillelite"] = "VignetteKillElite",
     ["cursor_directions_128"] = "Interface\\Cursor\\Directions",
-    -- the ink toggle: Era has no palette cursor; its letter one
-    ["cursor_palette_128"] = "Interface\\Cursor\\Mail",
+    -- the ink toggle: Era has no palette cursor; our own (tools\palette_icon.py)
+    ["cursor_palette_128"] = PALETTE,
     ["bonus-objective-star"] = "tradeskills-star",
     -- the quest window (Tracker.lua). Era lists the QuestLog-* atlases but hasn't
     -- their file (questlogframe.blp: green). Its frame: Era's dark metal frame, a
@@ -144,6 +145,40 @@ function ns.UsingSubstitutes()
     return not ns.FOREVER and not DevArt()
 end
 
+-- The atlas behind a name, and its info. (Live Forever only knows the plain names,
+-- as its own UI uses them, and picks the -2x or -c60 size itself. The beta took both.)
+local function FindAtlas(name)
+    local get = C_Texture and C_Texture.GetAtlasInfo
+    if not get then return name end
+    local info = get(name)
+    if info or not ns.FOREVER then return name, info end
+    local plain = name:gsub("%-2x$", "")
+    plain = plain:gsub("%-c60$", "")
+    if plain == name then return name end
+    return plain, get(plain)
+end
+
+-- The metal frame's bottom corners, in step with its top ones drawn 75 wide. (Live
+-- picks the c60 art for a plain name, where they're as big as the top; in the -2x
+-- art they're 64 to the top's 150, so 32.)
+function ns.MetalCornerSize(name)
+    local _, top = FindAtlas("ui-frame-metal-cornertopleft-2x")
+    local _, me = FindAtlas(name)
+    if not (top and me and top.width and top.width > 0) then return 32, 32 end
+    local k = 75 / top.width
+    return me.width * k, me.height * k
+end
+
+-- for /waymark check: every name on the list, also those in windows not opened yet
+function ns.CheckAllArt()
+    for _, name in ipairs(ns.ART) do
+        if type(name) == "string" and not IsFile(name) then
+            local _, info = FindAtlas(name)
+            if not info then ns.artMissing[name] = "unknown" end
+        end
+    end
+end
+
 function ns.SetArt(tex, name, fallback)
     local dev = DevArt()
     local a = dev and dev.atlas[name]
@@ -160,7 +195,9 @@ function ns.SetArt(tex, name, fallback)
         ns.artFrom[name] = "dev copy"
         return true
     end
-    local s = ns.UsingSubstitutes() and ns.ART_SUBSTITUTE[name]
+    -- (not `x and y`: false here means "draw nothing", and blanked all art on Forever)
+    local s
+    if ns.UsingSubstitutes() then s = ns.ART_SUBSTITUTE[name] end
     if s == false then
         tex:SetTexture(nil)
         ns.artFrom[name] = "substitute"
@@ -178,7 +215,7 @@ function ns.SetArt(tex, name, fallback)
         tex:SetTexCoord(0, 1, 0, 1)
         return true
     end
-    local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(name)
+    local atlas, info = FindAtlas(name)
     -- (off Forever, its file and coordinates set ourselves: Era's SetAtlas seems to
     -- keep a piece's old SetTexCoord when the file is the same, so ns.SetArtPart cut
     -- a part of a part: the dropdowns lost their ends on hover. Tiled art keeps
@@ -189,11 +226,17 @@ function ns.SetArt(tex, name, fallback)
         tex:SetTexCoord(info.leftTexCoord, info.rightTexCoord, info.topTexCoord, info.bottomTexCoord)
         return true
     end
-    if info and tex:SetAtlas(name) ~= false then
+    if info and tex:SetAtlas(atlas) ~= false then
         return true
     end
-    ns.artMissing[name] = true
+    -- (what the check shows: the game doesn't know it, or knows it and won't draw it)
+    ns.artMissing[name] = info and "refused" or "unknown"
     ns.artFrom[name] = nil
+    -- (live Forever turned down some atlases its tables list: our own stand-in beats a blank)
+    local own = ns.FOREVER and ns.ART_SUBSTITUTE[name]
+    if type(own) == "table" and ns.SetArtPart(tex, own[1], own[2], own[3], own[4], own[5]) then
+        return true
+    end
     if fallback then return ns.SetArt(tex, fallback) end
     return false
 end
@@ -202,6 +245,17 @@ end
 -- left and its top). For drawing a frame of any size out of one picture.
 function ns.SetArtPart(tex, name, l, r, t, b)
     if not ns.SetArt(tex, name) then return false end
+    -- (Forever: cut from the atlas's own figures. Read back after SetAtlas they gave
+    -- the red buttons in broken pieces)
+    local _, info = FindAtlas(name)
+    local file = ns.FOREVER and info and (info.file or info.filename)
+    if file then
+        local x, y = info.leftTexCoord, info.topTexCoord
+        local aw, ah = info.rightTexCoord - x, info.bottomTexCoord - y
+        tex:SetTexture(file)
+        tex:SetTexCoord(x + aw * l, x + aw * r, y + ah * t, y + ah * b)
+        return true
+    end
     local ulx, uly, _, lly, urx = tex:GetTexCoord()
     local w, h = urx - ulx, lly - uly
     tex:SetTexCoord(ulx + w * l, ulx + w * r, uly + h * t, uly + h * b)

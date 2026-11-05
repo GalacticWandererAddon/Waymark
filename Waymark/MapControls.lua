@@ -497,7 +497,7 @@ end
 
 -- three or more of our quest pins close to the player counts as a cluster
 local CLUSTER_RADIUS, CLUSTER_COUNT = 0.06, 3
--- ... and so do two or more gathering nodes within 80 yards (GatherMate's data)
+-- ... and so do two or more gathering nodes within 80 yards
 local NODE_YARDS, NODE_MIN = 80, 2
 local function NearCluster(map, px, py)
     local n = 0
@@ -837,13 +837,35 @@ local function ApplyClassColors(gm)
     if pin.UpdateAppearanceData then pcall(pin.UpdateAppearanceData, pin) end
 end
 
+-- The arrow stays one size on screen while the map grows round it, so close up it
+-- looked tiny (the user): it grows a little with the zoom, about twice at the closest.
+local gameArrow, lastArrow, arrowHooked
+local function SetArrowSize(map, gm)
+    local c = Cfg()
+    local base = c.arrowSize and c.arrowSize > 0 and c.arrowSize or gameArrow
+    if not base then return end
+    local sc = map.ScrollContainer
+    -- (no zoom levels yet while the map is set up: GetScaleForMinZoom errors then)
+    local lo, s = sc and sc.zoomLevels and sc:GetScaleForMinZoom(), sc and sc:GetCanvasScale()
+    local size = base
+    if lo and s and lo > 0 and s > lo then size = base * (s / lo) ^ 0.35 end
+    if lastArrow and math.abs(size - lastArrow) < 0.25 then return end
+    lastArrow = size
+    pcall(gm.SetUnitPinSize, gm, "player", size)
+    if gm.pin and gm.pin.SynchronizePinSizes then pcall(gm.pin.SynchronizePinSizes, gm.pin) end
+end
+
 local function ApplySizes(map)
     local gm = map.groupMembersDataProvider
     if gm then pcall(ApplyClassColors, gm) end
     if not (gm and gm.SetUnitPinSize) then return end
     local c = Cfg()
-    if c.arrowSize and c.arrowSize > 0 then
-        pcall(gm.SetUnitPinSize, gm, "player", c.arrowSize)
+    if not gameArrow and gm.GetUnitPinSizesTable then gameArrow = gm:GetUnitPinSizesTable().player end
+    lastArrow = nil
+    SetArrowSize(map, gm)
+    if not arrowHooked then
+        arrowHooked = true
+        hooksecurefunc(map, "OnCanvasScaleChanged", function() ns.Safe("MapControls arrow zoom", SetArrowSize, map, gm) end)
     end
     if c.groupSize and c.groupSize > 0 then
         pcall(gm.SetUnitPinSize, gm, "party", c.groupSize)
@@ -966,7 +988,8 @@ local function UpdateGroupTooltip(map)
             state = "|cffff4040Dead|r"
         else
             local hp, max = UnitHealth(m.unit), UnitHealthMax(m.unit)
-            if max and max > 0 then state = string.format("Health %d%%", hp / max * 100) end
+            local secret = issecretvalue and (issecretvalue(hp) or issecretvalue(max))  -- (live Forever)
+            if not secret and max and max > 0 then state = string.format("Health %d%%", hp / max * 100) end
         end
         local dist
         if me and me.x and yw then
@@ -1505,7 +1528,9 @@ end
 -- [key] = { its point, the map's nearest corner, x, y } (in its own units), so
 -- it stays put on the big map too; 5th field true: dropped away from the map,
 -- so on the screen's nearest corner instead (still shown with the map). A moved button leaves the row by the X; the
--- others close up (Options InRow).
+-- others close up (Options InRow). A toggle button held with Shift leaves its strip and goes alone
+-- (buttonPos["toggle:<id>"]; the row closes up), and held again it moves alone, Shift or not;
+-- right-click while holding slots it back in the row.
 local HOLD = 0.4        -- seconds held before it moves
 local OFF_MAP = 30      -- dropped further than this outside the map: kept on the screen, not the map
 local held, dragging    -- the button pressed; the frame being moved
@@ -1630,12 +1655,14 @@ local function HoldUpdate()
     if held and left then
         if GetTime() - held.bfiDownAt >= HOLD then
             local f = held.bfiMoveTarget
+            if held.bfiMoveKey and f ~= held and (IsShiftKeyDown() or ns.ButtonMoved(held)) then f = held end
             local px, py = PointXY(f, MovePoint(f))
             if not px then return end
             -- (from where it was pressed: the mouse may have moved while held)
             grabX, grabY = px - held.bfiDownX, py - held.bfiDownY
             dragging = f
             held.bfiSwallow = true
+            if held.CloseMenu then held:CloseMenu() end  -- (a menu that opened on the press)
             GameTooltip:Hide()
             -- the others it was anchored to close up now, not on the drop
             RelayoutButtons()

@@ -1,4 +1,7 @@
 local _, ns = ...
+local GetItemInfo = GetItemInfo or ns.GetItemInfo
+local GetItemIcon = GetItemIcon or ns.GetItemIcon
+local GetItemQualityColor = GetItemQualityColor or ns.GetItemQualityColor
 
 -- "What they carry": a dungeon's boss loot in a window beside the map (mock-up
 -- mockups\boss-loot.html, A). Opened from the quill menu of a boss on the dungeon
@@ -48,6 +51,10 @@ local function CanWear(classID, sub)
     return true
 end
 
+-- Forever's bosses the game's encounter table (the dungeon map's names) calls something else: the
+-- loot is under the name players meet them by
+local KNOWN_AS = { ["Mana Elemental"] = "Arcanic Enigma", ["Infurnus"] = "Magmatus", ["The Butcher"] = "The Baron" }
+
 local function Rows(instanceID)
     local data = ns.OwnQuestDB and ns.OwnQuestDB()
     local rows = data and data.Wilds and data.Wilds.bossLoot[instanceID]
@@ -61,9 +68,10 @@ local function Bosses(instanceID)
     local byName, out, seen = {}, {}, {}
     for _, row in ipairs(rows) do byName[row[1]] = row end
     for _, b in ipairs(ns.DungeonEncounters and ns.DungeonEncounters[instanceID] or {}) do
-        if byName[b[1]] and not seen[b[1]] then
-            seen[b[1]] = true
-            out[#out + 1] = byName[b[1]]
+        local n = KNOWN_AS[b[1]] or b[1]
+        if byName[n] and not seen[n] then
+            seen[n] = true
+            out[#out + 1] = byName[n]
         end
     end
     for _, row in ipairs(rows) do
@@ -74,6 +82,7 @@ end
 
 function ns.HasBossLoot(instanceID, name)
     if Cfg().bossLoot == false then return false end
+    name = KNOWN_AS[name] or name
     for _, row in ipairs(Bosses(instanceID)) do
         if not name or row[1] == name then return true end
     end
@@ -153,7 +162,7 @@ local function Row(i)
     r:SetScript("OnEnter", function(self)
         self.hl:Show()
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetItemByID(self.item)
+        ns.ItemTip(self.item, self.name:GetText())
         GameTooltip:Show()
     end)
     r:SetScript("OnLeave", function(self)
@@ -181,6 +190,7 @@ end
 
 local function Make()
     f = CreateFrame("Frame", "BFIBossLootFrame", UIParent, "BackdropTemplate")
+    ns.AddonWindow(f, function() if Cfg().lootPos then SavePos() end end)
     f:SetWidth(W)
     f:SetFrameStrata("HIGH")
     f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -243,6 +253,7 @@ local function SubText(classID, subType, equipLoc)
 end
 
 function ns.OpenBossLoot(instanceID, name)
+    name = KNOWN_AS[name] or name
     local bosses = Bosses(instanceID)
     if #bosses == 0 then return end
     if not f then Make() end
@@ -305,7 +316,7 @@ function ns.OpenBossLoot(instanceID, name)
         r.name:SetTextColor(cr, cg, cb)
         r.edge:SetVertexColor(cr, cg, cb)
         r.edge:SetShown(e.q and e.q >= 2)
-        r.sub:SetText(e.classID and SubText(e.classID, e.subType, e.equipLoc) or "")
+        r.sub:SetText(e.classID and SubText(e.classID, e.subType, e.equipLoc) or ns.GAP_SHORT)
         local c = ns.ChanceText and ns.ChanceText(e.chance) or ""
         r.chance:SetText(c)
         if c == "always" then r.chance:SetTextColor(0.55, 0.55, 0.55) else r.chance:SetTextColor(1, 1, 1) end

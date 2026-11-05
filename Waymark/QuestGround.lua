@@ -55,6 +55,16 @@ local drawn = {}   -- { x, y, quest, part } for the hover
 -- (a quest whose ground another drew shares that one's group)
 local groups, cur = {}, nil
 local arrowsAt = {}   -- (Arrows, by Draw)
+
+-- Rings and dots are drawn in the map's own units, so they'd grow with it, 8x at the
+-- closest zoom (the user: huge). This thins them, leaving them a little bolder close up.
+local function ZoomThin()
+    local sc = map and map.ScrollContainer
+    if not (sc and sc.zoomLevels) then return 1 end   -- (none yet: GetScaleForMinZoom errors)
+    local lo, s = sc:GetScaleForMinZoom(), sc:GetCanvasScale()
+    if not (lo and s and lo > 0 and s > lo) then return 1 end
+    return (lo / s) ^ 0.75
+end
 local BUDGET = 4   -- ms of drawing a frame: a busy map (Un'Goro, every quest) is laid over a few frames
 local t0 = 0
 
@@ -108,7 +118,7 @@ local function Segment(x1, y1, x2, y2, th, r, g, b, a, e1, e2)
         return l
     end)
     l:SetVertexColor(r, g, b, a)
-    l:SetThickness(th)
+    l:SetThickness(th * ZoomThin())
     -- a piece runs past its ends only as far as its bend needs (e1, e2 px), so
     -- the joins don't notch, nor overlap into darker dots
     local dx, dy = x2 - x1, y2 - y1
@@ -129,7 +139,7 @@ local function Dot(x, y, size, r, g, b, a)
         return t
     end)
     t:SetVertexColor(r, g, b, a)
-    t:SetSize(size, size)
+    t:SetSize(size * ZoomThin(), size * ZoomThin())
     t:ClearAllPoints()
     t:SetPoint("CENTER", host, "TOPLEFT", x, -y)
     t:Show()
@@ -689,11 +699,28 @@ end
 
 -- a group's textures: alpha k times as drawn, rim and dots grow times as big
 local function Tint(gr, k, grow)
+    gr.grow = grow
+    local thin = ZoomThin()
     for _, e in ipairs(gr.tex) do
         local t = e[1]
         t:SetVertexColor(e[3], e[4], e[5], math.min(1, e[6] * k))
-        if e[2] == "l" then t:SetThickness(e[7] * grow)
-        elseif e[2] == "d" then t:SetSize(e[7] * grow, e[7] * grow) end
+        if e[2] == "l" then t:SetThickness(e[7] * grow * thin)
+        elseif e[2] == "d" then t:SetSize(e[7] * grow * thin, e[7] * grow * thin) end
+    end
+end
+
+-- the zoom changed: rings and dots to their new width, nothing else is touched
+local lastThin = 1
+local function Rethin()
+    local thin = ZoomThin()
+    if math.abs(thin - lastThin) < 0.01 then return end
+    lastThin = thin
+    for _, gr in pairs(groups) do
+        local grow = (gr.grow or 1) * thin
+        for _, e in ipairs(gr.tex or {}) do
+            if e[2] == "l" then e[1]:SetThickness(e[7] * grow)
+            elseif e[2] == "d" then e[1]:SetSize(e[7] * grow, e[7] * grow) end
+        end
     end
 end
 
@@ -801,10 +828,14 @@ local function Relight(fadeIn)
             -- (done above)
         elseif l.how == "gilt" then
             local ink = look == "ink"
-            Tint(gr, ink and 1.6 or 1.45, ink and 1.25 or 1)
-            local th = gr.th
+            -- (close up the gold fades and narrows, and the ring is less bold: at full
+            -- strength it swamped the map, the user)
+            local thin = ZoomThin()
+            local soft = 0.3 + 0.7 * thin
+            Tint(gr, ink and 1 + 0.6 * thin or 1.45, ink and 1 + 0.25 * thin or 1)
+            local th = gr.th * thin
             EachEdge(gr, function(x1, y1, x2, y2)
-                GLine(x1, y1, x2, y2, th * (ink and 3.2 or 2.2), GOLD[1], GOLD[2], GOLD[3], 0.42, true, 0)
+                GLine(x1, y1, x2, y2, th * (ink and 1.6 + 1.6 * thin or 2.2), GOLD[1], GOLD[2], GOLD[3], 0.42 * soft, true, 0)
                 if not ink then
                     GLine(x1, y1, x2, y2, th * 0.45, GOLD[1] * 0.92, GOLD[2] * 0.85, GOLD[3] * 0.7, 0.95, false, 3)
                 end
@@ -869,11 +900,13 @@ local function Hover()
         over = false
     end
     local owner = GameTooltip:IsShown() and GameTooltip:GetOwner()
-    if owner and owner ~= host then tipShown = false return end   -- (a pin's tooltip)
+    -- (ours, or Questie's over this ground, questie.tooltip)
+    local mine = owner == host or (tipShown and owner and owner == (ns.QuestTipProxy and ns.QuestTipProxy()))
+    if owner and not mine then tipShown = false return end   -- (a pin's tooltip)
     -- (a menu up, e.g. this ground's own: no tooltip under it; shown again it
     -- flickered, the menu's opening hiding it each time)
     if ns.QuillMenuShown and ns.QuillMenuShown() then
-        if tipShown and owner == host then GameTooltip:Hide() end
+        if tipShown and mine then ns.QuestTooltipLeave() end
         tipShown = false
         return
     end
@@ -937,7 +970,7 @@ local function Hover()
         for i = #hits, 13, -1 do hits[i] = nil end   -- (12: an item's many droppers fold to one line)
     end
     if #hits == 0 then
-        if tipShown and owner == host then GameTooltip:Hide() end
+        if tipShown and mine then ns.QuestTooltipLeave() end
         if tipShown and ns.HoverQuestGlow then ns.HoverQuestGlow(nil) end
         tipShown = false
         return
@@ -946,61 +979,17 @@ local function Hover()
     local keys = {}
     for i, d in ipairs(hits) do keys[i] = tostring(d[3].id) .. (d[4].what or "") end
     local key = table.concat(keys, "|") .. (IsShiftKeyDown() and "+shift" or "")   -- (Shift shows the droppers)
-    if tipShown and owner == host and key == tipKey then return end
+    if tipShown and mine and key == tipKey then return end
     tipKey = key
     if ns.HoverQuestGlow then ns.HoverQuestGlow(hits[1][3].id) end   -- (its ground lights up)
-    GameTooltip:SetOwner(host, "ANCHOR_CURSOR_RIGHT", 12, 12)
-    -- each quest: its name in gold, [level] in its difficulty colour, on the right
-    -- what it asks in its type's colour; under it what's here for it, with the
-    -- objective's count (from your log; none for a quest you could take)
-    -- an item more than 2 kinds of monster drop: one line under the title, the item
-    -- and its count; the monsters under it only while Shift is held
-    local shift = IsShiftKeyDown()
-    local droppers, folded = {}, false
-    for _, d in ipairs(hits) do
-        local part = d[4]
-        if part.item and c.drops ~= false and part.item ~= part.what then
-            local k = d[3].id .. ":" .. part.item
-            droppers[k] = (droppers[k] or 0) + 1
-        end
-    end
-    local itemDone = {}
-    local lastQuest
-    for _, d in ipairs(hits) do
-        local q, part = d[3], d[4]
-        if q ~= lastQuest then
-            if lastQuest then GameTooltip:AddLine(" ") end
-            lastQuest = q
-            local lc = "ffffff"
-            if GetQuestDifficultyColor then
-                local ok, dc = pcall(GetQuestDifficultyColor, q.level)
-                if ok and dc then lc = string.format("%02x%02x%02x", dc.r * 255, dc.g * 255, dc.b * 255) end
-            end
-            local ok, word = pcall(ns.QuestKind or function() end, q.id)
-            word = ok and word or nil
-            local tc = TYPE_COLORS[word or ""] or PLAIN
-            -- (the type's ink lightened: the tooltip is dark)
-            local tr, tg, tb = tc[1] * 0.7 + 0.3, tc[2] * 0.7 + 0.3, tc[3] * 0.7 + 0.3
-            GameTooltip:AddDoubleLine(string.format("%s |cff%s[%d]|r", q.name or "?", lc, q.level or 0),
-                (word or "") .. (q.inLog and "" or (word and ", " or "") .. "available"), 1, 0.82, 0, tr, tg, tb)
-        end
-        local have, need = (part.text or ""):match("(%d+)%s*/%s*(%d+)")
-        local count = have and (have .. "/" .. need) or ""
-        local left = "  " .. (part.what or "?")
-        local many = part.item and droppers[q.id .. ":" .. part.item]
-        if many and many > 2 then
-            local k = q.id .. ":" .. part.item
-            if not itemDone[k] then
-                itemDone[k] = true
-                GameTooltip:AddDoubleLine("  " .. part.item, count, 1, 1, 1, 0.7, 0.7, 0.7)
-                if not shift then folded = true end
-            end
-            if shift then GameTooltip:AddLine("    " .. (part.what or "?"), 0.8, 0.8, 0.8) end
-        elseif part.item and c.drops ~= false and part.item ~= part.what then
-            GameTooltip:AddDoubleLine(left, part.item .. (count ~= "" and "  " .. count or ""), 1, 1, 1, 0.7, 0.7, 0.7)
-        else
-            GameTooltip:AddDoubleLine(left, count, 1, 1, 1, 0.7, 0.7, 0.7)
-        end
+    -- (the quests' lines: Pin.lua's ns.QuestSpotLines, shared with objective pins; Questie's with
+    -- questie.tooltip on)
+    local rows = {}
+    for i, d in ipairs(hits) do rows[i] = { quest = d[3], part = d[4] } end
+    local folded = false
+    if not (ns.GroundQuestieTip and ns.GroundQuestieTip(host, rows)) then
+        GameTooltip:SetOwner(host, "ANCHOR_CURSOR_RIGHT", 12, 12)
+        folded = ns.QuestSpotLines(rows, c.drops)
     end
     tipQuest = hits[1][3].id
     -- (the hints' "Hold Shift" also covers what's folded away)
@@ -1046,6 +1035,26 @@ end
 
 function ns.SetupQuestGround(m)
     map = m
+    local litAt = 1
+    hooksecurefunc(map, "OnCanvasScaleChanged", function()
+        ns.Safe("QuestGround zoom", function()
+            Rethin()
+            -- (the game's quest area: its border is in map units too, and bright. Its own
+            -- OnCanvasScaleChanged has marked it to redraw, so this is drawn with it)
+            local blob = ns.questAreas and ns.questAreas.pin
+            if blob and blob.SetBorderScalar then
+                local k = ZoomThin()
+                blob:SetBorderScalar(k)
+                blob:SetBorderAlpha(192 * (0.3 + 0.7 * k))
+            end
+            -- (what's lit keeps up with the zoom, in steps: it's a redraw)
+            local thin = ZoomThin()
+            if next(touched) and math.abs(thin - litAt) > 0.04 then
+                litAt = thin
+                Relight(false)
+            end
+        end)
+    end)
     host = CreateFrame("Frame", nil, map:GetCanvas())
     host:EnableMouse(false)
     host:Hide()

@@ -904,7 +904,7 @@ local function DrawList(h, list)
                 c = WHISPER
                 fs:SetShadowColor(WHISPER_BLEED[1], WHISPER_BLEED[2], WHISPER_BLEED[3], WHISPER_BLEED[4])
             else
-                fs:SetShadowColor(0.95, 0.89, 0.74, 0.55)
+                fs:SetShadowColor(0.95, 0.89, 0.74, 0.27)
             end
             fs:SetTextColor(c[1], c[2], c[3], 0.97)
             fs:SetShadowOffset(up, -up)
@@ -949,7 +949,7 @@ local function DrawList(h, list)
                     end
                     if hf.SetScale then hf:SetScale(1 / up) end
                     if not hf:SetFont(hand[3], size * up, "") then hf:SetFont(HANDS[1][3], size * up, "") end
-                    hf:SetTextColor(PAPER[1], PAPER[2], PAPER[3], 0.5)
+                    hf:SetTextColor(PAPER[1], PAPER[2], PAPER[3], 0.25)
                     hf:SetShadowOffset(0, 0)
                     hf:SetText(m.s or "")
                     if hf.SetRotation then hf:SetRotation(-math.rad(m.rot or 0)) end

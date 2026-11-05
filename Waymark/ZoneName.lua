@@ -1,4 +1,5 @@
 local _, ns = ...
+local GetZonePVPInfo = GetZonePVPInfo or ns.GetZonePVPInfo
 
 -- The header: where you are, by name (the sub-zone, or the zone where there's no
 -- sub-zone), on the zone map and in caves alike. zoneName:
@@ -233,7 +234,7 @@ end
 local function Layout(map)
     local c = Cfg()
     local st = STYLES[c.style] or STYLES.plate
-    local inv = 1 / math.max(0.1, map:GetScale())
+    local inv = ns.AddonScale() / math.max(0.1, map:GetScale())
     header:SetScale(inv)
     local size = c.fontSize or 13
     local h = c.style == "plate" and math.floor(size * 3.1) or math.floor(size * 1.9 + 6)
@@ -322,7 +323,8 @@ function ns.UpdateZoneName()
         return
     end
     ApplyStyle()
-    text:SetText(name)
+    local time = ns.ClockHeaderText and ns.ClockHeaderText()
+    text:SetText(time and (name .. "   " .. time) or name)
     sub:SetText(extras ~= "" and extras or nil)
     -- drag it to move the map; right-click: back to your own map (when you're looking at another)
     header:EnableMouse(true)

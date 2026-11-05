@@ -447,7 +447,7 @@ local function UpdateStyleButton(map, kind, cont, x, y)
         styleButton:Hide()
         return
     end
-    styleButton:SetScale(1 / math.max(0.1, map:GetScale()))  -- (its size on screen, like the map's buttons)
+    styleButton:SetScale(ns.AddonScale() / math.max(0.1, map:GetScale()))  -- (its size on screen, like the map's buttons)
     styleButton.text:SetText(kind == "extra" and "Map art" or "Minimap style")
     styleButton:Show()
 end
@@ -529,7 +529,7 @@ local function UpdateFloorBar(map, kind, id, covered)
     for k, cid in ipairs(fl) do if cid == id then i = k end end
     floorBar.floors, floorBar.id = fl, id
     floorBar.text:SetText(string.format("Floor %d/%d", i, #fl))
-    floorBar:SetScale(1 / math.max(0.1, map:GetScale()))  -- (its size on screen, like the map's buttons)
+    floorBar:SetScale(ns.AddonScale() / math.max(0.1, map:GetScale()))  -- (its size on screen, like the map's buttons)
     floorBar:Show()
 end
 
@@ -895,6 +895,7 @@ function ns.SetupCave(map)
 
     local canvas = map:GetCanvas()
     arrowHost = CreateFrame("Frame", nil, canvas)
+    arrowHost.bfiNoEdgeFade = true  -- (you: never faded away, SoftEdges.lua)
     arrowHost:SetAllPoints(canvas)
     arrowTex = arrowHost:CreateTexture(nil, "OVERLAY")
     SetArrowTexture(arrowTex)

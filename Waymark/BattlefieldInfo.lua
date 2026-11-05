@@ -3,6 +3,9 @@ local addonName, ns = ...
 -- One settings group per map element; each has its own toggle and opacity
 local DEFAULTS = {
     scale = 1,
+    -- all of Waymark at once, the game's own UI left as it is (ns.AddonScale). Forever's
+    -- automatic UI scale is 0.64 at 1440p; Waymark was drawn at 0.8, so 1.25 there
+    addonScale = ns.FOREVER and 1.25 or 1,
     quickButton = true,
     townButton = true,    -- town view on/off, beside the quick-options gear (Options.lua)
     cityButton = true,    -- city view's zoom on/off, beside the town view button
@@ -15,10 +18,11 @@ local DEFAULTS = {
     -- "modern" (the map atlases)
     -- trivial: grey quest givers too (nil: Questie's own setting, the first time);
     -- hidden[questID]: quests hidden with Shift-click
-    -- source: where quests come from, "own" (our data, WorldQuests.lua) or "questiedb" (a /reload follows)
+    -- source: where quests come from, "own" (our data, WorldQuests.lua), "both" (ours, filled from
+    -- QuestieDB where it's installed: Forever's default) or "questiedb" (a /reload follows)
     -- tooltip: Questie's tooltip on the quest pins, where Questie is loaded (Pin.lua)
     -- unitTips: a quest's objective count on monster, item and object tooltips (QuestData.lua)
-    questie    = { shown = true, alpha = 1, scale = 1, color = false, iconSet = "questie", hidden = {}, source = "own", tooltip = false, unitTips = true },
+    questie    = { shown = true, alpha = 1, scale = 1, color = false, iconSet = "questie", hidden = {}, source = ns.FOREVER and "both" or "own", tooltip = false, unitTips = true },
     -- new quest layers start hidden so existing setups look unchanged
     turnins    = { shown = false, alpha = 1, scale = 1, iconSet = "questie" },
     -- color: each quest's spots in a colour of its own
@@ -52,7 +56,7 @@ local DEFAULTS = {
     -- face: "minimap" or "map", the one showing; corner: pushed into the
     -- screen's top-right corner; big / bigSize: the map face grown (UI units)
     dock       = { on = false, size = 160, wheel = true, friction = 2, face = "minimap",
-                   corner = true, big = false, bigSize = 360, mapOnly = false, hideSun = false },
+                   corner = true, big = false, bigSize = 360, mapOnly = false, hideSun = false, hideTitle = true },
     -- the map lets clicks through unless this modifier (ALT, CTRL, SHIFT) is held (ClickThrough.lua)
     clickThrough = { on = false, modifier = "ALT", combat = false },
     clearView  = { on = false, noFrame = true, header = "hover", buttons = "hover", opacity = 0.7, zoneOnly = true,
@@ -64,6 +68,14 @@ local DEFAULTS = {
     -- settings; page = the page last open; collapsed[group] = its pages folded
     -- away in the list; folded["page/heading"] = a section folded away on its page
     optionsWindow = { advanced = false, page = nil, collapsed = { Development = true }, folded = {} },
+    -- clock (Clock.lua) and soft edges (SoftEdges.lua): their files say what each setting does
+    clock      = { shown = false, look = "plain", where = "BOTTOMRIGHT", source = "realm", h24 = true, show = "always",
+                   size = 100, alpha = 100, hideGame = false,
+                   font = "morpheus", tint = "parchment", backing = 50, frame = "none", frameColor = "natural", frameSize = 0.75, frameGap = 0, plate = true,
+                   hideDigits = false, digitsX = 0, digitsY = 0,
+                   digitSize = 100, digitBack = 0, digitBold = false },
+    softEdges  = { on = false, shape = "square", reach = 2, pins = true },
+    mapHour    = { on = false },  -- (MapHour.lua; on in the Creator's preset alone)
     -- coordinates (Coords.lua): size = font size; where = a spot on the map's top
     -- or bottom edge (TOPLEFT, TOP, TOPRIGHT, BOTTOMLEFT, BOTTOM, BOTTOMRIGHT);
     -- side: inside / outside the map; backing: the dark box behind, opacity %;
@@ -77,6 +89,7 @@ local DEFAULTS = {
                    cursorWhere = "beside", cursorSide = "same", cursorX = 0, cursorY = 0,
                    color = { 1, 1, 1 } },
     waypoints  = { shown = false, alpha = 1, scale = 1, clickToAdd = true },  -- TomTom
+    transports = { shown = false, alpha = 1, scale = 1, boats = true, zeppelins = true, trams = true, continent = true, boat = "cog" },  -- Transports.lua
     rares      = { shown = false, alpha = 1, scale = 1, rsIcons = false },  -- RareScanner
     -- quest givers learned as you play (Learn.lua): mode "gaps" = only quests
     -- QuestieDB doesn't know (all of them without QuestieDB), "all" = every one;
@@ -154,7 +167,7 @@ local DEFAULTS = {
                    chain = true,
                    zoneOpen = {},
                    detached = false, side = "auto", matchHeight = true, pastTracker = true, seam = true, gap = 0,
-                   height = 420, pos = nil, onlyWithMap = true, locked = false, scale = 1,
+                   height = 570, pos = nil, onlyWithMap = true, locked = false, scale = 1,
                    objectives = true, description = true, rewards = true, levelTag = true, people = true,
                    questID = false, abandon = true, share = true, track = true, focus = true, glow = true,
                    paper = "parchment", alpha = 1,
@@ -165,7 +178,7 @@ local DEFAULTS = {
     -- mergeKinds: different types too
     -- record: learn townsfolk as you play (Townsfolk.lua); useLearned: show
     -- them too, alongside QuestieDB's (off until the database has grown)
-    townsfolk  = { shown = false, alpha = 1, scale = 1, myProfessionsOnly = true, types = {},
+    townsfolk  = { shown = false, alpha = 1, scale = 1, graveMark = "stone", myProfessionsOnly = true, types = {},
                    mergeYards = 40, mergeKinds = true, record = true, useLearned = false },
     -- size 0 = leave the game's (or another addon's) size alone
     -- hideTab: hide Blizzard's "Zone Map" tab (it blocks the top of the screen);
@@ -206,8 +219,9 @@ local DEFAULTS = {
     -- line from you to: a pin you Alt-click, your target if in your group, or the
     -- nearest objective spot
     line       = { shown = false, alpha = 0.9, thickness = 3, groupTarget = true, nearestSpot = false },
-    -- GatherMate2 nodes; types[type] = true; follow = also obey GatherMate's own show rules
-    gather     = { shown = false, alpha = 1, scale = 0.8, follow = true,
+    -- gathering nodes (Gather.lua): types[type] = true; off[node name] = true: that one hidden
+    gather     = { shown = false, alpha = 1, scale = 1, source = "gathermate", follow = true, look = "ink", canGather = true, tint = false, ringYards = 125,
+                   fadeUnseen = true, minimap = true, off = {},
                    types = { ["Herb Gathering"] = true, ["Mining"] = true, ["Fishing"] = true,
                              ["Treasure"] = true } },
     -- caves and dungeons: follow you onto cave/dungeon maps; fallback = draw the
@@ -223,7 +237,7 @@ local DEFAULTS = {
     -- this dungeon run's boss kills (Dungeon.lua): id = instance, leftAt = time you left
     dungeonRun = { id = nil, kills = {}, leftAt = 0 },
     -- the found notes (Notebook.lua): the spread the ribbon marks, where the book was dragged
-    notebook   = { spread = 0 },
+    notebook   = { spread = 0, kind = "story" },
     -- boss spots you placed on Blizzard's dungeon maps (/bfi bosses place):
     -- [instance] = { [boss] = { floor, x, y } }; tools/boss_spots.lua bakes them into Data\DungeonBosses.lua
     bossSpots  = {},
@@ -318,7 +332,7 @@ local DEFAULTS = {
     toggles    = { style = "square", size = 18, where = "topright", side = "inside", fadeOut = false, fadeAlpha = 0,
                    fadeClose = false, saveToProfile = true, order = {},
                    list = { questie = true, townsfolk = true, rares = true, gather = true,
-                            zoom = true, detail = true, tracker = true, ink = true, quill = true } },
+                            zoom = true, detail = true, tracker = true, ink = true, quill = true, book = true } },
     -- saved setups by name (Setups.lua)
     setups     = {},
     -- each character's own settings as it logged out, to copy to another (Setups.lua):
@@ -349,6 +363,20 @@ ns.Log = Log
 
 -- our own frames by name, for /bfi check (each module adds its own)
 ns.debugFrames = {}
+
+-- The clock's first time: on with the Creator's preset (the shipped defaults) or no preset chosen.
+-- Settings from before the clock that chose another preset start with it off, and the game's
+-- clock kept (the user, 2026-11-04). Call before the defaults go in.
+-- The map's hour the same way: on with the Creator's preset or none chosen, else off.
+function ns.ClockFirstTime(db)
+    if db.mapHour == nil then db.mapHour = { on = not db.presetBase or db.presetBase == "creator" } end
+    if db.clock == nil and db.presetBase and db.presetBase ~= "creator" then
+        db.clock = { shown = false, hideGame = false }
+    elseif db.clock == nil and db.pins then
+        -- (settings from before the clock: an update never takes the game's own clock away)
+        db.clock = { hideGame = false }
+    end
+end
 
 local function CopyDefaults(dst, src)
     for k, v in pairs(src) do
@@ -473,6 +501,11 @@ local function InitDB()
         db.detail.hdArt, db.detail.smooth = nil, nil
     end
     if db.toggles and db.toggles.list then db.toggles.list.daynight = nil end
+    -- (Forever's default became ours filled from QuestieDB: once, then it's the player's choice)
+    if ns.FOREVER and not db.questieBoth then
+        if db.questie and db.questie.source == "own" then db.questie.source = "both" end
+        db.questieBoth = true
+    end
     -- (the classic "!" "?" icon set: removed, back to Questie's)
     for _, g in ipairs({ "questie", "turnins" }) do
         if db[g] and db[g].iconSet == "classic" then db[g].iconSet = "questie" end
@@ -558,6 +591,7 @@ local function InitDB()
     end
     -- (your whole log in the quest window: always now, its switch gone)
     if db.questlog then db.questlog.list, db.questlog.escape = nil, nil end  -- (and Escape always closes it)
+    ns.ClockFirstTime(db)
     CopyDefaults(db, DEFAULTS)
     ns.db = db
     ns.ShareQuestLook()  -- (turn-ins: the givers' opacity, size, icons)
@@ -649,7 +683,7 @@ end
 -- entrances. A profile starting or ending, or a setup loaded, calls this.)
 function ns.RedrawAll()
     for _, fn in ipairs({ "RedrawQuestie", "RedrawRares", "RedrawTownsfolk", "RedrawWaypoints",
-                          "RedrawGather", "UpdateCoords", "UpdateLine", "RedrawLearned",
+                          "RedrawGather", "RedrawTransports", "UpdateCoords", "UpdateClock", "UpdateMapHour", "UpdateLine", "RedrawLearned",
                           "RedrawDungeonEntrances", "UpdateDetail", "UpdateZoneName" }) do
         if ns[fn] then pcall(ns[fn]) end
     end
@@ -702,6 +736,10 @@ function ns.CanvasLevels(map)
     for _, lvl in ipairs(others) do
         if lvl > (explore or 0) then bottom = math.min(bottom or lvl, lvl) end
     end
+    -- (the lowest seen, not the lowest now: a layer switched off or redrawing left the art
+    -- levels free to move, and a masked layer moved to a new level blinks)
+    if bottom and (not levelCache.floor or bottom < levelCache.floor) then levelCache.floor = bottom end
+    bottom = levelCache.floor
     levelCache.t, levelCache.mapID, levelCache.explore, levelCache.top, levelCache.bottom = now, mapID, explore, top, bottom
     return explore, top, bottom
 end
@@ -726,6 +764,7 @@ local TEMPLATE_GROUPS = {
     QuestBlobPinTemplate    = "areas",
     GroupMembersPinTemplate = "party",
     BFIWaypointPinTemplate  = "waypoints",
+    BFITransportPinTemplate = "transports",
     BFIRarePinTemplate      = "rares",
     BFITownsfolkPinTemplate = "townsfolk",
     BFIGatherPinTemplate    = "gather",
@@ -744,7 +783,7 @@ ns.PinGroupOf = GroupOf  -- (for /bfi check)
 -- (townsfolk, rares, nodes...) each by their own setting (explore.hideQuests /
 -- hideOthers; Explore.lua knows which areas you've found)
 local QUEST_PIN_GROUPS = { questie = true, turnins = true, spots = true, objectives = true, learned = true }
-local OTHER_PIN_GROUPS = { townsfolk = true, rares = true, gather = true, waypoints = true, dungeons = true }
+local OTHER_PIN_GROUPS = { townsfolk = true, rares = true, gather = true, waypoints = true, transports = true, dungeons = true }
 
 local function HiddenUnexplored(pin, group, mapID)
     local e = ns.db.explore
@@ -774,6 +813,10 @@ end
 
 -- A pin layer's opacity: its own, times every pin's (pins.alpha)
 function ns.PinAlpha(group)
+    -- (live Forever's minimap draws givers and turn-ins itself, and those blips can't be
+    -- hidden: on the minimap face ours stay, unseen, for their tooltips)
+    if ns.FOREVER and (group == "questie" or group == "turnins") and ns.DockMinimapFace
+        and ns.DockMinimapFace() and not ns.DockBigMovable() then return 0 end
     local cfg = ns.db[group]
     return (cfg and cfg.alpha or 1) * (ns.db.pins.alpha or 1)
 end
@@ -790,6 +833,7 @@ end
 function ns.MapBorderStyle(own)
     local b = ns.db.border
     if not own and ns.ClearViewHidesFrame and ns.ClearViewHidesFrame() then return "none" end
+    if not own and ns.SoftEdgesOn and ns.SoftEdgesOn() then return "none" end
     return b.shown == false and "none" or b.style
 end
 
@@ -806,6 +850,12 @@ end
 function ns.ApplyGroups()
     local map = BattlefieldMapFrame
     if not map or not ns.db then return end
+    -- (the game's objectives and quest areas both draw nothing with this off, whatever
+    -- our toggles say, and a new character has it off. It's only ever turned on here.)
+    if ns.FOREVER and (ns.IsShown("objectives") or ns.IsShown("areas")) and not GetCVarBool("questPOI")
+        and not (ns.QuestieKeepsObjectivesOff and ns.QuestieKeepsObjectivesOff()) then
+        SetCVar("questPOI", "1")
+    end
     local mapID = map:GetMapID()
     local tracked = ns.db.outside.trackedOnly and ns.TrackedQuests and ns.TrackedQuests() or nil
     EachPin(map, function(pin, template)
@@ -845,7 +895,8 @@ function ns.PinScale(group, own)
     local map = BattlefieldMapFrame
     local floor = ns.db.pins.minMapScale or 0
     if map and floor > 0 then
-        local scale = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        -- (the slider's scale: Waymark's size isn't a shrunken map)
+        local scale = map:GetEffectiveScale() / UIParent:GetEffectiveScale() / ns.AddonScale()
         if scale > 0 then s = s * math.max(1, floor / scale) end
     end
     return s
@@ -912,6 +963,7 @@ local function AddProvider(map, mixin, label, group)
     end
     local provider = CreateFromMixins(mixin)
     if group then TrackPins(map, provider, group) end
+    if group == "areas" then ns.questAreas = provider end  -- (QuestGround thins its border as you zoom)
     local ok, err = pcall(map.AddDataProvider, map, provider)
     if ok then
         Log(label, "provider attached")
@@ -924,12 +976,72 @@ end
 
 -- Resize ----------------------------------------------------------------
 
+-- Waymark's size: every frame of ours bigger or smaller together, without the
+-- game's UI scale. The map's scale is ns.db.scale times this; our windows on
+-- UIParent register with ns.AddonWindow; things kept "the same size on screen"
+-- on the map use ns.AddonScale() / the map's scale. Pins stay in step with the map.
+ns.MIN_ADDON_SCALE, ns.MAX_ADDON_SCALE = 0.7, 2
+function ns.AddonScale() return ns.db and ns.db.addonScale or 1 end
+function ns.MapScale() return ns.db.scale * ns.AddonScale() end
+
+-- save: called after a size change, to keep the window's saved spot in step
+local addonWindows = {}
+function ns.AddonWindow(f, save)
+    addonWindows[f] = save or true
+    f:SetScale(ns.AddonScale())
+    return f
+end
+
+-- each stays where it is on screen. Not while the slider is held: the settings
+-- window is one of these, and would slide out from under the cursor.
+local windowsWaiting
+local function ScaleWindows()
+    if IsMouseButtonDown("LeftButton") then
+        C_Timer.After(0.1, ScaleWindows)
+        return
+    end
+    windowsWaiting = nil
+    local g = ns.AddonScale()
+    for f, save in pairs(addonWindows) do
+        local k = f:GetScale() / g
+        if math.abs(k - 1) > 0.001 then
+            local p, rel, rp, x, y = f:GetPoint(1)
+            local one = p and f:GetNumPoints() == 1
+            f:SetScale(g)
+            if one then
+                f:ClearAllPoints()
+                f:SetPoint(p, rel, rp, x * k, y * k)
+            end
+            if save ~= true then save() end
+        end
+    end
+end
+
+function ns.ApplyAddonScale()
+    local map = BattlefieldMapFrame
+    if map then
+        map:SetScale(ns.MapScale())
+        if ns.RestoreMapPosition then ns.RestoreMapPosition() end
+        if ns.ApplyChromeScale then ns.ApplyChromeScale() end
+        if ns.RefreshZoomLevels then ns.RefreshZoomLevels() end
+        pcall(ns.ApplyScales, "objectives")
+    end
+    if ns.Docked and ns.Docked() and ns.ApplyDock then ns.ApplyDock() end
+    if ns.UpdateTracker then ns.UpdateTracker(true) end
+    if ns.ApplyQuestWindow then ns.ApplyQuestWindow("scale") end
+    if ns.UpdateClock then ns.UpdateClock() end
+    if not windowsWaiting then
+        windowsWaiting = true
+        ScaleWindows()
+    end
+end
+
 function ns.SetScale(s)
     s = math.max(ns.MIN_MAP_SCALE, math.min(ns.MAX_MAP_SCALE, s))
     -- (the scale the map has now: the slider has already written the new one)
-    local old = BattlefieldMapFrame and BattlefieldMapFrame:GetScale() or s
+    local old = BattlefieldMapFrame and BattlefieldMapFrame:GetScale() / ns.AddonScale() or s
     ns.db.scale = s
-    if BattlefieldMapFrame then BattlefieldMapFrame:SetScale(s) end
+    if BattlefieldMapFrame then BattlefieldMapFrame:SetScale(ns.MapScale()) end
     -- the map keeps its size on screen: the scale is the size of what's on it
     -- (pins, text, border). Its size is the corner grip's. (Scale and size each
     -- changing the map on screen let them pile up: a tiny map at scale 3.)
@@ -946,8 +1058,8 @@ function ns.SetScale(s)
 end
 
 local function SetupResize(map)
-    map:SetScale(ns.db.scale)
-    map:HookScript("OnShow", function() map:SetScale(ns.db.scale) end)
+    map:SetScale(ns.MapScale())
+    map:HookScript("OnShow", function() map:SetScale(ns.MapScale()) end)
 
     local grip = CreateFrame("Button", nil, map)
     grip:SetSize(16, 16)
@@ -1010,12 +1122,15 @@ end
 function ns.OnSettingChanged(group, key)
     -- the toggle strip on the map follows changes made in the options window
     if ns.RefreshToggles then ns.RefreshToggles() end
+    if group == "notebook" and ns.NotebookRefresh then ns.NotebookRefresh() end
     if group == "questie" and SHARED_WITH_TURNINS[key] then
         ns.ShareQuestLook()
         if key == "scale" then ns.ApplyScales("turnins") end
     end
     if group == nil and key == "scale" then
         ns.SetScale(ns.db.scale)
+    elseif group == nil and key == "addonScale" then
+        ns.ApplyAddonScale()
     elseif (QUESTIE_GROUPS[group] and (key == "shown" or key == "color" or key == "plain"
                                       or key == "spacing" or key == "maxPer"))
         or (group == "ground" and (key == "shown" or key == "look")) then  -- ("pins": the spot pins)
@@ -1106,6 +1221,9 @@ function ns.OnSettingChanged(group, key)
     if ns.UpdateMinimapButton then ns.UpdateMinimapButton() end
     if ns.UpdateQuickButton then ns.UpdateQuickButton() end
     if ns.UpdateCoords then ns.UpdateCoords() end
+    if group == "clock" and ns.UpdateClock then ns.UpdateClock() end
+    if group == "softEdges" and ns.UpdateSoftEdges then ns.UpdateSoftEdges() end
+    if group == "mapHour" and ns.UpdateMapHour then ns.UpdateMapHour() end
     if ns.RefreshControls then ns.RefreshControls() end
 end
 
@@ -1139,19 +1257,24 @@ end
 
 -- On a continent you browse to (Browse.lua): every zone's quest givers, moved
 -- to where the zone sits on it (browse.continentGivers). Turn-ins and spots
--- stay on the zone maps. Zones not built yet are built for at most GIVERS_BUDGET
--- ms a draw; the rest come on the next frames (all at once was a 50 ms hitch on
--- Kalimdor's first open): returns out, and true when some are still to come.
+-- stay on the zone maps, and so do low-level (grey) givers: with them Kalimdor had 1156
+-- pins and the game stopped our scripts. Zones not built yet are built for at most
+-- GIVERS_BUDGET ms a frame (all at once was a 50 ms hitch on Kalimdor's first open): returns
+-- out, or true as its second answer while some are still to come, and nothing is drawn yet.
 local GIVERS_BUDGET = 5
 local function ContinentGivers(mapID, out)
     if not (ns.db.browse.continentGivers and ns.IsShown("questie")) then return out end
-    local t0, more = debugprofilestop(), false
+    local t0 = debugprofilestop()
+    for _, z in ipairs(ZonesOn(mapID)) do
+        if ns.QuestIconsKept and not ns.QuestIconsKept(z[1]) then
+            if debugprofilestop() - t0 > GIVERS_BUDGET then return out, true end
+            ns.QuestIcons(z[1])
+        end
+    end
     for _, z in ipairs(ZonesOn(mapID)) do
         local id, l, r, t, b = z[1], z[2], z[3], z[4], z[5]
-        local wait = ns.QuestIconsKept and not ns.QuestIconsKept(id) and debugprofilestop() - t0 > GIVERS_BUDGET
-        if wait then more = true end
-        for _, icon in ipairs(wait and {} or ns.QuestIcons(id)) do
-            if icon.group == "questie" then
+        for _, icon in ipairs(ns.QuestIcons(id)) do
+            if icon.group == "questie" and not icon.trivial then
                 local c = {}
                 for k, v in pairs(icon) do c[k] = v end
                 c.x = (l + icon.x / 100 * (r - l)) * 100
@@ -1160,7 +1283,7 @@ local function ContinentGivers(mapID, out)
             end
         end
     end
-    return out, more
+    return out
 end
 
 -- the quest pins shown on a zone (Cave.lua: the zone's pins in a minimap-style cave)
@@ -1232,12 +1355,13 @@ local function DrawPins(provider)
     if not mapID then return end
 
     local t0 = debugprofilestop()  -- (the pieces timed for /bfi check's frame cost)
+    local icons, more = GetQuestieIcons(mapID)
+    provider.more = more   -- (the ticker comes back next frame)
+    ns.CostAdd("Pins icons", t0)
+    if more then return end   -- (one draw once all are built, not every pin again each frame)
+    t0 = debugprofilestop()
     provider:RemoveAllData()
     ns.CostAdd("Pins remove", t0)
-    t0 = debugprofilestop()
-    local icons, more = GetQuestieIcons(mapID)
-    provider.more = more   -- (the ticker draws again next frame)
-    ns.CostAdd("Pins icons", t0)
     t0 = debugprofilestop()
 
     -- hidden groups are already filtered out in GetQuestieIcons
@@ -1273,6 +1397,7 @@ end
 
 local function SetupQuestie(map)
     local ticker, elapsed, lastSig = ns.TimedFrame("Pins tick"), 0, nil
+    local lastLook
     local provider
 
     if not (ns.QuestSource and ns.QuestSource()) then
@@ -1303,6 +1428,10 @@ local function SetupQuestie(map)
             provider.ready = true
             local mapID = map:GetMapID()
             if mapID then
+                -- (a Questie theme changed: the spots follow it, no reload)
+                local look = ns.QuestieLookSig()
+                if lastLook and look ~= lastLook then ns.RedrawQuestie() end
+                lastLook = look
                 -- QuestData's version changes with the quest log, level, skills...
                 -- (player level too, so difficulty colors follow level-ups)
                 local sig = table.concat({ mapID, UnitLevel("player"), ns.QuestVersion() }, ":")
@@ -1420,6 +1549,21 @@ local function Setup()
     if ns.FOREVER then
         AddProvider(map, QuestDataProviderMixin, "Quest objectives", "objectives")
         AddProvider(map, QuestBlobDataProviderMixin, "Quest areas", "areas")
+        -- (the game draws an area only for the quest in focus, so with none the toggle looked
+        -- dead: every quest on this map gets its area, after the game's own draw)
+        local blob = ns.questAreas and ns.questAreas.pin
+        if blob and blob.DrawBlob and blob.Refresh then
+            hooksecurefunc(blob, "Refresh", function(self)
+                ns.Safe("Quest areas", function()
+                    local mapID = map:GetMapID()
+                    if not (self.mapAllowsBlobs and mapID and GetCVarBool("questPOI")) then return end
+                    for _, q in ipairs(C_QuestLog.GetQuestsOnMap(mapID) or {}) do
+                        if q.questID then self:DrawBlob(q.questID, true) end
+                    end
+                end)
+            end)
+            blob:Refresh()
+        end
     end
     SetupQuestie(map)
     if ns.SetupQuestGround then ns.SetupQuestGround(map) end
@@ -1446,8 +1590,13 @@ local function Setup()
     ns.ApplyScales("objectives")
     if ns.SetupQuickButton then ns.SetupQuickButton(map) end
     if ns.SetupCoords then ns.SetupCoords(map) end
+    if ns.SetupClock then ns.SetupClock(map) end
+    if ns.SetupTransports then ns.SetupTransports(map) end
+    if ns.SetupMapHour then ns.SetupMapHour(map) end
+    if ns.SetupMapLife then ns.SetupMapLife(map) end  -- (dev only)
     if ns.SetupCollapse then ns.SetupCollapse(map) end
     if ns.SetupClearView then ns.SetupClearView(map) end
+    if ns.SetupSoftEdges then ns.SetupSoftEdges(map) end
     if ns.SetupCutEdit then ns.SetupCutEdit(map) end
     if ns.SetupDock then ns.SetupDock(map) end
     if ns.SetupClickThrough then ns.SetupClickThrough(map) end
@@ -1522,10 +1671,20 @@ f:SetScript("OnEvent", function(_, event, name, isReload)
     end
 end)
 
+-- commands for development only: in a release (no DevBar.lua, so no ns.DevCommands) a player gets the
+-- usage line, as for a word we don't know. debug and check stay: they help with bug reports.
+local DEV_SLASH = {}
+for _, c in ipairs({ "bar", "bosses list", "bosses place", "buttons", "cave", "controls", "cut", "devart", "forevermap",
+    "layers", "notes me", "notes ship", "notes shots", "probe", "questart", "questprobe", "shapes", "tour", "town",
+    "watch", "where rec", "fillwatch" }) do DEV_SLASH[c] = true end
+local function DevOnly(msg)
+    return not ns.DevCommands and (DEV_SLASH[msg] or msg:match("^tour ") or msg:match("^quest%s")) and true or false
+end
 SLASH_BFI1, SLASH_BFI2 = "/waymark", "/bfi"
 SlashCmdList.BFI = function(msg)
     if ns.standBy then print(ns.standByMsg) return end
     msg = strtrim(msg or "")
+    if DevOnly(msg) then msg = "?" end
     if msg == "debug" then
         Debug()
         return
@@ -1557,6 +1716,10 @@ SlashCmdList.BFI = function(msg)
     end
     -- the found notes, the wanderer's dungeon notebook (Notebook.lua)
     -- the generated "watch for" lines of a dungeon, to write from (DungeonWatch.lua)
+    if msg == "fillwatch" then
+        if ns.ZoneArtTrace then ns.ZoneArtTrace() end
+        return
+    end
     if msg == "watch" then
         if ns.ToggleDungeonWatchList then ns.ToggleDungeonWatchList() end
         return
@@ -1571,6 +1734,10 @@ SlashCmdList.BFI = function(msg)
     end
     if msg == "notes ship" then  -- (dev: the book as the release has it, unfinished pages locked)
         if ns.NotebookShipView then ns.NotebookShipView() end
+        return
+    end
+    if msg == "notes me" then  -- (dev: writing as a player would)
+        if ns.BOOK_AUTHOR and ns.NotebookAsPlayer then ns.NotebookAsPlayer() end
         return
     end
     if msg == "notes write" then
@@ -1678,6 +1845,6 @@ SlashCmdList.BFI = function(msg)
     if msg == "" or msg == "options" then
         ns.ToggleOptions()
     else
-        Log("usage: /waymark (options), /waymark bar (all commands as buttons)")
+        Log(ns.ToggleDevBar and "usage: /waymark (options), /waymark bar (all commands as buttons)" or "usage: /waymark (options)")
     end
 end

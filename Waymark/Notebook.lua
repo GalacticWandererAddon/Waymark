@@ -367,13 +367,20 @@ local placing      -- a note whose ring goes where the map is clicked next
 local notesVersion = 0  -- (bumped each time the book is drawn: the dungeon map's numbers follow)
 local inkHost, cur, undo = nil, nil, {}
 local whoKept  -- (who's writing comes back from notebook.who once, at the first use)
-local NO_YOU = true  -- (2026-10-31, for now: the user kept picking "as yourself" by accident; writing is the wanderer's)
+-- Players write as themselves. The wanderer's hand is the dev copy's alone (ns.BOOK_AUTHOR, set in
+-- DevCommands.lua, which doesn't ship); /bfi notes me: the dev copy writing as a player would.
 local function KeptWho()
     if whoKept or not (ns.db and Cfg()) then return end
     whoKept = true
-    who = Cfg().who or who
-    if NO_YOU then who = "wanderer" end
+    who = ns.BOOK_AUTHOR and not Cfg().asPlayer and "wanderer" or "you"
     inkIdx = who == "wanderer" and 1 or 3
+end
+
+-- what this book holds: "story", "notes" or "blank" (BookOwn.lua). The wanderer always has the whole book.
+function ns.BookKindNow()
+    KeptWho()
+    if who == "wanderer" then return "story" end
+    return Cfg().kind or "story"
 end
 
 local function Copy(t)
@@ -415,10 +422,12 @@ end
 local function NoteViews(dg)
     local mine = who ~= "wanderer" and Mine(dg.id) or { notes = {}, added = {} }
     local out = {}
+    local kind = ns.BookKindNow()
     for i, n in ipairs(dg.notes or {}) do
         local m = mine.notes[i] or {}
-        if not m.gone then
-            out[#out + 1] = { text = m.s or n[1] or "", yours = m.s ~= nil, crossed = m.crossed, mark = m.mark or n.mark,
+        local text = m.s or ns.BookNoteText(kind, n[1] or "")
+        if text and not m.gone then
+            out[#out + 1] = { text = text, yours = m.s ~= nil, crossed = m.crossed, mark = m.mark or n.mark,
                               floor = m.floor or n.floor, x = m.x or n.x, y = m.y or n.y, rs = m.rs or n.rs, na = m.na or n.na,
                               turn = n.turn, book = i }
         end
@@ -565,9 +574,41 @@ local function Flyleaf()
     local d = Data()
     local line = Text(left, 24, INK)
     line:SetPoint("CENTER", left, "CENTER", 0, 40)
-    line:SetText(d.flyleaf or "")
-    local s = SignOff(left, "flyleaf", 50)
-    s:SetPoint("CENTER", line, "BOTTOM", 30, -36)
+    local story = ns.BookKindNow() == "story"
+    line:SetText(story and d.flyleaf or not story and "A field journal" or "")
+    if story then
+        local s = SignOff(left, "flyleaf", 50)
+        s:SetPoint("CENTER", line, "BOTTOM", 30, -36)
+    else
+        local note = Text(left, 15, INK_SOFT)
+        note:SetWidth(PW - 130)
+        note:SetJustifyH("CENTER")
+        note:SetText(ns.BookKindNow() == "notes" and "Dungeon tips and maps. The story is still in here: change the plate to read it."
+            or "Your own pages. The story is still in here: change the plate to read it.")
+        note:SetPoint("TOP", line, "BOTTOM", 0, -12)
+    end
+    -- the bookplate: what the book holds, the choice in the book itself (not while writing the book)
+    if who ~= "wanderer" then
+        local mid, py = PW / 2, -46  -- (the page's top: "the company" and its names fill the foot)
+        local plate = Tex(left, "ARTWORK", 2)
+        plate:SetTexture(NOTES .. "Bookplate")  -- (tools\bookplate.py: the label, its writing line at 80 of 128)
+        plate:SetSize(256, 128)
+        plate:SetPoint("TOP", left, "TOPLEFT", mid, py)
+        local lab = Text(left, 14, INK_SOFT)
+        lab:SetPoint("TOP", left, "TOPLEFT", mid, py - 28)
+        lab:SetText("This book holds")
+        -- (each sized to its words, so they sit in the middle of the plate)
+        local function Words(y, size, font, color, text, fn)
+            local b = Button(left, 200, size + 6, fn)
+            SetHand(b.label, size, font)
+            b.label:SetTextColor(color[1], color[2], color[3])
+            b.label:SetText(text)
+            b:SetWidth(b.label:GetStringWidth() + 2)
+            b:SetPoint("TOP", left, "TOPLEFT", mid, y)
+        end
+        Words(py - 52, 20, HAND_BODY, INK, ns.BookKindName(Cfg().kind), ns.BookKindMenu)
+        Words(py - 83, 14, HAND_BODY, INK_SOFT, "more in the settings", function() ns.ShowOption("notebook", "kind") end)
+    end
 
     local head = Text(right, 28, INK)
     head:SetPoint("TOPLEFT", 48, -34)
@@ -634,7 +675,7 @@ local function MapInkList(dg, floor)
     local list = {}
     for _, m in ipairs(ns.DevRouteMarks and ns.DevRouteMarks(dg.instance, floor) or {}) do list[#list + 1] = m end
     for _, m in ipairs(ns.DevDeathMarks and ns.DevDeathMarks(dg.instance, floor) or {}) do list[#list + 1] = m end
-    for _, m in ipairs(MapMarks(dg, floor, true)) do list[#list + 1] = m end
+    for _, m in ipairs(ns.BookMapMarks(MapMarks(dg, floor, true), ns.BookKindNow())) do list[#list + 1] = m end
     for _, m in ipairs(MapMarks(dg, floor, false)) do list[#list + 1] = m end
     return list
 end
@@ -649,10 +690,11 @@ function ns.InkExtra(key)
             local e = Entry(i)
             local dev = ns.DevRouteMarks and ns.DevRouteMarks(inst, floor)  -- (DevRoutes.lua, not shipped)
             local deaths = ns.DevDeathMarks and ns.DevDeathMarks(inst, floor)  -- (DevDeaths.lua, not shipped)
-            if not dev and not deaths then return e.mapMarks and e.mapMarks[floor] end
+            local book = ns.BookMapMarks(e.mapMarks and e.mapMarks[floor], ns.BookKindNow())
+            if not dev and not deaths then return book end
             local list = { unpack(dev or {}) }
             for _, m in ipairs(deaths or {}) do list[#list + 1] = m end
-            for _, m in ipairs(e.mapMarks and e.mapMarks[floor] or {}) do list[#list + 1] = m end
+            for _, m in ipairs(book or {}) do list[#list + 1] = m end
             return list
         end
     end
@@ -890,8 +932,8 @@ local function ZoomMap(dg, floors, k, views, fx, fy)
     DrawZoom()
 end
 
--- the wheel over the page's own map: up looks closer (the big map, zoomed in on that spot);
--- Ctrl over a mark: its size; Shift: the floors
+-- the wheel over the page's own map: Ctrl sizes what's under it, Shift turns the floors; a plain wheel
+-- does nothing (it used to open the big map; the user turned that off, a click or the button does it)
 local function PageMapWheel(m, d)
     if not m.dg then return end
     if IsControlKeyDown() then
@@ -905,12 +947,6 @@ local function PageMapWheel(m, d)
             Show(spread)
         end
         return
-    end
-    if d > 0 then
-        local x, y = GetCursorPosition()
-        local s = m:GetEffectiveScale()
-        ZoomMap(m.dg, m.floors, m.k, m.views, (x / s - m:GetLeft()) / m:GetWidth(), (m:GetTop() - y / s) / m:GetHeight())
-        Sound("IG_ABILITY_PAGE_TURN")
     end
 end
 
@@ -1139,6 +1175,7 @@ local menu, submenu
 local MARK_ROW = 30
 local function MenuFrame()
     local f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    ns.AddonWindow(f)
     f:SetFrameStrata("FULLSCREEN_DIALOG")
     f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
                     edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
@@ -1241,7 +1278,7 @@ function Menu(items)
     if submenu then submenu:Hide() end
     FillMenu(menu, items)
     local x, y = GetCursorPosition()
-    local s = UIParent:GetEffectiveScale()
+    local s = menu:GetEffectiveScale()
     menu:ClearAllPoints()
     menu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / s + 4, y / s - 4)
     menu:Show()
@@ -1265,7 +1302,9 @@ local function NoteChange(view, fn)
             fn(mine.added[view.added], "added", mine)
         else
             mine.notes[view.book] = mine.notes[view.book] or {}
-            fn(mine.notes[view.book], "book", mine)
+            local o, n = mine.notes[view.book], dg.notes and dg.notes[view.book]
+            if o.was == nil and n then o.was = n[1] end  -- (the words it belongs to: BookAnchor keeps it there)
+            fn(o, "book", mine)
         end
     end
     if open and open:IsShown() then Redraw() end
@@ -1440,6 +1479,8 @@ local function SceneSketch(scene, ink, seed, by)
 end
 local function SceneInk(dg, spreadIndex)
     local b = dg.before
+    local mine = who ~= "wanderer" and Mine(dg.id)
+    if mine and mine.before and mine.before.scene then return mine.before.scene end  -- (your copy of it, once changed)
     return b.ink or SceneSketch(b.scene, spreadIndex >= DeepFrom() and not dg.sepia and 3 or 1, Hash(dg.id), b.by)
 end
 
@@ -1511,13 +1552,22 @@ function ns.NotebookPencil(p, st, x0, y0, words, h, size, seed)
     Stroke(tx + 5, ty - 11, tx + 15, ty + 3, 0.75, 1.6)
 end
 
+-- does this page show who asked? A Forever dungeon's only once its quests have ids
+function ns.NotebookAskedOn(dg)
+    if not dg.forever then return true end
+    for _, a in ipairs(dg.before and dg.before.asked or {}) do
+        if a.quest then return true end
+    end
+    return false
+end
+
 -- the book's quests for a dungeon (instance mapID): your side's, from its "before we go" page,
 -- each { quest = id, state = "have" | "done" | nil, who }; nil when the book has no page on it
 function ns.NotebookQuests(instance)
     local faction = UnitFactionGroup("player") == "Horde" and "H" or "A"
     for _, dg in ipairs(Data()) do
         if dg.instance == instance then
-            if dg.forever then return end   -- (Forever's new dungeons: quests off for now)
+            if not ns.NotebookAskedOn(dg) then return end
             local out = {}
             for _, a in ipairs(dg.before and dg.before.asked or {}) do
                 if a.quest and not (a.side and a.side ~= faction) then
@@ -1612,6 +1662,7 @@ end
 
 -- click: the quest (the book stays open); Shift-click: its giver on the map (the book folds)
 local function AskedClick(a)
+    if not a.quest then return end  -- (a line with no quest behind it yet)
     if IsShiftKeyDown() then ShowGiver(a.quest) return end
     if ns.OpenQuest then ns.OpenQuest(a.quest) end   -- (the quest window off: the game's log)
 end
@@ -1665,10 +1716,16 @@ local function Ribbon(label, tip, onClick)
 end
 
 local function Before(dg)
-    local b, id = dg.before, dg.id
+    local book, id = dg.before, dg.id
+    local kind = ns.BookKindNow()
+    local story = kind == "story"
+    local mine = who ~= "wanderer" and Mine(id)
+    -- (the page as lines, yours over the book's; BookOwn.lua)
+    local b = ns.BookBeforeView(book, kind, mine and mine.before)
+    b.title, b.where, b.asked = book.title, book.where, book.asked
     local i = spread
-    local wanderer = writing and who == "wanderer" and (tool == "words" or tool == "text")
-    local deep = i >= DeepFrom() and not dg.sepia  -- (sepia: a page written in the old brown ink again)
+    local editing = writing and (tool == "words" or tool == "text")
+    local deep = story and i >= DeepFrom() and not dg.sepia  -- (sepia: a page written in the old brown ink again)
     local hand = deep and DEEP_INK or INK
     local INK, INK_SOFT = INK, INK_SOFT  -- (the whole page in the deep's ink: title, margin, lists)
     if deep then INK, INK_SOFT = DEEP_INK, DEEP_SOFT end
@@ -1676,6 +1733,18 @@ local function Before(dg)
         return function(p, x, y, w, size, font, color, text, put)
             Hit(p, x, y, w, select(2, Layout(text, w, size, font)), function()
                 EditAt(p, x, y, w, size, font, color, text, function(t)
+                    if who ~= "wanderer" then  -- (yours: over the book's line, which stays underneath)
+                        local own = ns.BookMineBefore(Mine(id, true))
+                        if field == "added" then
+                            if t == "" then table.remove(own.added, k) else own.added[k].s = t end
+                        else
+                            local was = book[field]
+                            if k then was = was[k] end
+                            own.text[k and (field .. ":" .. k) or field] = t ~= "" and { s = t, was = was } or { gone = true, was = was }
+                        end
+                        Show(spread)
+                        return
+                    end
                     local c = AuthorCopy(spread).before
                     if k then
                         if t == "" then table.remove(c[field], k) else c[field][k] = t end
@@ -1694,8 +1763,48 @@ local function Before(dg)
     local function Put(p, text, x, y, w, size, font, color, key, edit)
         local wds, h = Layout(text, w, size, font)
         local put = Place(p, wds, x, y, size, color, font, id .. ":before:" .. key)
-        if wanderer and edit then edit(p, x, y, w, size, font, color, text, put) end
+        if editing and edit then edit(p, x, y, w, size, font, color, text, put) end
         return y - h
+    end
+    -- a new line: yours under the page's, or as the wanderer the diary's own
+    local function NewLine(p, x, y, w)
+        EditAt(p, x, y, w, BODY, who == "wanderer" and HAND_BODY or HAND_YOURS, who == "wanderer" and hand or PENCIL, "", function(t)
+            if t == "" then return end
+            if who == "wanderer" then
+                local c = AuthorCopy(spread).before
+                c.diary = c.diary or {}
+                c.diary[#c.diary + 1] = t
+            else
+                local own = ns.BookMineBefore(Mine(id, true)).added
+                own[#own + 1] = { s = t }
+            end
+            Show(spread)
+        end, nil, true)
+    end
+    local function AddButton(p, x, y, label, width, fn)
+        local add = Button(p, width, 22, fn)
+        SetHand(add.label, 16, HAND_BODY)
+        add.label:SetTextColor(INK_SOFT[1], INK_SOFT[2], INK_SOFT[3])
+        add.label:SetText(label)
+        add:SetPoint("TOPLEFT", p, "TOPLEFT", x, y)
+        add:SetAlpha(0.75)
+    end
+    local function AddButtons(p, x, y, w)
+        if not editing then return end
+        AddButton(p, x, y, "+ a line", 80, function() NewLine(p, x, y, w) end)
+        if who ~= "wanderer" then return end
+        local bx = x + 86
+        for _, f in ipairs({ { "margin", "+ a remark", 100 }, { "bring", "+ what to bring", 130 } }) do
+            if not b[f[1]] then
+                AddButton(p, bx, y, f[2], f[3], function()
+                    EditAt(p, x, y, w, 15, HAND_BODY, hand, "", function(t)
+                        AuthorCopy(spread).before[f[1]] = t ~= "" and t or nil
+                        Show(spread)
+                    end, nil, true)
+                end)
+                bx = bx + f[3] + 6
+            end
+        end
     end
 
     Ribbon("back to the page", "Back to the dungeon's own page.", function()
@@ -1715,18 +1824,20 @@ local function Before(dg)
     -- (the scene takes what room the words leave it: never past the page's foot)
     local width = PW - 40 - 34
     local textH = 0
-    for _, para in ipairs(b.diary or {}) do textH = textH + select(2, Layout(para, width, BODY, HAND_BODY)) + 7 end
+    for _, l in ipairs(b.lines) do textH = textH + select(2, Layout(l.s, width, BODY, HAND_BODY)) + 7 end
+    for _, l in ipairs(b.added) do textH = textH + select(2, Layout(l.s, width, BODY, HAND_YOURS)) + 7 end
     if b.margin then textH = textH + select(2, Layout(b.margin, width - 20, 15, HAND_BODY)) + 10 end
     if b.whisper then textH = textH + 30 end
     local sceneH = math.max(96, math.min((PW - 70) * SCENE_H / SCENE_W, PH - 80 - 8 - 34 - textH))
+    if not story then sceneH = 0 end  -- (the scene is the story's)
     local sceneW = sceneH * SCENE_W / SCENE_H
     local scene = left.scene
-    if not scene and ns.InkHost then
+    if story and not scene and ns.InkHost then
         scene = ns.InkHost(left)
         scene.paper = true  -- (on bare paper: the whispers' words keep their rim)
         left.scene = scene
     end
-    if scene then
+    if scene and story then
         scene:ClearAllPoints()
         scene:SetPoint("TOP", left, "TOPLEFT", 36 + (PW - 70) / 2, -80)
         scene:SetSize(sceneW, sceneH)
@@ -1735,20 +1846,36 @@ local function Before(dg)
         if ns.InkDrawList then ns.InkDrawList(scene, SceneInk(dg, i)) end
     end
     local y = -80 - sceneH - 8
-    for k, para in ipairs(b.diary or {}) do
-        y = Put(left, para, 40, y, width, BODY, HAND_BODY, hand, "diary" .. k, Edit("diary", k)) - 7
+    for _, l in ipairs(b.lines) do
+        y = Put(left, l.s, 40, y, width, BODY, l.yours and HAND_YOURS or HAND_BODY, l.yours and PENCIL or hand, "diary" .. l.k, Edit("diary", l.k)) - 7
+    end
+    -- (your own lines after the page's; what doesn't fit goes on under the facing page's)
+    local spill = {}
+    for _, l in ipairs(b.added) do
+        local _, h = Layout(l.s, width, BODY, HAND_YOURS)
+        if #spill > 0 or y - h < -(PH - 60) then
+            spill[#spill + 1] = l
+        else
+            y = Put(left, l.s, 40, y, width, BODY, HAND_YOURS, PENCIL, "added" .. l.k, Edit("added", l.k)) - 7
+        end
+    end
+    local room = #spill == 0 and y - 26 > -(PH - 40)
+    if room then
+        AddButtons(left, 40, y, width)
+        if editing then y = y - 26 end
     end
     if b.margin then
-        y = Put(left, b.margin, 52, y - 4, width - 20, 15, HAND_BODY, INK_SOFT, "margin", Edit("margin")) - 6
+        y = Put(left, b.margin, 52, y - 4, width - 20, 15, HAND_BODY, b.marginYours and PENCIL or INK_SOFT, "margin", Edit("margin")) - 6
     end
     if b.whisper then
-        Put(left, b.whisper, 120, math.min(y - 6, -(PH - 70)), width - 90, 15, HAND_WHISPER, WHISPER, "whisper", Edit("whisper"))
+        Put(left, b.whisper, 120, math.min(y - 6, -(PH - 70)), width - 90, 15, HAND_WHISPER, WHISPER, "whisper", who == "wanderer" and Edit("whisper") or nil)
     end
 
-    -- right: who asked us (off on Forever's new dungeons for now)
-    local asked = not dg.forever and b.asked or {}
+    -- right: who asked us (a Forever dungeon's once its quests have ids)
+    local askedOn = ns.NotebookAskedOn(dg)
+    local asked = askedOn and b.asked or {}
     y = -26
-    if not dg.forever then
+    if askedOn then
         local head = Text(right, 24, INK)
         head:SetPoint("TOPLEFT", 44, -26)
         head:SetText("Who asked us")
@@ -1759,7 +1886,7 @@ local function Before(dg)
     local faction = UnitFactionGroup("player")
     for k, a in ipairs(asked) do
         local other = a.side and a.side ~= (faction == "Horde" and "H" or "A")
-        local text = a[1] .. (other and a.heard or a[2] or "")
+        local text = a[1] .. (other and story and a.heard or a[2] or "")
         local wds, h = Layout(text, rw, 15, HAND_BODY)
         Place(right, wds, 44, y, 15, other and INK_SOFT or hand, HAND_BODY, id .. ":asked:" .. k)
         -- (your quests: your pencil on the line, ns.NotebookPencil; the other side's: whose, in soft ink)
@@ -1779,14 +1906,19 @@ local function Before(dg)
         local h5 = Text(right, 18, INK)
         h5:SetPoint("TOPLEFT", 44, y - 6)
         h5:SetText("What to bring")
-        y = Put(right, b.bring, 44, y - 30, PW - 44 - 34, 15, HAND_BODY, hand, "bring", Edit("bring")) - 6
+        y = Put(right, b.bring, 44, y - 30, PW - 44 - 34, 15, b.bringYours and HAND_YOURS or HAND_BODY, b.bringYours and PENCIL or hand, "bring", Edit("bring")) - 6
     end
     if b.rule then
         local who5 = Text(right, 16, INK_SOFT)
         who5:SetPoint("TOPLEFT", 44, y - 8)
         who5:SetText(b.rule[1])
-        Put(right, b.rule[2], 44, y - 30, PW - 44 - 34, 17, HAND_BODY, hand, "rule", Edit("rule"))
+        y = Put(right, b.rule[2], 44, y - 30, PW - 44 - 34, 17, HAND_BODY, hand, "rule", who == "wanderer" and Edit("rule") or nil) - 6
     end
+    y = y - 8
+    for _, l in ipairs(spill) do
+        y = Put(right, l.s, 44, y, PW - 44 - 34, BODY, HAND_YOURS, PENCIL, "added" .. l.k, Edit("added", l.k)) - 7
+    end
+    if not room then AddButtons(right, 44, y, PW - 44 - 34) end
 end
 
 -- The hand's prints on a page: not put there, left there. Where a hand holds a book (the outer
@@ -1874,6 +2006,8 @@ local function DrawPrints(dg, i, last)
 end
 
 local function Dungeon(dg)
+    local story = ns.BookKindNow() == "story"
+    dg = ns.BookPageView(dg, ns.BookKindNow())  -- (without the story's lines in a notes or blank book)
     local id = dg.id or tostring(spread)
     local editing = tool == "words" or tool == "text"  -- (edit, or jot: the page's lines can be rewritten)
     local wanderer = writing and who == "wanderer" and editing
@@ -2120,7 +2254,7 @@ local function Dungeon(dg)
         for _, k in ipairs(i > 0 and asides[i] or {}) do Aside(k) end
     end
 
-    DrawPrints(dg, spread, { page, x, y + 26 })  -- (the hand's prints; Onyxia's half one by the last line)
+    if story then DrawPrints(dg, spread, { page, x, y + 26 }) end  -- (the hand's prints; Onyxia's half one by the last line)
 
     -- a new note, at the end
     y = MakeWay(page, x, width, y, 22)
@@ -2285,6 +2419,15 @@ end
 
 -- the wanderer's marks on this spread (make: on the copy to change)
 local function BookMarks(make)
+    if beforeOf then  -- (the "before" page's own ink, beside its scene)
+        if make then
+            local c = AuthorCopy(spread).before
+            c.marks = c.marks or {}
+            return c.marks
+        end
+        local b = Entry(spread).before
+        return b and b.marks or {}
+    end
     if spread == 0 then
         local a = Cfg().author
         if make then
@@ -2304,6 +2447,15 @@ local function BookMarks(make)
 end
 
 local function MyMarks(make)
+    if beforeOf then
+        local id = SpreadId()
+        local mine = Mine(id, make)
+        if not mine then return {} end
+        if not make and not mine.before then return {} end
+        local b = ns.BookMineBefore(mine)
+        b.marks = b.marks or {}
+        return b.marks
+    end
     Cfg().marks = Cfg().marks or {}
     local k = SpreadId()
     if make and not Cfg().marks[k] then Cfg().marks[k] = {} end
@@ -2313,7 +2465,9 @@ end
 local function DrawInk()
     if not (inkHost and ns.InkDrawList) then return end
     local list = {}
-    for _, m in ipairs(BookMarks()) do list[#list + 1] = m end
+    if ns.BookKindNow() == "story" then
+        for _, m in ipairs(BookMarks()) do list[#list + 1] = m end
+    end
     for _, m in ipairs(MyMarks()) do list[#list + 1] = m end
     ns.InkDrawList(inkHost, list)
 end
@@ -2678,15 +2832,22 @@ local function Context(surf)
 end
 
 -- over the spread: on the page's map if the cursor's on it
--- the "before" page's scene, while writing as the wanderer: its pieces move, size and rub out,
--- and new ink goes beside them (all kept in the copy's before.ink)
+-- the "before" page's scene: its pieces move, size and rub out, and new ink goes beside them (kept
+-- in the wanderer's copy's before.ink, or your own copy of the scene). Off the scene, the page's own
+-- ink: anywhere on the spread (BookMarks, MyMarks).
 local function BeforeSurface()
     local h = left.scene
-    if not (beforeOf and h and h:IsShown() and who == "wanderer") then return end
+    if not (beforeOf and h and h:IsShown()) then return end
     -- (a change always goes in the wanderer's copy: the shipped page can carry its own before.ink, as
     -- Deadmines does, and changing that one was lost on reload)
     local function list(make)
         if not make then return SceneInk(Entry(spread), spread) end
+        if who ~= "wanderer" then
+            local dg = Entry(spread)
+            local own = ns.BookMineBefore(Mine(dg.id, true))
+            if not own.scene then own.scene = Copy(SceneInk(dg, spread)) end
+            return own.scene
+        end
         local e = AuthorCopy(spread)
         if not e.before.ink then e.before.ink = SceneInk(e, spread) end
         return e.before.ink
@@ -2697,7 +2858,11 @@ local function BeforeSurface()
 end
 
 local function SurfaceUnderCursor()
-    if beforeOf then return BeforeSurface() end  -- (on the "before" page the quill has the scene only)
+    if beforeOf then
+        local sc = left.scene
+        if sc and sc:IsShown() and sc:IsMouseOver() then return BeforeSurface() end
+        return SpreadSurface()
+    end
     local m = right.map
     if m:IsShown() and m.dg and m.ink and m:IsMouseOver() then return MapSurface(m) end
     return SpreadSurface()
@@ -2723,7 +2888,7 @@ local function CatcherDown(_, button)
     if button ~= "LeftButton" then return end
     local surf = SurfaceUnderCursor()
     if not surf then return end
-    if not Press(surf) and not IsControlKeyDown() then DrawDown(surf) end
+    if not Press(surf) and not IsControlKeyDown() and tool ~= "words" then DrawDown(surf) end
 end
 
 -- a book map's dungeon and floor on the Battlefield map; the book (and the big map) shut so it's seen
@@ -2748,11 +2913,11 @@ local function CatcherUp(_, button)
         -- (a mark's or a ring's menu; off them, the map's menu or the quill's: Controls.lua)
         local surf = SurfaceUnderCursor()
         if surf and not Context(surf) then
-            if surf.map and surf.map.emptyMenu then surf.map.emptyMenu() else ns.MapMenu() end
+            if surf.map and surf.map.emptyMenu then surf.map.emptyMenu() else ns.BookPageMenu() end
         end
     elseif grab then
         local moved, g = GrabUp()
-        if not moved and not g.alt and not Clicked(g) then DrawDown(g.surf) end
+        if not moved and not g.alt and not Clicked(g) and tool ~= "words" then DrawDown(g.surf) end
     else
         DrawUp()
     end
@@ -2978,6 +3143,12 @@ end
 
 BuildBar = function()
     wbar = CreateFrame("Frame", "WaymarkQuillBar", UIParent, "BackdropTemplate")
+    ns.AddonWindow(wbar, function()
+        if Cfg().barPos then
+            local p, _, rp, x, y = wbar:GetPoint()
+            Cfg().barPos = { p, rp, x, y }
+        end
+    end)
     wbar:SetFrameStrata("DIALOG")
     wbar:SetClampedToScreen(true)
     -- the notebook's paper, a strip of it
@@ -3038,12 +3209,13 @@ BuildBar = function()
     wbar.items, wbar.tools, wbar.who, wbar.inks = {}, {}, {}, {}
     for _, w in ipairs({ { "you", "as yourself", "Your words go over the book's in your own hand and ink; the book's stay underneath. On the map: your own ink." },
                          { "wanderer", "as the wanderer", "Writing the book itself: what you change here is the book (tools\\export_notes.py writes it into Data\\FoundNotes.lua). On a found-notes dungeon map: the book's marks for that floor; elsewhere on the map it's your own ink." } }) do
-        if not (NO_YOU and w[1] == "you") then
+        if ns.BOOK_AUTHOR and w[1] == "wanderer" then
             wbar.who[w[1]] = BarButton(w[2], function()
                 who = w[1]
-                Cfg().who = who  -- (kept for next time)
+                Cfg().asPlayer = nil  -- (out of /bfi notes me for good, not just till the next reload)
                 inkIdx = who == "wanderer" and 1 or 3
                 SetWriting(true)
+                ns.NotebookRefresh()  -- (the whole book again, on the page and the maps)
             end, w[3])
         end
     end
@@ -3092,6 +3264,14 @@ BuildBar = function()
         wbar.inks[i] = b
     end
     Gap()
+    BarButton("reset", function()
+        if not (open and open:IsShown()) then return end
+        local items = { { "reset this page (your words and ink are set aside)", function() ns.BookReset(false) end } }
+        if ns.BookHasAside(Cfg(), SpreadId()) then
+            items[2] = { "bring back what was reset here", function() ns.BookBack(false) end }
+        end
+        Menu(items)
+    end, "This page back to the book's own. Your words and ink on it are set aside, and can be brought back.")
     BarButton("undo", function() ns.QuillUndoLast() end, "Takes back the last mark, move or rubbing out, on the book or the map. (Ctrl + wheel over a mark: its size.)")
     -- (the bar's undo, also in the maps' menus: Controls.lua)
     ns.QuillCanUndo = function() return #undo > 0 end
@@ -3138,8 +3318,11 @@ UpdateBar = function()
     if dm and dm.quill then dm.quill.lit:SetShown(writing) end
     if ns.RefreshToggles then ns.RefreshToggles() end  -- (the map's quill button, lit in hand)
     if catcher then
-        local sc = beforeOf and left.scene
-        catcher:SetShown(writing and tool ~= nil and tool ~= "words" and (not beforeOf or (sc and sc:IsShown() and who == "wanderer") or false))
+        -- (over both pages; with the edit tool, only over a "before" page's scene, so its pieces can be
+        -- moved while the lines stay clickable)
+        local sc = beforeOf and tool == "words" and left.scene
+        if sc and not sc:IsShown() then sc = nil end
+        catcher:SetShown(writing and tool ~= nil and (tool ~= "words" or sc ~= nil))
         catcher:ClearAllPoints()
         if sc then
             catcher:SetAllPoints(sc)
@@ -3277,16 +3460,14 @@ Show = function(to)
     if beforeOf ~= to then beforeOf = nil end
     local dg = Entry(to)
     local hands = Data().hands or {}
-    pageHand = dg and (beforeOf and dg.before and (hands[dg.id .. ":before"] or hands[dg.id]) or hands[dg.id]) or nil
+    pageHand = ns.BookKindNow() == "story" and dg and (beforeOf and dg.before and (hands[dg.id .. ":before"] or hands[dg.id]) or hands[dg.id]) or nil
     if dg and beforeOf and dg.before then Before(dg) elseif dg then Dungeon(dg) else
         Flyleaf()
-        DrawPrints({ id = "flyleaf", prints = Data().flyleafPrints or {} }, 0)  -- (a print over a name not struck)
+        if ns.BookKindNow() == "story" then
+            DrawPrints({ id = "flyleaf", prints = Data().flyleafPrints or {} }, 0)  -- (a print over a name not struck)
+        end
     end
-    if beforeOf then
-        if inkHost and ns.InkDrawList then ns.InkDrawList(inkHost, {}) end  -- (the dungeon's own ink stays on its page)
-    else
-        DrawInk()
-    end
+    DrawInk()  -- (a "before" page has its own: BookMarks, MyMarks)
     left.number:SetText(2 * to + 1)
     right.number:SetText(2 * to + 2)
     if writing and UpdateBar then UpdateBar() end  -- (the quill's catcher: the scene on a "before" page, else the spread)
@@ -3444,7 +3625,7 @@ end
 -- (once, 2026-10-31: the user drew the Deadmines map ink as themselves by accident; it's the wanderer's,
 -- so it moves into the book's copy, mapMarks[floor], and tools\export_notes.py takes it into the file)
 local function DeadminesInkToWanderer()
-    if Cfg().dmInkMoved then return end
+    if Cfg().dmInkMoved or not ns.BOOK_AUTHOR then return end  -- (a player's ink is theirs)
     Cfg().dmInkMoved = true
     local all = ns.db and ns.db.inkMarks
     if not all then return end
@@ -3466,9 +3647,14 @@ end
 
 local function Create()
     KeptWho()
+    -- (a player's book through an update: BookOwn.lua. Each in its own pcall: an odd saved page must
+    -- not keep the book shut, and nothing is lost by a step not run)
+    if not ns.BOOK_AUTHOR then pcall(ns.BookMigrate, Cfg(), ns.db.inkMarks, Data()) end
     DropShipped()
     DeadminesInkToWanderer()
+    pcall(ns.BookAnchor, Cfg(), Data(), Entry)
     book = CreateFrame("Frame", "WaymarkNotebook", UIParent)
+    ns.AddonWindow(book, function() if Cfg().pos then SavePos() end end)
     book:SetSize(W, H)
     book:SetFrameStrata("HIGH")
     book:SetToplevel(true)
@@ -3696,6 +3882,88 @@ function ns.NotebookShipView()
     if open:IsShown() then Open() end
 end
 
+-- /bfi notes me (dev): writing as a player would, your own layer and the book kinds; again: the wanderer
+function ns.NotebookAsPlayer()
+    if not book then Create() end
+    Cfg().asPlayer = not Cfg().asPlayer or nil
+    who = Cfg().asPlayer and "you" or "wanderer"
+    inkIdx = who == "wanderer" and 1 or 3
+    print("|cffd4b47aWaymark|r: the book as " .. (Cfg().asPlayer and "a player." or "the wanderer."))
+    ns.NotebookRefresh()
+end
+
+-- the book drawn again, here and on the dungeon map (a reset, the kind of book changed)
+function ns.NotebookRefresh()
+    if not book then return end
+    wipe(undo)
+    if open:IsShown() then Show(spread) end
+    if UpdateBar then UpdateBar() end
+    NotesChanged()
+    if ns.UpdateInk then ns.UpdateInk() end
+end
+
+-- the kind of book, chosen on the bookplate or the map's book button
+function ns.BookSetKind(kind)
+    Cfg().kind = kind
+    if ns.RefreshControls then ns.RefreshControls() end
+    if who == "wanderer" then print("|cffd4b47aWaymark|r: the wanderer always has the whole book (/bfi notes me to see it).") end
+    ns.NotebookRefresh()
+end
+
+local function KindItems()
+    local out, kind = {}, Cfg().kind or "story"
+    for _, k in ipairs(ns.BOOK_KINDS) do
+        out[#out + 1] = { k[2], function() ns.BookSetKind(k[1]) end, on = k[1] == kind }
+    end
+    return out
+end
+function ns.BookKindMenu() Menu(KindItems()) end
+
+-- the book button on the map: a right-click
+function ns.BookMenu()
+    Menu({ { "open the book", ns.ToggleNotebook }, { "what's in the book", nil, sub = KindItems() },
+           { "the book's settings", function() ns.ShowOption("notebook", "kind") end } })
+end
+
+-- a right-click on a page with the quill in hand
+function ns.BookPageMenu()
+    local items = {}
+    if ns.QuillCanUndo and ns.QuillCanUndo() then items[1] = { "undo", ns.QuillUndoLast } end
+    items[#items + 1] = { "reset this page", function() ns.BookReset(false) end }
+    local dg = Data()[spread]
+    if ns.BookHasAside(Cfg(), dg and dg.id or "flyleaf") then
+        items[#items + 1] = { "bring back what was reset here", function() ns.BookBack(false) end }
+    end
+    items[#items + 1] = { "put the quill down", function() ns.SetQuill(false) end }
+    Menu(items)
+end
+
+-- reset: this page, or the whole book, set aside (BookOwn.lua); ns.BookBack brings it back
+function ns.BookReset(whole)
+    if not book then Create() end
+    local list = {}
+    if whole then
+        for _, dg in ipairs(Data()) do list[#list + 1] = dg end
+    elseif Data()[spread] then
+        list[1] = Data()[spread]
+    end
+    local done = ns.BookSetAside(Cfg(), ns.db.inkMarks, list, whole)
+    print("|cffd4b47aWaymark|r: " .. (done and "set aside. \"Bring back\" returns it." or "nothing of yours there to reset."))
+    ns.NotebookRefresh()
+end
+
+function ns.BookBack(whole)
+    if not book then Create() end
+    local id
+    if not whole then
+        local dg = Data()[spread]
+        id = dg and dg.id or "flyleaf"
+    end
+    local done = ns.BookBringBack(Cfg(), ns.db.inkMarks, Data(), id)
+    print("|cffd4b47aWaymark|r: " .. (done and "brought back." or "nothing set aside."))
+    ns.NotebookRefresh()
+end
+
 -- /bfi notes write: the book open, the quill in hand
 function ns.NotebookWrite()
     if not book then Create() end
@@ -3755,10 +4023,10 @@ local function DungeonMapNotes()
     local layer = dm.layer
     if layer:GetParent() ~= canvas then layer:SetParent(canvas) end
     local dg = Entry(idx)
-    -- (the book as you have it; with the quill, as who's writing. NO_YOU: always the wanderer's, as the
+    -- (the book as who's writing has it: the wanderer's in the dev copy, as the
     -- book shows it, so the rings sit in the same place with the quill or without)
     KeptWho()
-    local as = (writing or NO_YOU) and who or "you"
+    local as = who
     local sig = key .. ":" .. notesVersion .. ":" .. as
     if sig ~= dm.sig then
         dm.sig = sig

@@ -305,6 +305,7 @@ end
 
 local function Make()
     f = CreateFrame("Frame", "BFILearnedFrame", UIParent, "BackdropTemplate")
+    ns.AddonWindow(f, function() if Cfg().winPos then SavePos() end end)
     f:SetWidth(W)
     -- (with the settings window it opens from: above the map and bars, raised on a click)
     f:SetFrameStrata("FULLSCREEN")

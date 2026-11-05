@@ -1327,6 +1327,7 @@ local function PlaceYou()
     end
     if not you then
         you = CreateFrame("Frame", nil, canvas)
+        you.bfiNoEdgeFade = true  -- (you: never faded away, SoftEdges.lua)
         you.tex = you:CreateTexture(nil, "OVERLAY")
         you.tex:SetAllPoints()
         if ns.CaveArrowTexture then ns.CaveArrowTexture(you.tex) end
@@ -1504,7 +1505,7 @@ end
 function ns.DungeonCutTarget()
     local c, key = ns.DungeonInkSurface()
     if not c then return end
-    return c, key, tiles, overlay.bfiBg
+    return c, key, tiles, overlay.bfiBg, markerLayer
 end
 
 -- In an instance where this view covers your own map (the art, or the borrowed
@@ -2158,7 +2159,11 @@ function ns.SetupDungeon(map)
             if unit == "target" or unit == "mouseover" then
                 CheckDeadUnit(unit)
                 -- (at no health it isn't dead yet: a rare has no encounter to end, so look again)
-                if UnitExists(unit) and UnitHealth(unit) == 0 then C_Timer.After(0.5, function() CheckDeadUnit(unit) end) end
+                -- (live Forever hands addons a secret number here: it can't be compared, so no second look)
+                local hp = UnitExists(unit) and UnitHealth(unit)
+                if hp and not (issecretvalue and issecretvalue(hp)) and hp == 0 then
+                    C_Timer.After(0.5, function() CheckDeadUnit(unit) end)
+                end
             end
             return
         end
