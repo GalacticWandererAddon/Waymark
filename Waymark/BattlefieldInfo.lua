@@ -29,7 +29,8 @@ local DEFAULTS = {
     -- color: each quest's spots in a colour of its own
     -- spacing: no two spots of one objective closer than this, yards (0 = off);
     -- maxPer: at most this many per objective on a map (0 = no limit)
-    spots      = { shown = false, alpha = 0.9, scale = 0.8, color = false, spacing = 40, maxPer = 12 },
+    -- questieIcons: Questie's icons on them, where it's loaded
+    spots      = { shown = false, alpha = 0.9, scale = 0.8, color = false, spacing = 40, maxPer = 12, questieIcons = false },
     objectives = { shown = true, alpha = 1, scale = 1 },
     areas      = { shown = true, alpha = 1 },
     -- quest ground (QuestGround.lua): where your quests' monsters and things are,
@@ -57,8 +58,8 @@ local DEFAULTS = {
     -- face: "minimap" or "map", the one showing; corner: pushed into the
     -- screen's top-right corner; big / bigSize: the map face grown (UI units)
     -- splitQuests: objective spots on the minimap face, quest ground on the map's (ns.SplitHides)
-    dock       = { on = false, size = 160, wheel = true, friction = 2, face = "minimap", ourGround = true, splitQuests = false,
-                   corner = true, big = false, bigSize = 360, mapOnly = false, hideSun = false, hideTitle = true },
+    dock       = { on = false, size = 160, wheel = true, friction = 2, face = "map", ourGround = true, splitQuests = false,
+                   corner = true, big = false, bigSize = 360, mapOnly = true, hideSun = false, hideTitle = true },
     -- the map lets clicks through unless this modifier (ALT, CTRL, SHIFT) is held (ClickThrough.lua)
     clickThrough = { on = false, modifier = "ALT", combat = false },
     clearView  = { on = false, noFrame = true, header = "hover", buttons = "hover", opacity = 0.7, zoneOnly = true,
@@ -69,7 +70,7 @@ local DEFAULTS = {
     -- the settings window's own state: advanced = show the fine-tuning
     -- settings; page = the page last open; collapsed[group] = its pages folded
     -- away in the list; folded["page/heading"] = a section folded away on its page
-    optionsWindow = { advanced = false, page = nil, collapsed = { Development = true }, folded = {} },
+    optionsWindow = { advanced = false, page = nil, collapsed = { Development = true, Extras = true, ["The window"] = true, ["Getting around"] = true, ["What's shown"] = true, ["Your setup"] = true }, folded = {} },
     -- clock (Clock.lua) and soft edges (SoftEdges.lua): their files say what each setting does
     clock      = { shown = false, look = "plain", where = "BOTTOMRIGHT", source = "realm", h24 = true, show = "always",
                    size = 100, alpha = 100, hideGame = false,
@@ -203,7 +204,8 @@ local DEFAULTS = {
     -- Zoom is measured as the map art's size on screen, screen pixels per art
     -- pixel (MapControls' ArtX: "2x"), the same at any map size or scale.
     -- closestX: the closest zoom; smoothness: each 1.5x step split into this
-    -- many. autoZoom: near objective spots / gathering nodes, to clusterX;
+    -- many. (autoZoom, nearSpots, nearNodes, clusterX: auto-zoom near objectives, gone since
+    -- 2026-11-06, no longer read; kept so older presets still match.)
     -- townX: town view's zoom (0 = fully out); animTime: seconds an auto-zoom
     -- in/out takes; fitZone: fully zoomed out shows the zone itself, not the
     -- whole map art
@@ -365,12 +367,13 @@ ns.Log = Log
 -- our own frames by name, for /bfi check (each module adds its own)
 ns.debugFrames = {}
 
--- The clock's first time: on with the Creator's preset (the shipped defaults) or no preset chosen.
+-- The clock's first time: on with the Creator's preset, off with the others (the shipped defaults: Simple).
 -- Settings from before the clock that chose another preset start with it off, and the game's
 -- clock kept (the user, 2026-11-04). Call before the defaults go in.
--- The map's hour the same way: on with the Creator's preset or none chosen, else off.
+-- The map's hour, for settings from before it: on with the Creator's or none chosen, else off.
+-- A new player has no settings yet (no pins): the defaults decide.
 function ns.ClockFirstTime(db)
-    if db.mapHour == nil then db.mapHour = { on = not db.presetBase or db.presetBase == "creator" } end
+    if db.mapHour == nil and db.pins then db.mapHour = { on = not db.presetBase or db.presetBase == "creator" } end
     if db.clock == nil and db.presetBase and db.presetBase ~= "creator" then
         db.clock = { shown = false, hideGame = false }
     elseif db.clock == nil and db.pins then
@@ -468,6 +471,12 @@ local function InitDB()
     Migrate()
     WaymarkDB = WaymarkDB or {}
     local db = WaymarkDB
+    -- the welcome (Welcome.lua): for new players only, so settings from before it count as seen
+    if db.zoom then db.zoom.autoZoom = false end  -- (gone: DEFAULTS' zoom)
+    if db.dock then db.dock.mapOnly, db.dock.face = true, "map" end  -- (docked is the map: Dock.lua)
+    if db.welcome == nil then db.welcome = { noted = db.pins ~= nil, done = db.pins ~= nil } end
+    -- (spots took Questie's icons before they had a say: settings from then keep them)
+    if db.pins and db.spots and db.spots.questieIcons == nil then db.spots.questieIcons = true end
     -- carry over settings from the earlier flat layout
     if db.questieAlpha ~= nil or db.objectivesAlpha ~= nil then
         db.questie = db.questie or {}
@@ -658,9 +667,10 @@ function ns.ToggleLayer(group, key)
         ns.OnSettingChanged(group, key)
         return
     end
-    -- toggles.saveToProfile: the click is kept in the active context profile, so
-    -- the layer is that way every time you're in that context again
-    if key == "shown" and profile and profile.layers and ns.db.toggles.saveToProfile then
+    -- toggles.saveToProfile: where the active context profile decides the layer, the click is
+    -- kept in it, so the layer is that way every time you're in that context again. A layer it
+    -- leaves alone is a plain click: your own setting, not one undone as you leave town
+    if key == "shown" and ns.ProfileOverrides(group) and ns.db.toggles.saveToProfile then
         profile.layers[group] = not ns.IsShown(group)
         manual[group] = nil
         ns.OnSettingChanged(group, key)
@@ -674,6 +684,56 @@ function ns.ToggleLayer(group, key)
         cfg[key] = not cfg[key]
     end
     ns.OnSettingChanged(group, key)
+end
+
+-- Quest givers: one switch for pick-ups and turn-ins, learned givers too. Each has its own with
+-- advanced settings; read from the layers, as objectives are.
+local GIVERS = { "questie", "turnins", "learned" }
+function ns.QuestGiversOn()
+    for _, g in ipairs(GIVERS) do
+        if ns.IsShown(g) then return true end
+    end
+    return false
+end
+function ns.SetQuestGivers(on)
+    for _, g in ipairs(GIVERS) do
+        if ns.IsShown(g) ~= (on and true or false) then ns.ToggleLayer(g, "shown") end
+    end
+end
+
+-- Objectives: one switch and a look. "questie": our objective spots in Questie's icons, where it's
+-- loaded, and then the first choice. "waymark": in our own. "yours": we leave them alone, the game's
+-- own markers and quest areas. db.objectiveLook: the look last picked. Worked out from the layers themselves (each still has its
+-- own switch with advanced settings), so a preset or a profile can't leave it out of step.
+local OBJECTIVE_LAYERS = { questie = { spots = true }, waymark = { spots = true }, yours = { objectives = true, areas = true } }
+local function Objectives() return ns.FOREVER and { "spots", "ground", "objectives", "areas" } or { "spots", "ground" } end
+function ns.ObjectivesOn()
+    for _, g in ipairs(Objectives()) do
+        if ns.IsShown(g) then return true end
+    end
+    return false
+end
+function ns.ObjectiveLook()
+    if ns.IsShown("spots") or ns.IsShown("ground") then return ns.SpotsQuestieArt() and "questie" or "waymark" end
+    if ns.FOREVER and (ns.IsShown("objectives") or ns.IsShown("areas")) then return "yours" end
+    local look, questie = ns.db.objectiveLook, ns.QuestieArt()
+    if (look == "questie" and not questie) or (look == "yours" and not ns.FOREVER) then look = nil end
+    return look or (questie and "questie" or "waymark")
+end
+function ns.SetObjectives(on, look)
+    look = look or ns.ObjectiveLook()
+    ns.db.objectiveLook = look
+    if look ~= "yours" and (ns.db.spots.questieIcons and true or false) ~= (look == "questie") then
+        ns.db.spots.questieIcons = look == "questie"
+        ns.SpotIconsChanged()
+        if ns.RedrawQuestie then ns.RedrawQuestie() end
+    end
+    for _, g in ipairs(Objectives()) do
+        local want = on and OBJECTIVE_LAYERS[look][g] or false
+        -- (quest ground stays if it's on and the look stays ours: an advanced choice)
+        if g == "ground" and on and look ~= "yours" then want = ns.IsShown(g) end
+        if ns.IsShown(g) ~= want then ns.ToggleLayer(g, "shown") end
+    end
 end
 
 -- what a toggle shows: the layer as you see it now
@@ -880,6 +940,8 @@ local function PinsShown(group, building)
     if group == "party" and ns.MinimapDrawsYou and ns.MinimapDrawsYou() then return false end
     if group == "spots" and ns.SpotsAsGround() then return true end
     if group == "spots" and not building and ns.SplitHides("spots") then return false end
+    -- (the game's blue quest areas: a mesh over a map this small. On the big map they stay)
+    if group == "areas" and ns.Docked and ns.Docked() and not (ns.MapIsBig and ns.MapIsBig()) then return false end
     return ns.IsShown(group)
 end
 
@@ -1029,6 +1091,66 @@ local function TrackPins(map, provider, group)
     end
 end
 
+-- The game's other pins set themselves up the same way, each one blocked in a fight: rares and
+-- points of interest appear mid-fight (a friend's 1.2.2: SetPropagateMouseClicks and
+-- SetPassThroughButtons, from AcquirePin). Same wait for those that place pins as things change.
+-- Not the flags, the corpse, or the group's and the art's own pins, wanted at once and made once.
+local WAIT_IN_COMBAT = { "VignetteDataProviderMixin", "AreaPOIDataProviderMixin", "AreaPOIEventDataProviderMixin",
+    "GossipDataProviderMixin", "FlightPointDataProviderMixin", "PetTamerDataProviderMixin", "DigSiteDataProviderMixin",
+    "DungeonEntranceDataProviderMixin", "MapLinkDataProviderMixin", "SelectableGraveyardDataProviderMixin",
+    "EncounterJournalDataProviderMixin", "QuestOfferDataProviderMixin" }
+local function GamePinsWait(map)
+    local base = MapCanvasDataProviderMixin and MapCanvasDataProviderMixin.RefreshAllData
+    local wait = {}
+    for _, name in ipairs(WAIT_IN_COMBAT) do
+        local mixin = _G[name]
+        if mixin and mixin.RefreshAllData and mixin.RefreshAllData ~= base then wait[mixin.RefreshAllData] = true end
+    end
+    for provider in pairs(map.dataProviders or {}) do
+        local orig = provider.RefreshAllData
+        if wait[orig] then
+            provider.bfiDrawnMap = map:GetMapID()  -- (what's on the map now is this map's)
+            provider.RefreshAllData = function(self, ...)
+                if InCombatLockdown() then
+                    if self.bfiDrawnMap ~= map:GetMapID() and self.RemoveAllData then
+                        pcall(self.RemoveAllData, self)
+                    end
+                    deferred[self] = true
+                    return
+                end
+                self.bfiDrawnMap = map:GetMapID()
+                return orig(self, ...)
+            end
+        end
+    end
+end
+
+-- The corpse's tombstone is only looked for as the map opens or changes: fine for the world map,
+-- but ours stays open, so dying and releasing drew nothing. So it's looked for at those moments too.
+local function CorpseFollows(map)
+    local mixin = DeathMapDataProviderMixin
+    local provider
+    for p in pairs(mixin and map.dataProviders or {}) do
+        if p.RefreshAllData == mixin.RefreshAllData then provider = p end
+    end
+    if not provider then return end
+    local function Look()
+        if InCombatLockdown() then
+            deferred[provider] = true
+            return
+        end
+        pcall(provider.RefreshAllData, provider)
+    end
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("PLAYER_DEAD")
+    f:RegisterEvent("PLAYER_ALIVE")   -- (released: a ghost, the corpse has a place)
+    f:RegisterEvent("PLAYER_UNGHOST")
+    f:SetScript("OnEvent", function()
+        Look()
+        C_Timer.After(1, Look)  -- (in case the game knows the place a moment later)
+    end)
+end
+
 local function AddProvider(map, mixin, label, group)
     if not mixin then
         Log(label, "provider not found, skipping")
@@ -1038,9 +1160,7 @@ local function AddProvider(map, mixin, label, group)
     if group then TrackPins(map, provider, group) end
     if group == "areas" then ns.questAreas = provider end  -- (QuestGround thins its border as you zoom)
     local ok, err = pcall(map.AddDataProvider, map, provider)
-    if ok then
-        Log(label, "provider attached")
-    else
+    if not ok then
         -- half set up (Classic Era's quest provider): it would error on every map change
         if not ns.FOREVER then pcall(map.RemoveDataProvider, map, provider) end
         Log(label, "failed:", err)
@@ -1475,7 +1595,7 @@ local function SetupQuestie(map)
     local provider
 
     if not (ns.QuestSource and ns.QuestSource()) then
-        Log("No quest data (ours or QuestieDB): no quest givers, turn-ins or objective spots")
+        Log("No quest data (Waymark's or QuestieDB): no quest givers, turn-ins or objective spots")
     else
         provider = CreateFromMixins(BFIQuestieProviderMixin)
         local ok, err = pcall(map.AddDataProvider, map, provider)
@@ -1637,6 +1757,7 @@ local function Setup()
     -- Blizzard's quest tracker providers are Forever-only: on Era they fail
     -- half set up and taint (chat spam every login), so skip them there
     if ns.FOREVER then
+        GamePinsWait(map)
         AddProvider(map, QuestDataProviderMixin, "Quest objectives", "objectives")
         AddProvider(map, QuestBlobDataProviderMixin, "Quest areas", "areas")
         -- (the game draws an area only for the quest in focus, so with none the toggle looked
@@ -1655,6 +1776,7 @@ local function Setup()
             blob:Refresh()
         end
     end
+    CorpseFollows(map)
     SetupQuestie(map)
     if ns.SetupQuestGround then ns.SetupQuestGround(map) end
     if ns.SetupWilds then ns.SetupWilds(map) end
@@ -1690,6 +1812,7 @@ local function Setup()
     if ns.SetupCutEdit then ns.SetupCutEdit(map) end
     if ns.SetupDock then ns.SetupDock(map) end
     if ns.SetupClickThrough then ns.SetupClickThrough(map) end
+    if ns.SetupWelcome then ns.SetupWelcome(map) end
 end
 
 -- Blocked actions: the game says which function it blocked in these events (the

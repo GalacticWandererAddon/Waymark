@@ -1177,6 +1177,7 @@ local function MenuFrame()
     local f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
     ns.AddonWindow(f)
     f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetClampedToScreen(true)  -- (right-clicked near the screen's edge, as the docked map is)
     f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
                     edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
     f:SetBackdropColor(0.88, 0.8, 0.6, 0.97)
@@ -1193,7 +1194,13 @@ local function OpenSub(row, items)
     end
     FillMenu(submenu, items)
     submenu:ClearAllPoints()
-    submenu:SetPoint("TOPLEFT", row, "TOPRIGHT", 2, 4)
+    -- (no room on the right, docked in the screen's corner say: on the left)
+    local past = row:GetRight() * row:GetEffectiveScale() + submenu:GetWidth() * submenu:GetEffectiveScale()
+    if past > UIParent:GetRight() * UIParent:GetEffectiveScale() then
+        submenu:SetPoint("TOPRIGHT", row, "TOPLEFT", -2, 4)
+    else
+        submenu:SetPoint("TOPLEFT", row, "TOPRIGHT", 2, 4)
+    end
     submenu:Show()
 end
 function FillMenu(f, items)

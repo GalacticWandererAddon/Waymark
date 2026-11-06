@@ -16,7 +16,7 @@ local _, ns = ...
 --             same friction), goes back to the minimap at the matching zoom.
 --             A double-click on the map goes back too, at its farthest zoom;
 --             a drag on the minimap opens the map there and pans it.
---   mapOnly   never the minimap face (the button by the corner grip)
+--   mapOnly   never the minimap face: always on now (ns.ApplyDock)
 -- On the minimap face our pins lie over the minimap (the map's canvas kept on
 -- you at the minimap's zoom, its picture see-through): the minimap's own
 -- tracking blips can't be read by addons, so this is how both show at once.
@@ -222,6 +222,70 @@ local function CornerOffsets()
     return -right, -top
 end
 
+-- Moved by the header, the square leaves the game's minimap cluster behind, and with it what hangs
+-- on the cluster: its box and the widgets below the minimap, sitting in the world where the minimap
+-- was. So it comes along, Edit Mode's box with it. Edit Mode gets the cluster back, where the layout
+-- has it, when the square has no spot of its own; dragging the box drops the spot.
+local clusterWas    -- the cluster's own anchors, while it's with the square
+local clusterMoving -- (it's us calling SetPoint)
+local editing       -- Edit Mode is open
+local function ReleaseCluster()
+    if not clusterWas then return end
+    local c, was = MinimapCluster, clusterWas
+    clusterWas = nil
+    clusterMoving = true
+    c:ClearAllPoints()
+    for _, p in ipairs(was) do c:SetPoint(p[1], p[2], p[3], p[4], p[5]) end
+    clusterMoving = nil
+end
+local function CarryCluster(spot)
+    local c = MinimapCluster
+    if not (ns.FOREVER and c) or editing then return end
+    if not clusterWas then
+        clusterWas = {}
+        for i = 1, c:GetNumPoints() do clusterWas[i] = { c:GetPoint(i) } end
+    end
+    local k = UIParent:GetEffectiveScale() / c:GetEffectiveScale()
+    clusterMoving = true
+    c:ClearAllPoints()
+    c:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", spot[1] * k, spot[2] * k)
+    clusterMoving = nil
+end
+
+-- Addons' LibDBIcon buttons, Questie's for one, sit on the ring of the real minimap, which isn't
+-- the square's size while the map lies over it: they ended up on the map. Docked, each goes on the
+-- square's edge at its own angle; undocked, LibDBIcon places it again. Those you've held and moved
+-- keep their spot. Twice: addons make theirs late. Also what else a change of shape leaves behind:
+-- the header and the X under the map after undocking, the game's quest areas (ns.ApplyGroups).
+local function PlaceIcons()
+    if ns.ApplyChromeScale then ns.ApplyChromeScale() end
+    if ns.ApplyGroups then ns.ApplyGroups() end
+    local lib = LibStub and LibStub("LibDBIcon-1.0", true)
+    if not (lib and lib.GetButtonList and lib.Refresh and lib.GetMinimapButton) then return end
+    local map = BattlefieldMapFrame
+    local face = applied and map and (ns.MapFace and ns.MapFace(map) or map)
+    local held = Cfg().buttonPos or {}
+    for _, name in ipairs(lib:GetButtonList()) do
+        local b = lib:GetMinimapButton(name)
+        if b and not held["minimap:" .. (b:GetName() or "")] then
+            pcall(lib.Refresh, lib, name)
+            if face and face:GetWidth() > 0 then
+                local angle = math.rad(b.db and b.db.minimapPos or b.minimapPos or 225)
+                local dx, dy = math.cos(angle), math.sin(angle)
+                local k = face:GetEffectiveScale() / b:GetEffectiveScale()
+                local out = 1 / math.max(math.abs(dx), math.abs(dy))  -- (the ring out to the square)
+                b:ClearAllPoints()
+                b:SetPoint("CENTER", face, "CENTER", dx * out * (face:GetWidth() * k / 2 + 6),
+                    dy * out * (face:GetHeight() * k / 2 + 6))
+            end
+        end
+    end
+end
+local function IconsToShape()
+    C_Timer.After(0.1, PlaceIcons)
+    C_Timer.After(2, PlaceIcons)
+end
+
 local function PlaceMinimap()
     if not applied or InCombat() then return end
     if ns.DockPatchOff then ns.DockPatchOff() end
@@ -231,22 +295,24 @@ local function PlaceMinimap()
         local k = UIParent:GetEffectiveScale() / mm:GetEffectiveScale()
         mm:ClearAllPoints()
         mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", spot[1] * k, spot[2] * k)
+        CarryCluster(spot)
         return
     end
+    ReleaseCluster()  -- (first: the Edit Mode branch below reads where the cluster is)
     if Cfg().corner then
         local x, y = CornerOffsets()
         local k = UIParent:GetEffectiveScale() / mm:GetEffectiveScale()
         mm:ClearAllPoints()
         mm:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", x * k, y * k)
     elseif ns.FOREVER and MinimapCluster and MinimapCluster:GetRight() then
-        -- (flush with Edit Mode's minimap box, as with the corner above: where the minimap
-        -- sat in it left the square off the box)
-        local x, y = CornerOffsets()
+        -- where the minimap sat in Edit Mode's box, so it keeps up with the box. Not flush with the
+        -- box: that put the square against the screen's edge, and what stands round it (the calendar,
+        -- the addon dropdown, addons' buttons) went off the screen
         local c, e = MinimapCluster, mm:GetEffectiveScale()
-        local k = UIParent:GetEffectiveScale() / e
+        local ce = c:GetEffectiveScale() / e
         mm:ClearAllPoints()
-        mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", c:GetRight() * c:GetEffectiveScale() / e + x * k,
-            c:GetTop() * c:GetEffectiveScale() / e + y * k)
+        mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", c:GetRight() * ce + (applied.offRight or 0),
+            c:GetTop() * ce + (applied.offTop or 0))
     else
         -- where it was: its top-right corner stays, so a bigger square grows down and left
         mm:ClearAllPoints()
@@ -263,12 +329,22 @@ local function Square()
                 wheel = mm.IsMouseWheelEnabled and mm:IsMouseWheelEnabled(),
                 right = mm:GetRight(), top = mm:GetTop() }
     for i = 1, mm:GetNumPoints() do a.points[i] = { mm:GetPoint(i) } end
+    local c = MinimapCluster
+    if a.right and c and c:GetRight() then
+        local ce = c:GetEffectiveScale() / mm:GetEffectiveScale()
+        a.offRight, a.offTop = a.right - c:GetRight() * ce, a.top - c:GetTop() * ce
+    end
     applied = a
     if a.right then PlaceMinimap() end
     local s = SideOnMinimap()
     mm:SetSize(s, s)
     mm:SetMaskTexture(SQUARE_MASK)
     GetMinimapShape = function() return "SQUARE" end  -- (LibDBIcon places buttons by it)
+    IconsToShape()
+    -- (with the zone bar gone the calendar and the addon dropdown hang past the screen's edge)
+    for _, f in ipairs({ GameTimeFrame, AddonCompartmentFrame }) do
+        if f and f.SetClampedToScreen then f:SetClampedToScreen(true) end
+    end
     if a.rotate == "1" then SetCVar("rotateMinimap", "0") end
     for _, name in ipairs(ART) do Stash(name, a.stashed) end
     -- the day / night sun and moon: we have our own. Forever's is its own frame, always hidden here
@@ -302,11 +378,16 @@ local function Unsquare()
     if ns.DockPatchOff then ns.DockPatchOff() end
     local mm, a = Minimap, applied
     applied = nil
+    ReleaseCluster()
     mm:ClearAllPoints()
     for _, p in ipairs(a.points) do mm:SetPoint(p[1], p[2], p[3], p[4], p[5]) end
     mm:SetSize(a.w, a.h)
     mm:SetMaskTexture(ROUND_MASK)
     GetMinimapShape = a.shape
+    IconsToShape()
+    for _, f in ipairs({ GameTimeFrame, AddonCompartmentFrame }) do
+        if f and f.SetClampedToScreen then f:SetClampedToScreen(false) end
+    end
     if a.rotate == "1" then SetCVar("rotateMinimap", "1") end
     for _, s in ipairs(a.stashed) do s[1]:SetParent(s[2]) end
     mm:EnableMouseWheel(a.wheel and true or false)
@@ -410,7 +491,10 @@ function ns.DockMapUnder(on)
     RaiseMap(map)
     if not on and sc then sc:SetFrameStrata(map:GetFrameStrata()) end
     if chrome then PutBack() end
-    if not on then chrome = nil end
+    if not on then
+        chrome = nil
+        if ns.ApplyChromeScale then C_Timer.After(0, ns.ApplyChromeScale) end  -- (the header and X over the map)
+    end
 end
 
 -- MapControls: placed so its scroll area's top-right corner is the minimap's
@@ -1180,8 +1264,35 @@ local function Ghost(map)
     return ghost
 end
 
+-- The game's clock and calendar stand over the minimap's top right, which is over the map's X and
+-- arrow once the map lies on it. Docked they go under the square, unless you've held and moved them.
+local UNDER = { { "TimeManagerClockButton", -28 }, { "GameTimeFrame", 0 } }
+local underHome = {}  -- [frame] = its own anchors
+local function RestoreUnder()
+    for f, home in pairs(underHome) do
+        f:ClearAllPoints()
+        for _, q in ipairs(home) do f:SetPoint(q[1], q[2], q[3], q[4], q[5]) end
+    end
+    wipe(underHome)
+end
+local function PlaceUnder(saved)
+    local map = BattlefieldMapFrame
+    local face = applied and map and not IsBig() and (ns.MapFace and ns.MapFace(map) or map)
+    if not face then RestoreUnder() return end
+    for _, u in ipairs(UNDER) do
+        local f = _G[u[1]]
+        if f and not (saved and f.bfiMoveKey and saved[f.bfiMoveKey]) then
+            if not underHome[f] then
+                underHome[f] = {}
+                for i = 1, f:GetNumPoints() do underHome[f][i] = { f:GetPoint(i) } end
+            end
+            f:ClearAllPoints()
+            f:SetPoint("TOPRIGHT", face, "BOTTOMRIGHT", u[2], -3)
+        end
+    end
+end
+
 function ns.PlaceMinimapButtons()
-    if ns.PlaceMapOnlyButton then ns.PlaceMapOnlyButton() end  -- (ours: in combat too)
     if InCombat() then return end
     local map = BattlefieldMapFrame
     local saved = Cfg().buttonPos
@@ -1194,6 +1305,7 @@ function ns.PlaceMinimapButtons()
             OwnPoints(child)
         end
     end
+    PlaceUnder(saved)
 end
 
 -- MapControls HoldToMove: the docked buttons move only while docked; the
@@ -1213,6 +1325,7 @@ local function LowerButtons()
     wipe(moved)
     wipe(lifted)
     wipe(points)
+    RestoreUnder()
 end
 
 -- for /bfi check
@@ -1555,72 +1668,6 @@ local function Drag(map)
     pcall(ns.ApplyMapView, sc, drag[5], drag[3] - (x - drag[1]) / px, drag[4] + (y - drag[2]) / py)
 end
 
--- Map only (the button in the bottom-left corner): never the minimap face
-local onlyButton
-
-local function RefreshOnlyButton()
-    if not onlyButton then return end
-    onlyButton:SetShown(applied ~= nil)
-    local on = Cfg().mapOnly and true or false
-    onlyButton.icon:SetDesaturated(not on)
-    onlyButton.icon:SetAlpha(on and 1 or 0.7)
-end
-
-local function ToggleMapOnly()
-    Cfg().mapOnly = not Cfg().mapOnly
-    if not applied then return end
-    if Cfg().mapOnly and Cfg().face ~= "map" then
-        if ShowMap() then
-            SetFace("map")
-            C_Timer.After(0.15, ViewAtMinimap)
-        end
-    else
-        ApplyFace()
-    end
-    RefreshOnlyButton()
-    if onlyButton and onlyButton:IsMouseOver() then onlyButton:GetScript("OnEnter")(onlyButton) end
-end
-
--- the setting (Options.lua's Minimap replacement page), as the button did
-function ns.DockSetMapOnly(on)
-    if (Cfg().mapOnly and true or false) ~= (on and true or false) then ToggleMapOnly() end
-end
-
-local function CreateOnlyButton(map)
-    local b = CreateFrame("Button", nil, map)
-    b:SetSize(16, 16)
-    b:SetFrameLevel(ns.ButtonLevel(map))  -- (with the map's other buttons)
-    -- hold to move it, as the map's buttons (saved with the docked set,
-    -- dock.buttonPos.dockMapOnly); else right of the corner grip, which sits
-    -- in the corner while docked
-    function ns.PlaceMapOnlyButton()
-        if ns.PlaceMoved and ns.PlaceMoved(b) then return end
-        b:ClearAllPoints()
-        b:SetPoint("BOTTOMLEFT", map, "BOTTOMLEFT", 20, 2)
-    end
-    ns.PlaceMapOnlyButton()
-    b.icon = b:CreateTexture(nil, "ARTWORK")
-    b.icon:SetAllPoints()
-    ns.SetArt(b.icon, "Interface\\Icons\\INV_Misc_Map03")
-    b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-    b:SetScript("OnClick", ToggleMapOnly)
-    b:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
-        GameTooltip:AddLine("Map only")
-        GameTooltip:AddLine(Cfg().mapOnly and "On: the map never turns into the minimap"
-            or "Off: the minimap shows at its own zooms", 1, 1, 1, true)
-        ns.Hints({ { "Click", Cfg().mapOnly and "off" or "on" }, { "Hold", "move it" } })
-        GameTooltip:Show()
-    end)
-    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    -- (after its OnClick: holding wraps it, so a move doesn't also click)
-    b.bfiDockOnly = true
-    if ns.HoldToMove then ns.HoldToMove(b, "dockMapOnly") end
-    onlyButton = b
-    ns.debugFrames.dockMapOnly = b
-    RefreshOnlyButton()
-end
-
 -- The Battlefield Map's own key (Shift+M) does nothing while docked: its keys
 -- are bound over to a button that does nothing (as Tracker.lua's quest log
 -- key). Out of combat only (bindings can't change in a fight: after it then).
@@ -1646,10 +1693,14 @@ end
 
 function ns.ApplyDock()
     if not (ns.db and Minimap) then return end
+    -- (docked is the map, always: since 2026-11-06 the minimap side isn't a choice. Set here too, as
+    -- a setup or a character's settings can bring old values)
+    Cfg().mapOnly, Cfg().face = true, "map"
     if InCombat() then pending = true return end
     pending = nil
     if Cfg().on then
         if applied then
+            IconsToShape()
             -- a new size, or the wheel switched: square it afresh
             LowerButtons()
             Unsquare()
@@ -1667,7 +1718,6 @@ function ns.ApplyDock()
     LiftButtons()
     ApplyFace()
     if ns.LayoutToggles then ns.LayoutToggles() end  -- (docked, the strip's own edge: Options.lua)
-    RefreshOnlyButton()
     BlockMapKey()
     if ns.RefreshViewGlow then ns.RefreshViewGlow() end  -- (the dock button's, Options.lua)
     if ns.DockHookBuffs then ns.DockHookBuffs() end
@@ -1968,6 +2018,8 @@ if ns.FOREVER and EventRegistry and MinimapCluster then
         if not x0 then x0, y0 = x, y return end
         if math.abs(x - x0) < 0.5 and math.abs(y - y0) < 0.5 then return end
         x0, y0 = x, y
+        -- (the box moved by hand: it's in charge now, not the spot from the header's drag)
+        if Cfg().spot then Cfg().spot, clusterWas = nil, nil end
         if Cfg().corner then
             Cfg().corner = false
             if ns.RefreshControls then ns.RefreshControls() end
@@ -1977,12 +2029,29 @@ if ns.FOREVER and EventRegistry and MinimapCluster then
     end
     watch:SetScript("OnUpdate", function() ns.Safe("Dock Edit Mode", Follow) end)
     EventRegistry:RegisterCallback("EditMode.Enter", function()
+        editing = true  -- (a square moved by its header keeps the cluster: the box shows where it is)
         x0, y0 = nil, nil
         watch:Show()
     end, watch)
     EventRegistry:RegisterCallback("EditMode.Exit", function()
         watch:Hide()
+        editing = nil
         -- (leaving without saving puts the box back: a frame later, it's there)
-        C_Timer.After(0, function() ns.Safe("Dock Edit Mode", Follow) end)
+        C_Timer.After(0, function()
+            ns.Safe("Dock Edit Mode", Follow)
+            ns.Safe("Dock Edit Mode", PlaceMinimap)  -- (the cluster back with the square)
+        end)
     end, watch)
+    -- (the layout placing the cluster, as it does at login, takes it from the square: what it set
+    -- is what we keep now, and the cluster goes back to the square a frame later)
+    local again
+    hooksecurefunc(MinimapCluster, "SetPoint", function()
+        if clusterMoving or editing or not clusterWas or again then return end
+        clusterWas = nil
+        again = true
+        C_Timer.After(0, function()
+            again = nil
+            ns.Safe("Dock Edit Mode", PlaceMinimap)
+        end)
+    end)
 end

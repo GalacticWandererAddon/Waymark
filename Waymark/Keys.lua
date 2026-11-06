@@ -34,9 +34,8 @@ local LAYER_KEYS = { "questie", "turnins", "learned", "spots", "townsfolk", "rar
 local NO_BUTTON = { learned = "Learned quest givers", party = "Player & group", explore = "Unexplored areas",
                     zoneName = "Header", coords = "Coordinates" }
 
--- (the key does less than the button: auto-zoom's button also centers on shift-click;
--- the rest are shorter, to fit the Keybindings column)
-local KEY_LABEL = { zoom = "Auto-zoom", learned = "Learned quests", rares = "RareScanner",
+-- (shorter, to fit the Keybindings column)
+local KEY_LABEL = { zoom = "Keep centered", learned = "Learned quests", rares = "RareScanner",
                     gather = "Gathering", explore = "Unexplored", dungeons = "Dungeon doors", ink = "Your ink" }
 
 local function LayerLabel(id)

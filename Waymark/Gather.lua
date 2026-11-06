@@ -973,19 +973,6 @@ function ns.ImportGatherMate()
     return n
 end
 
--- how many spots of what you've switched on are within `yards` of a point. For auto-zoom, drawn or not.
-function ns.GatherNodesNear(mapID, px, py, yards)
-    if not (px and (UseGM() or Data())) then return 0 end
-    local w, h = ns.MapYards(mapID)
-    if not w then return 0 end
-    local n, r2 = 0, yards * yards
-    for _, s in ipairs(Filtered(mapID)) do
-        local dx, dy = (s.x - px) * w, (s.y - py) * h
-        if dx * dx + dy * dy <= r2 then n = n + 1 end
-    end
-    return n
-end
-
 -- for /bfi check
 function ns.GatherInfo()
     local own, zones = 0, 0

@@ -17,6 +17,8 @@ local LibDeflate = LibStub("LibDeflate")
 
 -- not part of a setup: per-run and learned data, and the setups themselves
 local EXCLUDE = { addonScale = true,  -- (Waymark size: follows your screen, not a setup or character)
+                  welcome = true,  -- (seen once, whatever setup or character: Welcome.lua)
+                  puristWas = true,  -- (the quest layers Purist switched off: SetRows)
                   setups = true, characters = true, dungeonRun = true, blockedLog = true, towns = true,
                   diag = true, lastErrors = true,  -- (/bfi check's results)
                   devArtOff = true,  -- (/bfi devart, Art.lua)
@@ -147,23 +149,21 @@ function ns.NextSetup()
 end
 
 -- Presets ----------------------------------------------------------------------
--- Whole starting setups for the Start here page (mockups\options-presets.html is the
--- spec, mockups\options-review.md the decisions). Each sets every setting: the
--- Creator's, the Purist's and the Minimap Replacement's are locked in whole
--- (Data\PresetCreator.lua, PresetPurist.lua, PresetNavigator.lua, by
--- tools\lock_preset.lua; the Creator's is also what the release ships as its
--- defaults), the others start from the Creator's; then the rows below. Where things sit stays yours (POS), and so does what the addon
--- keeps as you play (your notes, ink, folds: EXCLUDE, KEEP_IN).
-
+-- Whole starting setups for the Start here page. Each sets every setting: the Simple is what the
+-- release ships as its defaults, the others are the Simple with tools\presets.lua's changes
+-- (Data\Preset*.lua); then the rows below. Where things sit stays yours (POS), and so does what the
+-- addon keeps as you play (your notes, ink, folds: EXCLUDE, KEEP_IN).
 ns.PRESETS = {
+    { id = "simple", name = "Simple", icon = "Interface\\Icons\\INV_Misc_Book_09",
+      who = "How Waymark ships: a framed map that follows you. The game's own UI left alone, its quest tracker too." },
     { id = "creator", name = "Creator's", icon = "Interface\\Icons\\INV_Shield_06",
-      who = "How Waymark ships: the author's own settings. Quest givers, turn-ins, objective spots, the tracker and quest log, a framed map that follows you." },
+      who = "As Simple, with Waymark's quest tracker, quest log and clock on, in the old font." },
     { id = "purist", name = "Purist", icon = "Interface\\Icons\\INV_Misc_Map_01",
-      who = "Classic vanilla: the plain Battlefield Map. No quest marks on it, just the quest tracker and quest window." },
+      who = "Classic vanilla: the plain Battlefield Map with no quest help." },
     { id = "navigator", name = "Minimap Replacement", icon = "Interface\\Icons\\Spell_Nature_FarSight",
-      who = "Replaces your minimap with a square one, every map feature on it: quest givers, quest ink, the tracker and quest window." },
+      who = "The map takes your minimap's place, square and north up." },
     { id = "minimalist", name = "Minimalist", icon = "Interface\\Icons\\Spell_Magic_LesserInvisibilty",
-      who = "Clear view: no clutter, masked zones, no frame and low footprint." },
+      who = "Clear view: just the map over the world, no frame." },
 }
 
 -- what a value reads as in the list of changes (booleans: on / off)
@@ -179,57 +179,56 @@ local GROUND_BY = { quest = "each quest its own", type = "by quest type" }
 
 -- { label, setting ("group.key", or "role": the map as a window, in clear view or
 -- docked), names, then the value for each preset in ns.PRESETS' order:
--- creator, purist, navigator, minimalist }
+-- simple, creator, purist, navigator, minimalist }
 -- (The Creator's column: Lunarbow Wanderer's own settings (live Forever, 2026-11-05),
 -- but for arrows to lone spots, off.)
 local T, F = true, false
 local ROWS = {
-    { "The map", "role", ROLES,                          "window", "window", "dock", "clear" },
-    { "Quest givers", "questie.shown", nil,                  T, F, T, T },
-    { "Coloured by difficulty", "questie.color", nil,        T, F, T, T },
-    { "Turn-ins", "turnins.shown", nil,                      T, F, T, T },
-    { "Objective spots", "spots.shown", nil,                 T, F, F, F },
-    { "A colour per quest", "spots.color", nil,              F, F, F, F },
-    { "Quest ground", "ground.shown", nil,                   F, F, T, T },
-    { "Its look", "ground.look", GROUND,                 "ink", "ink", "ink", "ink" },
-    { "Its colours", "ground.colorBy", GROUND_BY,        "type", "type", "type", "type" },
-    { "Arrows to lone spots and turn-ins", "ground.arrows", nil, F, F, F, F },
-    { "Objective markers (the game's)", "objectives.shown", nil, F, F, T, T },
-    { "Quest areas (the game's)", "areas.shown", nil,        F, F, F, F },
-    { "Learned quest givers", "learned.shown", nil,          T, F, T, T },
-    { "Quest tracker", "tracker.shown", nil,                 T, T, T, T },
-    { "Quest window", "questlog.shown", nil,                 T, T, T, T },
-    { "Opens with the quest log key", "questlog.keyL", nil,  T, F, T, T },
-    { "Quest givers on the continent", "browse.continentGivers", nil, T, F, T, T },
-    { "Townsfolk", "townsfolk.shown", nil,                   F, F, F, F },
-    { "Townsfolk in towns and cities", "townsfolkInTown", nil, T, T, T, T },
-    { "Dungeon entrances", "dungeons.shown", nil,            T, F, T, T },
-    { "Group dots in class colours", "party.classColors", nil, T, F, T, T },
-    { "Group tooltips", "party.hover", nil,                  T, F, T, T },
-    { "Unexplored areas", "explore.shown", nil,              T, F, T, T },
-    { "Their look", "explore.fogStyle", FOG,                 "full", "fog", "full", "full" },
-    { "Quest pins hidden there", "explore.hideQuests", nil,  F, F, F, F },
-    { "Other pins hidden there", "explore.hideOthers", nil,  F, F, F, F },
-    { "Area names under the cursor", "explore.hoverNames", nil, T, F, T, T },
-    { "Unexplored names a secret", "explore.hideUnexplored", nil, F, T, F, F },
-    { "Gold flash on discovery", "explore.flash", nil,       T, F, T, T },
-    { "The zone in the header", "zoneName.showZone", nil,      T, F, T, T },
-    { "Explored % in the header", "zoneName.progress", nil,        F, F, F, F },
-    { "Level range in the header", "zoneName.levels", nil,         F, F, F, F },
-    { "Close-up detail", "detail.shown", nil,                T, F, T, T },
-    { "Coordinates", "coords.shown", nil,                    T, F, T, T },
-    { "Keep centred on me", "mapFrame.center", nil,          T, F, T, T },
-    { "Auto-zoom", "zoom.autoZoom", nil,                     F, F, F, F },
-    { "Town view", "townView.enabled", nil,                  T, F, T, T },
-    { "Zoom in towns", "townView.zoom", nil,                 T, F, T, T },
-    { "Whole city in capitals", "cityView.zoom", nil,        T, F, T, T },
-    { "Border", "border.style", BORDERS,                 "dialog", "game", "dialog", "tooltip" },
-    { "Border colour", "border.color", COLOURS,          "bronze", "natural", "bronze", "dark" },
-    { "Header style", "zoneName.style", PLATES,          "parchment", "plate", "text", "text" },
-    { "Fade while moving", "fade.moving", nil,               F, F, F, F },
-    { "Fade in combat", "fade.combat", nil,                  F, F, F, F },
-    { "Map buttons fade", "toggles.fadeOut", nil,            T, T, T, T },
-    { "Line to target", "line.shown", nil,                   T, F, T, T },
+    { "The map", "role", ROLES,                          "window", "window", "window", "dock", "clear" },
+    { "Quest givers", "questie.shown", nil,                  T, T, F, T, T },
+    { "Coloured by difficulty", "questie.color", nil,        T, T, F, T, T },
+    { "Turn-ins", "turnins.shown", nil,                      T, T, F, T, T },
+    { "Objective spots", "spots.shown", nil,                 F, F, F, F, F },
+    { "A colour per quest", "spots.color", nil,              F, F, F, F, F },
+    { "Quest ground", "ground.shown", nil,                   F, F, F, F, F },
+    { "Its look", "ground.look", GROUND,                 "ink", "ink", "ink", "ink", "ink" },
+    { "Its colours", "ground.colorBy", GROUND_BY,        "type", "type", "type", "type", "type" },
+    { "Arrows to lone spots and turn-ins", "ground.arrows", nil, F, F, F, F, F },
+    { "Objective markers (the game's)", "objectives.shown", nil, F, F, F, F, F },
+    { "Quest areas (the game's)", "areas.shown", nil,        F, F, F, F, F },
+    { "Learned quest givers", "learned.shown", nil,          T, T, F, T, T },
+    { "Quest tracker", "tracker.shown", nil,                 F, T, F, F, F },
+    { "Quest window", "questlog.shown", nil,                 F, T, F, F, F },
+    { "Opens with the quest log key", "questlog.keyL", nil,  F, F, F, F, F },
+    { "Quest givers on the continent", "browse.continentGivers", nil, T, T, F, T, T },
+    { "Townsfolk", "townsfolk.shown", nil,                   F, F, F, F, F },
+    { "Townsfolk in towns and cities", "townsfolkInTown", nil, T, T, F, T, T },
+    { "Dungeon entrances", "dungeons.shown", nil,            T, T, F, T, T },
+    { "Group dots in class colours", "party.classColors", nil, T, T, F, T, T },
+    { "Group tooltips", "party.hover", nil,                  T, T, F, T, T },
+    { "Unexplored areas", "explore.shown", nil,              T, T, F, T, T },
+    { "Their look", "explore.fogStyle", FOG,                 "full", "full", "fog", "full", "full" },
+    { "Quest pins hidden there", "explore.hideQuests", nil,  F, F, F, F, F },
+    { "Other pins hidden there", "explore.hideOthers", nil,  F, F, F, F, F },
+    { "Area names under the cursor", "explore.hoverNames", nil, T, T, F, T, T },
+    { "Unexplored names a secret", "explore.hideUnexplored", nil, F, F, T, F, F },
+    { "Gold flash on discovery", "explore.flash", nil,       T, T, F, T, T },
+    { "The zone in the header", "zoneName.showZone", nil,      T, T, F, T, T },
+    { "Explored % in the header", "zoneName.progress", nil,        F, F, F, F, F },
+    { "Level range in the header", "zoneName.levels", nil,         F, F, F, F, F },
+    { "Close-up detail", "detail.shown", nil,                T, T, F, T, T },
+    { "Coordinates", "coords.shown", nil,                    T, T, F, T, T },
+    { "Keep centred on me", "mapFrame.center", nil,          T, T, F, T, T },
+    { "Town view", "townView.enabled", nil,                  T, T, F, T, T },
+    { "Zoom in towns", "townView.zoom", nil,                 T, T, F, T, T },
+    { "Whole city in capitals", "cityView.zoom", nil,        T, T, F, T, T },
+    { "Border", "border.style", BORDERS,                 "dialog", "dialog", "game", "dialog", "tooltip" },
+    { "Border colour", "border.color", COLOURS,          "bronze", "bronze", "natural", "bronze", "dark" },
+    { "Header style", "zoneName.style", PLATES,          "parchment", "parchment", "plate", "text", "text" },
+    { "Fade while moving", "fade.moving", nil,               F, F, F, F, F },
+    { "Fade in combat", "fade.combat", nil,                  F, F, F, F, F },
+    { "Map buttons fade", "toggles.fadeOut", nil,            T, T, T, T, T },
+    { "Line to party member", "line.shown", nil,                   F, F, F, F, F },
 }
 
 local function PresetIndex(id)
@@ -296,21 +295,23 @@ end
 local POS = { pos = true, stockPos = true, lootPos = true, buttonPos = true, bigTR = true, bigCorner = true,
               zoneSizes = true, minimap = true, width = true, height = true, bigWidth = true, bigHeight = true,
               bigW = true, bigH = true, bigSize = true, freeHeight = true, maxHeight = true }
-local MINE = { scale = true, ["dock.size"] = true, ["questlog.scale"] = true }
--- Keep my quest pins (Start here; on by default with Questie loaded): presets leave which
--- quest pins show, their icons, sizes and colours, and the tooltips as they are
-local KEEP_QUEST = {}
+local MINE = { scale = true, ["dock.size"] = true, ["questlog.scale"] = true,
+               ["dock.mapOnly"] = true, ["dock.face"] = true }  -- (always the map, whatever an older preset says)
+-- Quest pins, objectives and quest ground are always yours (the user, 2026-11-06): no preset changes
+-- which of them show or how they look. New players start from the shipped defaults. The one
+-- exception is the Purist, whose point is no quest help: it switches them off (PURIST_OFF).
+local KEEP_QUEST = { objectiveLook = true }
 for _, p in ipairs({ "questie.shown", "questie.color", "questie.alpha", "questie.scale", "questie.iconSet",
                      "questie.tooltip", "turnins.shown", "turnins.alpha", "turnins.scale", "turnins.iconSet",
-                     "spots.shown", "spots.color", "spots.alpha", "spots.scale" }) do
+                     "learned.shown", "spots.shown", "spots.color", "spots.alpha", "spots.scale", "spots.spacing",
+                     "spots.maxPer", "spots.questieIcons", "objectives.shown", "objectives.alpha", "objectives.scale",
+                     "areas.shown", "areas.alpha", "ground.shown", "ground.alpha", "ground.look", "ground.color",
+                     "ground.colorBy", "ground.all", "ground.drops", "ground.arrows", "ground.hush" }) do
     KEEP_QUEST[p] = true
 end
-function ns.KeepQuestPins()
-    local v = ns.db.keepQuestPins
-    if v == nil then return ns.QuestieArt() end
-    return v
-end
-local function KeptQuest(p) return KEEP_QUEST[p] and ns.KeepQuestPins() end
+local PURIST_OFF = { ["questie.shown"] = true, ["turnins.shown"] = true, ["learned.shown"] = true, ["spots.shown"] = true,
+                     ["ground.shown"] = true, ["objectives.shown"] = true, ["areas.shown"] = true }
+local function KeptQuest(p, id) return KEEP_QUEST[p] and not (id == "purist" and PURIST_OFF[p]) end
 local function Yours(k, p) return POS[k] or MINE[p] or KeptQuest(p) end
 -- the paths the rows set (counted as rows, not again as "every other setting")
 local ROW_PATHS = { ["dock.on"] = true, ["clearView.on"] = true, ["profiles.city.enabled"] = true,
@@ -425,21 +426,20 @@ local function My()
     return ns.db.myPresets
 end
 
--- the setup behind one of your presets ("my:<name>"), if it's there
+-- the setup behind one of your presets ("my:<name>"), if it's there. Every saved setup is one
 local function SetupOf(id)
     local name = type(id) == "string" and id:match("^my:(.+)$")
-    return name and My()[name] and ns.db.setups[name], name
+    return name and ns.db.setups[name], name
 end
 
 -- your own presets: { { id = "my:<name>", name, base }, ... } by name
 function ns.MyPresets()
     local out = {}
-    for name, base in pairs(My()) do
-        if ns.db.setups[name] then
-            out[#out + 1] = { id = "my:" .. name, name = name, base = base }
-        else
-            My()[name] = nil  -- (deleted on the Setups page)
-        end
+    for name in pairs(My()) do
+        if not ns.db.setups[name] then My()[name] = nil end  -- (deleted on its page)
+    end
+    for name in pairs(ns.db.setups) do
+        out[#out + 1] = { id = "my:" .. name, name = name, base = My()[name] }
     end
     table.sort(out, function(a, b) return a.name:lower() < b.name:lower() end)
     return out
@@ -455,7 +455,7 @@ function ns.PresetChanges(id)
     for _, row in ipairs(ROWS) do
         local want, now = row[3 + (i or 0)], Get(row[2])
         if s then want = Get(row[2], s) end
-        if not KeptQuest(row[2])
+        if not KeptQuest(row[2], id)
             and ((now and true or false) ~= (want and true or false) or (type(want) == "string" and now ~= want)) then
             out[#out + 1] = { row[1], Reads(row, now), Reads(row, want) }
         end
@@ -477,13 +477,31 @@ local function SetRows(id)
     local i = PresetIndex(id)
     local s = SetupOf(id)
     local changed = {}
+    -- Purist switches quest help off; going to another built-in preset puts it back as it was
+    if id == "purist" and not ns.db.puristWas then
+        local was = {}
+        for p in pairs(PURIST_OFF) do
+            local g = p:match("^%w+")
+            was[g] = ns.db[g] and ns.db[g].shown and true or false
+        end
+        ns.db.puristWas = was
+    end
     if i and Base(id) then
         ApplyWhole(Base(id))
     end
     for _, row in ipairs(ROWS) do
         local want = row[3 + (i or 0)]
         if s then want = Get(row[2], s) end
-        if not KeptQuest(row[2]) and Get(row[2]) ~= want then Set(row[2], want, changed) end
+        if not KeptQuest(row[2], id) and Get(row[2]) ~= want then Set(row[2], want, changed) end
+    end
+    if i and id ~= "purist" and ns.db.puristWas then
+        for g, on in pairs(ns.db.puristWas) do
+            if on and not ns.db[g].shown then
+                ns.db[g].shown = true
+                changed[#changed + 1] = { g, "shown" }
+            end
+        end
+        ns.db.puristWas = nil
     end
     for _, gk in ipairs(changed) do pcall(ns.OnSettingChanged, gk[1], gk[2]) end
     pcall(ns.RedrawAll)
@@ -503,6 +521,7 @@ function ns.ApplyPreset(id)
     if not (s or PresetIndex(id)) or #ns.PresetChanges(id) == 0 then return false end
     if s then
         ns.LoadSetup(name)
+        ns.db.puristWas = nil  -- (a setup brings its own)
     else
         SetRows(id)
         ns.lastSetup = nil
@@ -533,7 +552,7 @@ function ns.SavePresetAs(name, restore)
     ns.db.presetBase = "my:" .. name
     My()[name] = base
     ns.SaveSetup(name)
-    ns.Log("Saved your preset \"" .. name .. "\": it's a card on Start here, and on the Setups page.")
+    ns.Log("Saved your preset \"" .. name .. "\": it's a card on Start here, and on the Your presets page.")
     if restore and from and from ~= "my:" .. name then ns.RestorePreset(from) else ns.lastSetup = name end
     return true
 end

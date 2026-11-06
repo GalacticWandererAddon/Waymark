@@ -499,21 +499,6 @@ function ns.ZoomLevelPos(map)
     return n, n
 end
 
--- three or more of our quest pins close to the player counts as a cluster
-local CLUSTER_RADIUS, CLUSTER_COUNT = 0.06, 3
--- ... and so do two or more gathering nodes within 80 yards
-local NODE_YARDS, NODE_MIN = 80, 2
-local function NearCluster(map, px, py)
-    local n = 0
-    ns.EachPin(map, function(pin, template)
-        if template == "BFIQuestiePinTemplate" and pin:IsShown() and pin.normalizedX then
-            local dx, dy = pin.normalizedX - px, pin.normalizedY - py
-            if dx * dx + dy * dy < CLUSTER_RADIUS * CLUSTER_RADIUS then n = n + 1 end
-        end
-    end)
-    return n >= CLUSTER_COUNT
-end
-
 -- "In town" is decided in Town.lua (shared with the Towns & cities profile)
 local function InTown()
     if ns.InTownView then return ns.InTownView() end
@@ -525,13 +510,13 @@ local function InCity()
     return ns.InCityView and ns.InCityView() or false
 end
 
--- any of the three wants to zoom (and follow) for its reason
+-- town or city view wants to zoom (and follow)
 local function TownZoomOn()
     return ns.db.townView.enabled and ns.db.townView.zoom
 end
 
 local function AnyAutoZoom()
-    return ns.db.zoom.autoZoom or TownZoomOn() or ns.db.cityView.zoom
+    return TownZoomOn() or ns.db.cityView.zoom
 end
 
 -- Animated zoom: scale and view centre move together, one eased curve (slow
@@ -653,18 +638,14 @@ local function AutoZoom(map)
     if Held(mapID, pos and pos.x and pos or nil) then return end  -- (waits for you to move too)
     if not (pos and pos.x) or (pos.x == 0 and pos.y == 0) then return end
 
-    -- why to be zoomed in: "city", "town", "cluster" (quests or gathering
-    -- nodes), or false. In a capital it's city view or nothing: never a town
-    -- close-up, and no cluster zoom among its vendors either.
+    -- why to be zoomed in: "city", "town", or false. In a capital it's city view or nothing:
+    -- never a town close-up.
     local want = false
     local inCity = InCity()
     if inCity then
         want = cityZoom and "city" or false
     elseif townZoom and InTown() then
         want = "town"
-    elseif z.autoZoom and ((z.nearSpots and NearCluster(map, pos.x, pos.y))
-        or (z.nearNodes and ns.GatherNodesNear and ns.GatherNodesNear(mapID, pos.x, pos.y, NODE_YARDS) >= NODE_MIN)) then
-        want = "cluster"
     end
     if want ~= lastWant then
         local first = lastWant == nil
@@ -678,7 +659,7 @@ local function AutoZoom(map)
                 if not wasIn then zoomBefore = sc:GetCanvasScale() end
                 -- how close: art on screen (ArtX), 0 = fully out
                 local x = want == "city" and (ns.db.cityView.zoomX or 0)
-                    or want == "town" and z.townX or z.clusterX
+                    or z.townX
                 AnimateTo(map, ScaleAtX(sc, x))  -- (ApplyView keeps it within the levels)
             elseif not first then
                 -- (on the very first check outside town there's nothing to undo)
@@ -1776,6 +1757,9 @@ function ns.SetupMapControls(map)
     SetupMover(map)
     RestorePosition(map)  -- (also puts the tab in its holder if hidden: PlaceTab)
     map:HookScript("OnShow", function()
+        -- (on a new install the game's options aren't there yet at setup: its faint default stayed
+        -- till a setting changed, clear view's toggle say)
+        ns.Safe("MapControls ApplyOpacity", ApplyOpacity, map)
         RestorePosition(map)
         ApplySizes(map)
         ns.Safe("MapControls UpdateShape", UpdateShape, true)
@@ -1853,11 +1837,10 @@ function ns.SetupMapControls(map)
             ns.Safe("MapControls UpdateFade", UpdateFade, map, dt)
             -- following you: every frame, so the game's own glide runs on
             -- smoothly (twice a second, it moved in starts and stops)
-            -- (docked over the minimap it follows you as the minimap does; on
-            -- the minimap face Dock.lua keeps it on you itself, and the two
-            -- pulling a little differently made it flicker)
-            if (Cfg().center or (ns.Docked and ns.Docked()) or (lastWant and AnyAutoZoom()))
-               and not (ns.Browsing and ns.Browsing()) and not (ns.DockMinimapFace and ns.DockMinimapFace()) then
+            -- (Keep centred alone decides: docked and in town it used to follow regardless, so the
+            -- button did nothing there. On the minimap face Dock.lua keeps it on you itself, and
+            -- the two pulling a little differently made it flicker)
+            if Cfg().center and not (ns.Browsing and ns.Browsing()) and not (ns.DockMinimapFace and ns.DockMinimapFace()) then
                 ns.Safe("MapControls CenterOnPlayer", CenterOnPlayer, map)
             end
             sinceTip = sinceTip + dt

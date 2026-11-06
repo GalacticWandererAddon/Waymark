@@ -12,7 +12,7 @@ local _, ns = ...
 -- switches to that zone on the same view. While you browse, the game's own resets (zone changes,
 -- UI widget updates, the map opening) are undone at once, and what follows you
 -- waits (ns.Browsing: auto-zoom, town/city view, caves and dungeons).
--- Back to your map: middle-click, click the header (ZoneName.lua), leave the mouse off the
+-- Back to your map: middle-click, on the map or the header (ZoneName.lua), leave the mouse off the
 -- map for browse.idle seconds, close the map (browse.onReopen), or walk into
 -- another zone (browse.onZone).
 

@@ -82,8 +82,9 @@ local function Entry(i)
 end
 
 local function LogIndex(id)
-    if C_QuestLog and C_QuestLog.GetLogIndexForQuestID then return C_QuestLog.GetLogIndexForQuestID(id) end
-    local i = GetQuestLogIndexByID and GetQuestLogIndexByID(id)
+    local i
+    if C_QuestLog and C_QuestLog.GetLogIndexForQuestID then i = C_QuestLog.GetLogIndexForQuestID(id)
+    else i = GetQuestLogIndexByID and GetQuestLogIndexByID(id) end
     return i and i > 0 and i or nil
 end
 
@@ -280,6 +281,13 @@ local function OpenLog(id)
         return
     end
     local logFrame = QuestLogExFrame or ClassicQuestLog or QuestLogFrame
+    -- (Forever: the small page with Show Map on it; the same quest again closes it. A method of the
+    -- frame there, read from its UI code: there's no QuestLogPopupDetailFrame_Show)
+    local popup = QuestLogPopupDetailFrame
+    if not logFrame and id and LogIndex(id) and popup and popup.ShowQuest then
+        popup:ShowQuest(id)
+        return
+    end
     if not logFrame and QuestMapFrame_OpenToQuestDetails then
         QuestMapFrame_OpenToQuestDetails(id)
         return
@@ -444,7 +452,8 @@ local function Collect()
     -- (by sub-zone name, nearest first within each), "level" or "log" (as in
     -- the quest log). Distances count in 25-yard steps, so two quests about as
     -- near keep their places instead of swapping as you walk; unknown last.
-    local sort = c.sort or "distance"
+    -- (the Lab's quest routes: by the stop each comes up at)
+    local sort = ns.RouteSort and ns.RouteSort() or c.sort or "distance"
     for i, q in ipairs(out) do
         q.logPlace = i
         q.areaName = q.area or (q.spot and zoneName) or nil  -- (nil: nothing to do here)
@@ -471,6 +480,11 @@ local function Collect()
             if n ~= nil then return n end
         elseif sort == "level" then
             if (a.level or 0) ~= (b.level or 0) then return (a.level or 0) < (b.level or 0) end
+        elseif sort == "route" then
+            local ra, rb = ns.RouteStepOf(a.id) or math.huge, ns.RouteStepOf(b.id) or math.huge
+            if ra ~= rb then return ra < rb end
+            local n = Nearer(a, b)
+            if n ~= nil then return n end
         end
         return a.logPlace < b.logPlace
     end)
@@ -886,6 +900,7 @@ local function Row(i)
                 end },
             }
             if ns.FindQuestOnMap then items[#items + 1] = { "find on map", function() ns.FindQuestOnMap(id) end } end
+            items[#items + 1] = { ns.IsFocused(id) and "out of focus" or "focus quest", function() ns.ToggleFocus(id) end }
             -- (a quest the found notes name: its dungeon's "before we go" page)
             local page = ns.NotebookQuestPage and ns.NotebookQuestPage(id)
             if page then items[#items + 1] = { "in the found notes", function() ns.OpenNotebook(page, nil, true) end } end
@@ -1044,6 +1059,7 @@ local function Line(i, y, width, kind, text, color, quest, icon, indent, extra)
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
     row:SetSize(width, hgt)
+    row.top, row.bottom = y, y + hgt  -- (ScrollTo: what fits whole)
     -- only the text itself answers the mouse (the tooltip, the clicks): a
     -- quest's title, a sub-zone heading
     local live = kind == "quest" or kind == "area"
@@ -1119,8 +1135,19 @@ local function Place()
         if p then
             local s = UIParent:GetEffectiveScale() / frame:GetEffectiveScale()
             frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", p.x * s, p.y * s)
+        elseif c.startAt == "minimap" and Minimap:GetRight() then
+            -- no spot yet, and not to hang off the map (Creator's): where the game's tracker is. By
+            -- numbers, not anchored to the minimap: a frame hanging off a protected one can't move in a fight
+            local k = Minimap:GetEffectiveScale() / frame:GetEffectiveScale()
+            frame:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", Minimap:GetRight() * k, Minimap:GetBottom() * k - 24)
         else
-            frame:SetPoint("TOPLEFT", map, "BOTTOMLEFT", 0, -4)
+            -- no spot yet: under the map, on its screen side (docked in the corner: wider than the square)
+            local mr = map:GetRight()
+            if mr and mr * map:GetEffectiveScale() > UIParent:GetRight() * UIParent:GetEffectiveScale() / 2 then
+                frame:SetPoint("TOPRIGHT", map, "BOTTOMRIGHT", 0, -4)
+            else
+                frame:SetPoint("TOPLEFT", map, "BOTTOMLEFT", 0, -4)
+            end
         end
     else
         frame:SetParent(map)
@@ -1170,6 +1197,14 @@ end
 local function ScrollTo(y)
     scrollY = math.max(0, math.min(y, math.max(0, contentH - scroll:GetHeight())))
     scroll:SetVerticalScroll(scrollY)
+    -- a line the window would cut through isn't drawn, at either edge (height 0: not placed yet)
+    local viewH = scroll:GetHeight()
+    for _, r in ipairs(rows) do
+        if r:IsShown() and r.top then
+            local whole = viewH <= 1 or (r.top >= scrollY - 0.5 and r.bottom <= scrollY + viewH + 0.5)
+            r:SetAlpha(whole and 1 or 0)
+        end
+    end
 end
 
 -- The game's own quest tracker, hidden while ours shows (tracker.hideGameTracker).
@@ -1329,6 +1364,12 @@ local function Draw()
     end
     local y = 0
     if not c.collapsed then
+        -- (the Lab's quest routes: the next stops, over the quests)
+        for _, l in ipairs(ns.RouteLines and ns.RouteLines() or {}) do
+            n = n + 1
+            y = Line(n, y, width, l.kind, l.text, l.color, nil, nil, l.indent or 0)
+        end
+        if n > 0 then y = y + (c.questGap or 6) end
         if hereCount == 0 then
             n = n + 1
             y = Line(n, y, width, "none", "No tracked quests here", GREY, nil, nil, 0)
@@ -1608,8 +1649,8 @@ function ns.UpdateTracker(now)
     if now then dirty = true end
     -- placed again on a settings change or a new map scale; not every second
     -- (that would fight a drag)
-    -- (attached: every time, so it follows the map's border settings too)
-    if (now or placedScale ~= ns.MapScale() or not Cfg().detached) and not frame.bfiMoving then
+    -- (attached, or on its own with no spot yet: every time, so it follows the map)
+    if (now or placedScale ~= ns.MapScale() or not Cfg().detached or not Cfg().pos) and not frame.bfiMoving then
         placedScale = ns.MapScale()
         ns.Safe("Tracker Place", Place)
     end
@@ -2443,8 +2484,9 @@ function FillQuestWindow()
         -- (none chosen, or it's gone from the log: its first)
         local first = FirstQuest()
         index = first and SelectQuest(first)
-        if not index then qw:Hide() return end
-        qwQuest, qwPreview = first, nil
+        -- (an empty log: nothing to show, but for a quest being read that isn't in it)
+        if not index and not qwPreview then qw:Hide() return end
+        if index then qwQuest, qwPreview = first, nil end
     end
     local id = qwQuest
     local colors = PAPERS[c.paper] or PAPERS.parchment
@@ -2462,7 +2504,7 @@ function FillQuestWindow()
         LogScroll(qw.logY or 0)
     end
     revealSel = nil
-    local chain = ChainOf(id)
+    local chain = id and ChainOf(id)
 
     -- a quest not in your log (a chain step, or opened from a pin, the book, a door):
     -- what QuestieDB knows of it, and under its objectives its own chain and what it
@@ -3294,9 +3336,10 @@ local function BuildQuestWindow()
     ApplyEscape()
 end
 
--- a quest that isn't in your log, read on the window's page (the notebook's "who asked us")
+-- a quest that isn't in your log, read on the window's page (the notebook's "who asked us"). With
+-- the quest log off too: the game has no page for such a quest, and "quest details" did nothing
 function ns.ShowQuestPreview(id)
-    if not id or not QCfg().shown then return end
+    if not id then return end
     if not qw then BuildQuestWindow() end
     PlaceQuestWindow()
     qw:Show()
@@ -3305,7 +3348,7 @@ function ns.ShowQuestPreview(id)
 end
 
 -- a quest from a pin's menu (Controls.lua): in your log, its page (the quest window off: the
--- game's log); else read on the window's page, where the window's on
+-- game's log); else read on the window's page
 function ns.OpenQuest(id)
     if not id then return end
     if LogIndex(id) then

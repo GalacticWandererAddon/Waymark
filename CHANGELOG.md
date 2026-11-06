@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.2.4 (2026-11-06)
+
+**Simpler from the first install: a calmer map, far fewer settings, and a lot of docking fixes.** Current players keep their settings: pick Simple on Start here to get the new look.
+
+New
+- New players start on Simple: a calm map that leaves the game's tracker, quest log and clock alone.
+- A welcome page, shown once, the first time the map opens.
+- Presets redone, each clearly different: Simple, Creator's, Purist, Minimap Replacement and Minimalist.
+- One Objectives switch, in three looks: Questie's (where it's installed), Waymark's, or Yours (the game's own).
+- "Focus quest" on a quest's right-click menu in the tracker.
+
+Changed
+- Far fewer settings on show. The map comes first, with Extras for the tracker, quest log, clock and book. Pages start folded, and the fine-tuning is under Show advanced settings.
+- Quest givers now means pick-ups and turn-ins together.
+- Presets no longer change your quest pins, objectives or quest ground. Purist is the exception: it turns quest help off, and leaving it brings it back.
+- Quick options trimmed to what you switch while playing.
+- The tracker's text is easier to read, and no line is cut in half.
+- Docked is always the map now. Map only and the wheel switching are gone.
+- Saved setups are presets now: they show as cards on Start here.
+- Line to target is now Line to party member, as that's all the game allows.
+- Gathering options only show with GatherMate2 on.
+- The round minimap button is gone: Waymark is in the game's addon dropdown.
+- Auto-zoom near objectives is removed.
+
+Fixed
+- Docked: the map keeps the minimap's spot and clears the game's tracker. Addon buttons sit on its edge, the clock and calendar go under it, and Edit Mode's box comes along.
+- Docked: the header, X and gear stay on top after undocking. The game's blue quest areas no longer cover the square.
+- Keep centred now does what it says, docked and in towns.
+- "View details" opens the game's small quest page when our quest log is off.
+- "Quest details" works on a giver with an empty quest log, or with our quest log off.
+- Right-click menus stay on the screen.
+- Fewer blocked-action errors in fights.
+- The map is at full opacity the first time it opens.
+- The corpse's tombstone shows on the map.
+
+Known
+- A lot of dungeon features are still off. I'm fixing them in the days to come.
+
 ## 1.2.3 (2026-11-05)
 
 **Live tracking on your map, gathering nodes back, and a much better docked map.**

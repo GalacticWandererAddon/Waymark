@@ -821,9 +821,12 @@ function ns.QuestieKeepsObjectivesOff()
     return p and p.iconTheme and p.iconTheme ~= "blizzard" or false
 end
 
--- an objective spot's icon: the one chosen in Questie, or the game's cursor art (spec)
+-- an objective spot's icon: the one chosen in Questie (spots.questieIcons, where it's loaded), or the
+-- game's cursor art (spec): Waymark's look stays Waymark's with Questie on
+function ns.SpotsQuestieArt() return ns.QuestieArt() and ns.db.spots.questieIcons and true or false end
+function ns.SpotIconsChanged() Bump() end
 local function IconPath(kind)
-    if ns.QuestieArt() then
+    if ns.SpotsQuestieArt() then
         local key = Questie and QUESTIE_SPOT_TYPE[kind] and Questie[QUESTIE_SPOT_TYPE[kind]]
         local used = key and Questie.usedIcons and Questie.usedIcons[key]
         return used or QUESTIE_ICONS .. kind .. ".blp"
@@ -832,7 +835,7 @@ local function IconPath(kind)
 end
 local NO_CROP = { 0, 1, 0, 1 }
 local function IconSpec(kind)
-    if ns.QuestieArt() then return nil end
+    if ns.SpotsQuestieArt() then return nil end
     return GAME_SPOT_ICONS[kind]
 end
 
@@ -1158,6 +1161,13 @@ function ns.QuestNeeds(id)
     Add(info.preQuestSingle, false)
     return #out > 0 and out or nil
 end
+
+-- (Lab\QuestRoute.lua's way in; nothing in a build calls it)
+ns.QuestRouteParts = {
+    Log = Log, Info = Info, Done = Done, ForMe = ForMe, Available = IsAvailable, Targets = Targets, Finishers = Finishers,
+    Objectives = GameObjectives, Match = MatchObjective, EnsureGivers = EnsureGivers,
+    Givers = function() return givers end,
+}
 
 -- A quest not in your log, for the quest window's preview of a chain step:
 -- { name, level, minLevel, text (its objectives), people (giver, turn-in) }

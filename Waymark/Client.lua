@@ -69,7 +69,15 @@ ns.DungeonsOff = ns.FOREVER
 -- and preset rows don't show there. Their saved values are left alone.
 -- Without Gather.lua in the build, the rest of gathering switches off (it was out of Forever's zips
 -- until 1.2.3, before GatherMate2 worked there).
-function ns.GatherPulled() return ns.FOREVER and not ns.SetupGather end
+-- And with nothing to draw from: no GatherMate2 and no Waymark_Nodes (Forever's zip has none), a
+-- button that does nothing only confuses. It all comes back with GatherMate2 on.
+function ns.GatherPulled()
+    if not ns.FOREVER then return false end
+    if not ns.SetupGather then return true end
+    local loaded = C_AddOns and C_AddOns.IsAddOnLoaded or IsAddOnLoaded
+    if loaded and loaded("GatherMate2") then return false end
+    return not (ns.GatherOwnData and ns.GatherOwnData())
+end
 
 function ns.NoGameLayer(group)
     return not ns.FOREVER and (group == "objectives" or group == "areas")

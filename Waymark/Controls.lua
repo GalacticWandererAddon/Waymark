@@ -113,6 +113,12 @@ function ns.HoldShift(tip)
     local name = tip:GetName() or ""
     local left = _G[name .. "TextLeft1"]
     local w = left and (left.GetUnboundedStringWidth and left:GetUnboundedStringWidth() or left:GetStringWidth())
+    -- (live hides the width at times, in and out of fights: judged by the text's length then, about
+    -- 6 px a letter, so a long note's line still gets its own row)
+    if w and not ns.Known(w) then
+        local text = left and ns.Known(left:GetText())
+        w = text and #text * 6
+    end
     if left and left.CanWordWrap and left:CanWordWrap() and w and w > WRAP_AT then
         for i = 2, tip:NumLines() do  -- (asked twice, once is enough)
             local fs = _G[name .. "TextLeft" .. i]

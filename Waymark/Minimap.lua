@@ -83,5 +83,7 @@ function ns.CreateMinimapButton()
 end
 
 function ns.UpdateMinimapButton()
-    if button then button:SetShown(not ns.db.minimap.hide) end
+    -- (with the game's addon dropdown on the minimap we're in that, the TOC's AddonCompartment lines:
+    -- a round button as well was the same thing twice)
+    if button then button:SetShown(not ns.db.minimap.hide and not AddonCompartmentFrame) end
 end
