@@ -36,7 +36,7 @@ local DEFAULTS = {
     -- quest ground (QuestGround.lua): where your quests' monsters and things are,
     -- drawn on the map; all: also quests you could take here; look "haze" / "ink" /
     -- "dots"; color: a colour per quest; drops: the tooltip names the dropped item
-    ground     = { shown = true, alpha = 0.7, all = false, look = "haze", color = true, colorBy = "quest", drops = true, hush = true, arrows = true },
+    ground     = { shown = true, alpha = 0.7, all = false, look = "dots", color = true, colorBy = "quest", drops = true, hush = true, arrows = true, quiet = true },
     -- rares and treasure chests from our own data (Wilds.lua): rares, elites (rare
     -- elites), treasure (chest spots); paths: a rare's patrol path while hovered;
     -- size in px; bossLoot: "what they carry" in boss menus (BossLoot.lua; lootWear, lootPos)
@@ -107,7 +107,7 @@ local DEFAULTS = {
     -- (true) or "always" (even with the map closed);
     -- autoTrack: quests you accept are tracked at once
     -- (showUntracked: the "Not tracked" quests unfolded at the list's end)
-    tracker    = { shown = true, hideGameTracker = false, autoTrack = true, showUntracked = false, attach = "below", detached = false, width = 220, pos = nil, sort = "distance",
+    tracker    = { shown = true, finishedLast = true, itemButtons = true, textShade = 0, hideGameTracker = false, autoTrack = true, showUntracked = false, attach = "below", detached = false, width = 220, pos = nil, sort = "distance",
                    finished = "show", hideGrey = false, hideElite = false, hideDungeon = false,
                    hideGroup = false, onlyTracked = true, objectives = true, hideDoneObjectives = false,
                    collapsed = false, hideEmpty = false, folded = {}, groupByArea = true, maxHeight = 260,
@@ -237,7 +237,7 @@ local DEFAULTS = {
     -- bossList: the list of its bosses on it, ticked as they die (folded: just its title)
     dungeon    = { followMaps = false, fallback = true, showInside = true, view = "art", bosses = true,
                    bossList = true, bossListFolded = false, objects = "icons", objectScale = 1,
-                   allChests = false, allQuests = false, patrols = true, devMobs = false, where = true },
+                   allChests = false, allQuests = false, switches = false, fightDoors = false, patrols = true, devMobs = false, where = true },
     -- this dungeon run's boss kills (Dungeon.lua): id = instance, leftAt = time you left
     dungeonRun = { id = nil, kills = {}, leftAt = 0 },
     -- the found notes (Notebook.lua): the spread the ribbon marks, where the book was dragged
@@ -477,6 +477,18 @@ local function InitDB()
     if db.welcome == nil then db.welcome = { noted = db.pins ~= nil, done = db.pins ~= nil } end
     -- (spots took Questie's icons before they had a say: settings from then keep them)
     if db.pins and db.spots and db.spots.questieIcons == nil then db.spots.questieIcons = true end
+    -- (the docked split of pins and dots is gone, the user, 2026-11-07)
+    if db.dock and db.dock.splitQuests then db.dock.splitQuests, db.dock.splitGround = false, nil end
+    -- (Waymark's dots and pins became one look, 2026-11-07: which of the two you had is kept)
+    if db.objectivePins == nil and db.objectiveLook then
+        db.objectivePins = db.objectiveLook == "waymark"
+        if db.objectiveLook == "dots" then db.objectiveLook = "waymark" end
+    end
+    -- (quest ground's Pins look is gone: it was objective spots by another name)
+    if db.ground and db.ground.look == "pins" then
+        db.ground.look = "dots"
+        if db.ground.shown and db.spots then db.spots.shown, db.ground.shown = true, false end
+    end
     -- carry over settings from the earlier flat layout
     if db.questieAlpha ~= nil or db.objectivesAlpha ~= nil then
         db.questie = db.questie or {}
@@ -705,7 +717,15 @@ end
 -- loaded, and then the first choice. "waymark": in our own. "yours": we leave them alone, the game's
 -- own markers and quest areas. db.objectiveLook: the look last picked. Worked out from the layers themselves (each still has its
 -- own switch with advanced settings), so a preset or a profile can't leave it out of step.
-local OBJECTIVE_LAYERS = { questie = { spots = true }, waymark = { spots = true }, yours = { objectives = true, areas = true } }
+-- Since 2026-11-07 (the user): three looks. Waymark's: our dots (quest ground), or with db.objectivePins
+-- our pins (the spots); docked with dock.splitQuests both, pins on the minimap and dots on the map.
+-- Questie's: the pins in Questie's icons, as set in Questie. Blizzard's ("yours"): the game's own.
+-- (A "dots" look was briefly its own: it reads as Waymark's.)
+local function LookLayers(look)
+    if look == "questie" then return { spots = true } end
+    if look == "yours" then return { objectives = true, areas = true } end
+    return ns.db.objectivePins and { spots = true } or { ground = true }
+end
 local function Objectives() return ns.FOREVER and { "spots", "ground", "objectives", "areas" } or { "spots", "ground" } end
 function ns.ObjectivesOn()
     for _, g in ipairs(Objectives()) do
@@ -713,27 +733,39 @@ function ns.ObjectivesOn()
     end
     return false
 end
+-- (the look you picked wins where the layers agree with it: read from the spots' icons alone, a
+-- switch off and on came back as Waymark's though Questie's was picked, the user)
 function ns.ObjectiveLook()
-    if ns.IsShown("spots") or ns.IsShown("ground") then return ns.SpotsQuestieArt() and "questie" or "waymark" end
-    if ns.FOREVER and (ns.IsShown("objectives") or ns.IsShown("areas")) then return "yours" end
     local look, questie = ns.db.objectiveLook, ns.QuestieArt()
+    if look == "dots" then look = "waymark" end
     if (look == "questie" and not questie) or (look == "yours" and not ns.FOREVER) then look = nil end
+    if ns.IsShown("spots") then
+        if look == "questie" or look == "waymark" then return look end
+        return ns.SpotsQuestieArt() and "questie" or "waymark"
+    end
+    if ns.IsShown("ground") then return "waymark" end
+    if ns.FOREVER and (ns.IsShown("objectives") or ns.IsShown("areas")) then return "yours" end
     return look or (questie and "questie" or "waymark")
 end
 function ns.SetObjectives(on, look)
     look = look or ns.ObjectiveLook()
+    if look == "dots" then look = "waymark" end
     ns.db.objectiveLook = look
-    if look ~= "yours" and (ns.db.spots.questieIcons and true or false) ~= (look == "questie") then
+    if (look == "questie" or look == "waymark") and (ns.db.spots.questieIcons and true or false) ~= (look == "questie") then
         ns.db.spots.questieIcons = look == "questie"
         ns.SpotIconsChanged()
         if ns.RedrawQuestie then ns.RedrawQuestie() end
     end
     for _, g in ipairs(Objectives()) do
-        local want = on and OBJECTIVE_LAYERS[look][g] or false
-        -- (quest ground stays if it's on and the look stays ours: an advanced choice)
-        if g == "ground" and on and look ~= "yours" then want = ns.IsShown(g) end
+        local want = on and LookLayers(look)[g] or false
         if ns.IsShown(g) ~= want then ns.ToggleLayer(g, "shown") end
     end
+end
+
+-- Waymark's look as pins (true) or dots
+function ns.SetObjectivePins(v)
+    ns.db.objectivePins = v and true or false
+    if ns.ObjectivesOn() and ns.ObjectiveLook() == "waymark" then ns.SetObjectives(true, "waymark") end
 end
 
 -- what a toggle shows: the layer as you see it now
@@ -945,6 +977,12 @@ local function PinsShown(group, building)
     return ns.IsShown(group)
 end
 
+-- Quest ground draws on the zone's map, which a cave's view or map covers: in a cave its objective
+-- spot pins stand in, whatever its look (the "pins" look already is them)
+local function GroundInCave(group)
+    return group == "spots" and ns.IsShown("ground")
+end
+
 -- One pin per quest: what our givers and turn-ins show on this map (ours), and the learned
 -- turn-ins (handIn). The game's "?" for a finished quest stands where ours does, and
 -- learned's "All I've learned" can repeat a giver. Nil with neither of those layers on.
@@ -996,7 +1034,8 @@ function ns.ApplyGroups()
         local group = GroupOf(pin, template)
         local cfg = group and ns.db[group]
         if cfg then
-            pin:SetShown(PinsShown(group) and not HiddenUnexplored(pin, group, mapID)
+            local cave = ns.MapCaves and ns.MapCaves[mapID] and GroundInCave(group)
+            pin:SetShown((PinsShown(group) or cave) and not HiddenUnexplored(pin, group, mapID)
                 and not HiddenOutside(pin, group, mapID) and not HiddenUntracked(pin, group, tracked)
                 and not HiddenDouble(pin, group, ours, handIn))
             -- our pins add their own dimming (party objectives) on top of the group alpha
@@ -1481,11 +1520,13 @@ local function ContinentGivers(mapID, out)
 end
 
 -- the quest pins shown on a zone (Cave.lua: the zone's pins in a minimap-style cave)
-function ns.QuestIconsShown(mapID)
+function ns.QuestIconsShown(mapID, inCave)
     local out = {}
     if not ns.QuestIcons then return out end
     for _, icon in ipairs(ns.QuestIcons(mapID)) do
-        if PinsShown(icon.group, true) and not icon.thinned then out[#out + 1] = icon end
+        if (PinsShown(icon.group, true) or (inCave and GroundInCave(icon.group))) and not icon.thinned then
+            out[#out + 1] = icon
+        end
     end
     return out
 end
@@ -1501,7 +1542,7 @@ local function CaveIcons(mapID, out)
     -- (objective spots only of the quests the log files under the cave's name, when it files
     -- any there: the ones above ground over the cave stay off it; the user, 2026-11-03)
     local only = ns.QuestsUnder and ns.QuestsUnder(ns.MapCaves[mapID][1])
-    for _, icon in ipairs(ns.QuestIconsShown(zone.mapID)) do
+    for _, icon in ipairs(ns.QuestIconsShown(zone.mapID, true)) do
         local x, y = (icon.x / 100 - l) / (r - l), (icon.y / 100 - t) / (b - t)
         if x >= 0 and x <= 1 and y >= 0 and y <= 1 and not (only and icon.group == "spots" and not only[icon.id]) then
             local c = {}
@@ -1803,6 +1844,14 @@ local function Setup()
     if ns.SetupQuickButton then ns.SetupQuickButton(map) end
     if ns.SetupCoords then ns.SetupCoords(map) end
     if ns.SetupClock then ns.SetupClock(map) end
+    -- The game's own bug, gamepad mode: the map canvas checks edge panning every frame with
+    -- ScrollContainer.edgePanDistance, which only SetGamepadFocus sets, and only the world map gets
+    -- that. The Battlefield Map's stayed nil: an error a frame (live Forever, the user 2026-11-07, 1007
+    -- of them). Given the game's own value; a plain number, read nowhere protected.
+    local sc = map.ScrollContainer
+    if sc and sc.CheckForEdgePan and sc.edgePanDistance == nil then
+        sc.edgePanDistance = (GetCVarNumberOrDefault and GetCVarNumberOrDefault("GamepadMapEdgePanDistance")) or 0
+    end
     if ns.SetupTransports then ns.SetupTransports(map) end
     if ns.SetupMapHour then ns.SetupMapHour(map) end
     if ns.SetupMapLife then ns.SetupMapLife(map) end  -- (dev only)

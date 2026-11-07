@@ -132,6 +132,15 @@ function ns.HoldShift(tip)
     right:Show()
 end
 
+-- a tooltip's own description lines, only while Shift is held ("(Hold Shift)" till then), as the
+-- hints: for buttons whose name says enough (the dungeon map's switch, the quill)
+function ns.ShiftLines(owner, lines, tip)
+    tip = tip or GameTooltip
+    ns.ShiftRefresh(owner)
+    if not IsShiftKeyDown() then ns.HoldShift(tip) return end
+    for _, line in ipairs(lines) do tip:AddLine(line, 1, 1, 1, true) end
+end
+
 function ns.Hints(hints, tip)
     tip = tip or GameTooltip
     local owner = TipOwner(tip)

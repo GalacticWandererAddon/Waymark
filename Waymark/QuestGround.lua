@@ -5,8 +5,8 @@ local _, ns = ...
 -- mock-up mockups\world-quests.html). Settings ns.db.ground:
 --   shown, alpha; all: also the quests you could take from givers on this map;
 --   look: "haze" (soft ground), "ink" (an inked ring, faintly filled; quests you
---   could take: a dotted ring), "dots" (a dot per spawn) or "pins" (none drawn
---   here: the objective spot pins, loot bags and all, BattlefieldInfo.lua); color: coloured (colorBy
+--   could take: a dotted ring) or "dots" (a dot per spawn); quiet: see Quiet below;
+--   color: coloured (colorBy
 --   "quest": each its own; "type": by what it asks, TYPE_COLORS); drops: the tooltip says
 --   what drops the item.
 -- The spawns are summed on a grid over the map (each reaching REACH cells); the
@@ -18,6 +18,9 @@ local MEDIA = ns.MEDIA
 local BLOB = MEDIA .. "DungeonGlow"   -- (soft round, white)
 local BRUSH = MEDIA .. "InkRim"     -- (opaque core, streaks in shade not alpha: joins overlap unseen)
 local DOT = MEDIA .. "InkDot"
+-- the dots' art in three sizes (tools/ground_dot_art.py), picked by the pixels it's drawn at (Tier)
+local ART = { core = { MEDIA .. "GroundDot", MEDIA .. "GroundDotBig", MEDIA .. "GroundDotHuge" },
+              rim = { MEDIA .. "GroundDotRim", MEDIA .. "GroundDotRimBig", MEDIA .. "GroundDotRimHuge" } }
 local COLS, ROWS = 96, 64             -- the grid over the map (square cells on a zone's 3:2)
 local REACH = 2.2                     -- cells a spawn's ground reaches
 local EDGE = 0.35                     -- the field's value at the ground's edge
@@ -44,7 +47,15 @@ function ns.QuestTypeColor(word)
 end
 local HOVER = 0.022                  -- how near the cursor a spawn counts (map heights)
 
-local function Cfg() return ns.db.ground end
+-- (one look now, spawn dots: haze and the ink rim are retired, the user, 2026-11-07. Their code stays
+-- for now, unreached; a saved look of theirs becomes dots here)
+local function Cfg()
+    local c = ns.db.ground
+    if c and c.look ~= "dots" then c.look = "dots" end
+    if c and c.arrows ~= false then c.arrows = false end   -- (arrows to lone spots retired, the user, 2026-11-07)
+    if c and c.all then c.all = false end                  -- (and quests you could take: givers' pins say that)
+    return c
+end
 
 local host, map
 local glow, fade   -- the lit quests' gold, on its own frame over the ground (Light); its fade-in, 0-1
@@ -111,12 +122,13 @@ local function Blob(x, y, size, r, g, b, a)
     if cur then cur[#cur + 1] = { t, "b", r, g, b, a, size, x, y } end
 end
 
-local function Segment(x1, y1, x2, y2, th, r, g, b, a, e1, e2)
+local function Segment(x1, y1, x2, y2, th, r, g, b, a, e1, e2, over)
     local l = Take("lines", function()
         local l = host:CreateLine(nil, "ARTWORK", nil, 2)
         l:SetTexture(BRUSH)
         return l
     end)
+    l:SetDrawLayer("ARTWORK", over and 3 or 2)   -- (over: an X's colour on its own dark edge)
     l:SetVertexColor(r, g, b, a)
     l:SetThickness(th * ZoomThin())
     -- a piece runs past its ends only as far as its bend needs (e1, e2 px), so
@@ -132,18 +144,40 @@ local function Segment(x1, y1, x2, y2, th, r, g, b, a, e1, e2)
     if cur then cur[#cur + 1] = { l, "l", r, g, b, a, th } end
 end
 
-local function Dot(x, y, size, r, g, b, a)
-    local t = Take("dots", function()
-        local t = host:CreateTexture(nil, "ARTWORK", nil, 1)
-        t:SetTexture(DOT)
-        return t
-    end)
+-- which art for a dot this size on the canvas: near the pixels it covers, so it's neither skipped nor soft
+local function Tier(size)
+    local _, h = 0, 1080
+    if GetPhysicalScreenSize then _, h = GetPhysicalScreenSize() end
+    local px = size * ZoomThin() * host:GetEffectiveScale() * h / 768
+    return px <= 12 and 1 or px <= 26 and 2 or 3
+end
+
+local function Dot(x, y, size, r, g, b, a, under, art)
+    local t = Take("dots", function() return host:CreateTexture(nil, "ARTWORK", nil, 1) end)
+    local tier = art and Tier(size)
+    t:SetTexture(art and ART[art][tier] or DOT)
+    -- (dabs differ: mirrored across the light, which stays upper left; a dot and its rim together,
+    -- so the ring round it stays even)
+    if art and math.floor(x * 7 + y * 13) % 2 == 0 then
+        t:SetTexCoord(0, 0, 1, 0, 0, 1, 1, 1)
+    else
+        t:SetTexCoord(0, 1, 0, 1)
+    end
+    t:SetDrawLayer("ARTWORK", under and 0 or 1)
     t:SetVertexColor(r, g, b, a)
     t:SetSize(size * ZoomThin(), size * ZoomThin())
     t:ClearAllPoints()
     t:SetPoint("CENTER", host, "TOPLEFT", x, -y)
     t:Show()
-    if cur then cur[#cur + 1] = { t, "d", r, g, b, a, size, x, y } end
+    if cur then cur[#cur + 1] = { t, "d", r, g, b, a, size, x, y, under, art, tier } end
+end
+
+-- a quest's dot: its colour on a thin rim, painted more than printed: the colour part way to old
+-- parchment, so it's pigment rather than a pure hue
+local AGE, PAPER = 0.2, { 0.72, 0.62, 0.45 }
+local function Mark(x, y, size, r, g, b, a)
+    Dot(x, y, size * 1.58, 1, 1, 1, a, true, "rim")   -- (the pewter is 80% of its art: 1.26 of the dot)
+    Dot(x, y, size, r + (PAPER[1] - r) * AGE, g + (PAPER[2] - g) * AGE, b + (PAPER[3] - b) * AGE, a, false, "core")
 end
 
 -- the summed reach of a quest's spawns: f[row * COLS + col], cell centres
@@ -478,6 +512,191 @@ function ns.QuestGroundFace()
     if host and groundUp then host:SetShown(not ns.SplitHides("ground")) end
 end
 
+-- Quiet (ground.quiet) --------------------------------------------------------------
+-- 13 quests each drawing everywhere their monsters live filled a zone with loops (the user:
+-- not usable). So only the quests at hand have ground: in focus, pointed at, open or found,
+-- and the work at the route's next stop. And only the best camp of each objective: the near
+-- ones, a big one beating a stray spawn. The rest are a dot at that camp, unless objective
+-- spots show them already; pointing at a dot draws its ring. Camps of quests at hand that
+-- lie together are one ring. Picked again when you've walked a sixth of the map.
+local JOIN = 5     -- cells: spawns this close are one camp
+local CAMP = 12    -- cells: the furthest a camp reaches from its near end (spawns can chain across a zone)
+local MERGE = 8    -- cells: camps this close are one ring
+local WALK = 6     -- the map's parts, for "you've walked"
+local FEW = 6      -- an objective with this many spots or fewer keeps them all
+local states = {}  -- (the tracker's glow states, Light below: [questID] = { hover, map, page, focus })
+
+-- the best camp of these spawns: { x, y, has = { [point] = true } }. mx, my: you, if on this map
+function ns.QuestGroundCamps(points, mx, my)
+    local buckets = {}
+    for _, p in ipairs(points) do
+        local k = math.floor(p[1] * COLS / JOIN) * 1000 + math.floor(p[2] * ROWS / JOIN)
+        buckets[k] = buckets[k] or {}
+        table.insert(buckets[k], p)
+    end
+    local best, score
+    for k in pairs(buckets) do
+        if buckets[k] then
+            local camp, x, y, n = { pts = {} }, 0, 0, 0
+            local stack = { k }
+            while #stack > 0 do
+                local at = table.remove(stack)
+                local b = buckets[at]
+                if b then
+                    buckets[at] = false
+                    for _, p in ipairs(b) do
+                        camp.pts[#camp.pts + 1] = p
+                        x, y, n = x + p[1], y + p[2], n + 1
+                    end
+                    for dx = -1000, 1000, 1000 do
+                        for dy = -1, 1 do stack[#stack + 1] = at + dx + dy end
+                    end
+                end
+            end
+            -- its near end: the spawn nearest you, or its middle off this map
+            local ox, oy, sx, near = mx or x / n, my or y / n, mx and 1.5 or 1, nil
+            for _, p in ipairs(camp.pts) do
+                local ex, ey = (p[1] - ox) * sx, p[2] - oy
+                local d = ex * ex + ey * ey
+                if not near or d < near then camp.at, near = p, d end
+            end
+            local s = mx and (math.sqrt(near) + 0.03) / math.sqrt(math.min(n, 9)) or -n
+            if not score or s < score then best, score = camp, s end
+        end
+    end
+    local x, y, n, has = 0, 0, 0, {}
+    for _, p in ipairs(best.pts) do
+        local dx, dy = (p[1] - best.at[1]) * COLS, (p[2] - best.at[2]) * ROWS
+        if dx * dx + dy * dy <= CAMP * CAMP then
+            has[p] = true
+            x, y, n = x + p[1], y + p[2], n + 1
+        end
+    end
+    return { x = x / n, y = y / n, has = has }
+end
+
+-- a quest's parts cut down to its objectives' camps, and those camps
+local function Cropped(q, mx, my)
+    local spawns, keys = {}, {}
+    for _, part in ipairs(q.parts) do
+        local k = part.item or part.what or "?"
+        if not spawns[k] then
+            spawns[k] = {}
+            keys[#keys + 1] = k
+        end
+        for _, p in ipairs(part.points) do table.insert(spawns[k], p) end
+    end
+    -- (an objective with only a few spots, places to visit: every one is its own camp, all kept. Eyes of
+    -- the Sentinels' four places are one objective, and on Darnassus's map the nearest alone was left)
+    local byKey, camps, parts = {}, {}, {}
+    for _, k in ipairs(keys) do
+        if #spawns[k] <= FEW then
+            byKey[k] = {}
+            for _, p in ipairs(spawns[k]) do
+                local camp = { x = p[1], y = p[2], has = { [p] = true }, parts = {}, few = true }
+                byKey[k][#byKey[k] + 1] = camp
+                camps[#camps + 1] = camp
+            end
+        else
+            local camp = ns.QuestGroundCamps(spawns[k], mx, my)
+            camp.parts = {}
+            byKey[k] = { camp }
+            camps[#camps + 1] = camp
+        end
+    end
+    for _, part in ipairs(q.parts) do
+        local pts, seen = {}, {}
+        for _, camp in ipairs(byKey[part.item or part.what or "?"]) do
+            local hit = false
+            for _, p in ipairs(part.points) do
+                if camp.has[p] and not seen[p] then
+                    seen[p], hit = true, true
+                    pts[#pts + 1] = p
+                end
+            end
+            if hit then table.insert(camp.parts, part) end
+        end
+        if #pts > 0 then parts[#parts + 1] = setmetatable({ points = pts }, { __index = part }) end
+    end
+    return parts, camps
+end
+
+local function AtHand()
+    local set = {}
+    for id, st in pairs(states) do
+        if st.hover or st.map or st.page or st.focus then set[id] = true end
+    end
+    if ns.RouteNow then
+        local route, at = ns.RouteNow()
+        local stop = route and route.stops[at]
+        for _, s in ipairs(stop and stop.items or {}) do
+            if s.kind == "work" then set[s.q] = true end
+        end
+    end
+    return set
+end
+
+-- the quests to draw, each with only its camps, and the marks for the rest
+local function Quieten(quests, mapID)
+    local at, mx, my = AtHand(), nil, nil
+    local pos = C_Map.GetPlayerMapPosition(mapID, "player")
+    if pos then mx, my = pos.x, pos.y end
+    local list, marks = {}, {}
+    for _, q in ipairs(quests) do
+        Pause()
+        local parts, camps = Cropped(q, mx, my)
+        if at[q.id] then
+            list[#list + 1] = setmetatable({ parts = parts, whole = q.parts, camps = camps }, { __index = q })
+        else
+            marks[#marks + 1] = { q = q, camps = camps }
+        end
+    end
+    return list, marks
+end
+
+local function CampsMeet(a, b)
+    for _, p in ipairs(a) do
+        for _, o in ipairs(b) do
+            local dx, dy = (p.x - o.x) * COLS, (p.y - o.y) * ROWS
+            if dx * dx + dy * dy <= MERGE * MERGE then return true end
+        end
+    end
+end
+
+-- quests at hand working the same camp share one ring, the first's (a lone spawn keeps its X)
+local function ShareRings(order)
+    for i, q in ipairs(order) do
+        for j = 1, i - 1 do
+            local o = order[j]
+            if not q.ringBy and CampsMeet(q.camps, o.camps) then
+                local lead = o.ringBy or o
+                q.ringBy = lead
+                lead.extra = lead.extra or {}
+                for _, part in ipairs(q.parts) do
+                    if #part.points > 1 then table.insert(lead.extra, part) end
+                end
+            end
+        end
+    end
+end
+
+-- one pixel of the screen on the canvas, at the map's widest zoom: dots keep a size on screen however
+-- small the map is (the user: right on the big map, too small docked and on the small map)
+local DOT_PX, SPAWN_PX = 15, 10
+local function FitScale()
+    local sc = map.ScrollContainer
+    return sc and sc.zoomLevels and sc:GetScaleForMinZoom() or nil
+end
+local function ScreenPixel()
+    local _, h = 0, 1080
+    if GetPhysicalScreenSize then _, h = GetPhysicalScreenSize() end
+    local e = host:GetEffectiveScale()
+    local sc, lo = map.ScrollContainer, FitScale()
+    local s = sc and sc.GetCanvasScale and sc:GetCanvasScale()
+    if lo and s and s > 0 then e = e * lo / s end
+    return 768 / h / math.max(0.01, e)
+end
+
 local function Draw()
     t0 = debugprofilestop()
     Clear()
@@ -500,6 +719,7 @@ local function Draw()
     local cw = W / COLS
     local a = c.alpha or 0.7
     local least = 1.5 * UIParent:GetEffectiveScale() / math.max(0.01, host:GetEffectiveScale())
+    local px = ScreenPixel()
     local quests = ns.QuestGround(mapID, c.all)
     local byId = {}
     for i, q in ipairs(quests) do byId[i] = q end
@@ -509,18 +729,25 @@ local function Draw()
             local ok, word = pcall(ns.QuestKind or function() end, q.id)
             q.groundColor = ok and TYPE_COLORS[word or ""] or PLAIN
         else
+            -- (its place among this map's quests, so neighbours never share a colour; a quest on two maps
+            -- can change colour between them, the lesser trouble, the user)
             q.groundColor = PALETTE[(i - 1) % #PALETTE + 1]
         end
     end
     -- quests in your log first: a monster or thing several quests want (Un'Goro's
     -- crystals) is drawn once, by the first of them, in its colour; a quest whose
     -- every kind is drawn already takes that colour (the tooltip names them all)
-    local order = {}
-    for i, q in ipairs(quests) do order[i] = q end
+    local order, marks = {}, nil
+    if c.quiet ~= false then
+        order, marks = Quieten(quests, mapID)
+    else
+        for i, q in ipairs(quests) do order[i] = q end
+    end
     table.sort(order, function(x, y)
         if x.inLog ~= y.inLog then return x.inLog end
         return x.id < y.id
     end)
+    if marks then ShareRings(order) end
     local done, kinds, xSeen = {}, {}, {}
     for _, q in ipairs(order) do
         Pause()
@@ -541,8 +768,9 @@ local function Draw()
             if kinds[kk] then by = by or kinds[kk] else kinds[kk] = q own.parts[#own.parts + 1] = part end
             end
         end
-        local sh = c.look ~= "dots" and #own.parts > 0 and Shape(own, mapID) or nil
-        local same = (#own.parts == 0 and #singles == 0 and by) or (sh and done[sh.key])
+        for _, part in ipairs(q.extra or {}) do own.parts[#own.parts + 1] = part end
+        local sh = not q.ringBy and c.look ~= "dots" and #own.parts > 0 and Shape(own, mapID) or nil
+        local same = q.ringBy or (#own.parts == 0 and #singles == 0 and by) or (sh and done[sh.key])
         if same then q.groundColor = same.groundColor end
         local col = c.color ~= false and q.groundColor or PLAIN
         local r, g, b = col[1], col[2], col[3]
@@ -566,7 +794,7 @@ local function Draw()
             -- (drawn already)
         elseif c.look == "dots" then
             for _, part in ipairs(own.parts) do
-                for _, p in ipairs(part.points) do Dot(p[1] * W, p[2] * H, math.max(least * 3, cw * 0.55), r, g, b, qa) end
+                for _, p in ipairs(part.points) do Mark(p[1] * W, p[2] * H, math.max(px * SPAWN_PX, cw * 0.55), r, g, b, qa) end
             end
         elseif sh then
             done[sh.key] = q
@@ -587,9 +815,15 @@ local function Draw()
             local k = string.format("%.4f:%.4f", p[1], p[2])
             if not xSeen[k] then
                 xSeen[k] = true
-                local x, y, s = p[1] * W, p[2] * H, cw * 0.8
-                local th = math.max(least * 1.5, cw * 0.36)
-                local xr, xg, xb, xa = r * 0.5, g * 0.5, b * 0.5, math.min(1, qa * 1.4)
+                -- (as the dots: the quest's colour, aged, on a dark ink edge. In a dark shade of it, it
+                -- was the map's own brown-red and sank into the ridges, the user)
+                local x, y, s = p[1] * W, p[2] * H, cw * 0.95
+                local th = math.max(least * 2, cw * 0.42)
+                local xr, xg, xb, xa = r + (PAPER[1] - r) * AGE, g + (PAPER[2] - g) * AGE, b + (PAPER[3] - b) * AGE, math.min(1, qa * 1.4)
+                local function Stroke(x1, y1, x2, y2, w)
+                    Segment(x1, y1, x2, y2, w + math.max(least * 1.5, th * 0.5), 0.13, 0.09, 0.06, 0.9 * xa, th * 0.3, th * 0.3)
+                    Segment(x1, y1, x2, y2, w, xr, xg, xb, xa, th * 0.3, th * 0.3, true)
+                end
                 -- the notebook's own hand-drawn X (Data\InkGlyphs.lua), one of its drawings
                 -- picked by the spot; two straight strokes if Ink.lua hasn't one
                 local seed = math.floor(p[1] * 9973 + p[2] * 7919 * 13) + q.id
@@ -598,12 +832,12 @@ local function Draw()
                     for _, st in ipairs(strokes) do
                         for i = 2, #st do
                             local a, c = st[i - 1], st[i]
-                            Segment(a[1], a[2], c[1], c[2], th * 1.2 * (a[3] + c[3]) / 2, xr, xg, xb, xa, th * 0.3, th * 0.3)
+                            Stroke(a[1], a[2], c[1], c[2], th * 1.2 * (a[3] + c[3]) / 2)
                         end
                     end
                 else
-                    Segment(x - s, y - s, x + s, y + s, th, xr, xg, xb, xa)
-                    Segment(x - s, y + s, x + s, y - s, th, xr, xg, xb, xa)
+                    Stroke(x - s, y - s, x + s, y + s, th)
+                    Stroke(x - s, y + s, x + s, y - s, th)
                 end
                 local gr = groups[q.id]
                 if gr and gr.xs then gr.xs[#gr.xs + 1] = { x, y } end
@@ -612,6 +846,48 @@ local function Draw()
         cur = nil
         for _, part in ipairs(q.parts) do
             for _, p in ipairs(part.points) do drawn[#drawn + 1] = { p[1], p[2], q, part } end
+        end
+    end
+    -- the quests not at hand: a dot at each camp, a shared one where they meet
+    if marks and not ns.IsShown("spots") then
+        local seen, dotted = {}, {}
+        local function Spot(camp)
+            local k = math.floor(camp.x * COLS / 3) .. ":" .. math.floor(camp.y * ROWS / 3)
+            seen[k] = seen[k] or { camp.x, camp.y }
+            return seen[k], k
+        end
+        -- (shared dots placed by quest ID: placed by who's lit, a dot moved out from under the
+        -- mouse as it lit, went out, came back, and the tooltip flickered)
+        local camps = {}
+        for _, q in ipairs(order) do camps[q.id] = q.camps end
+        for _, m in ipairs(marks) do camps[m.q.id] = m.camps end
+        for _, q in ipairs(byId) do
+            for _, camp in ipairs(camps[q.id] or {}) do Spot(camp) end
+        end
+        -- (a quest at hand still answers at its dot's place: lit by pointing there, it mustn't
+        -- leave the tooltip, which lit the next quest, and so on round)
+        for _, q in ipairs(order) do
+            for _, camp in ipairs(q.camps) do
+                local at = Spot(camp)
+                for _, part in ipairs(camp.parts) do drawn[#drawn + 1] = { at[1], at[2], q, part } end
+            end
+        end
+        for _, m in ipairs(marks) do
+            Pause()
+            local q = m.q
+            local col = c.color ~= false and q.groundColor or PLAIN
+            local qa = q.inLog and a or a * 0.6
+            cur = {}
+            groups[q.id] = { tex = cur, cw = cw, th = math.max(least * 1.5, cw * 0.36), col = col, area = 1, xs = {} }
+            for _, camp in ipairs(m.camps) do
+                local at, k = Spot(camp)
+                if not dotted[k] then
+                    dotted[k] = true
+                    Mark(at[1] * W, at[2] * H, math.max(px * DOT_PX, cw * 0.8), col[1], col[2], col[3], qa)
+                end
+                for _, part in ipairs(camp.parts) do drawn[#drawn + 1] = { at[1], at[2], q, part } end
+            end
+            cur = nil
         end
     end
     if c.arrows ~= false then
@@ -623,11 +899,12 @@ local function Draw()
                 -- (an objective's spots all told: an item many monsters drop isn't
                 -- lone because one of them is a single named one)
                 local total = {}
-                for _, part in ipairs(q.parts) do
+                local whole = q.whole or q.parts
+                for _, part in ipairs(whole) do
                     local k = part.item or part.what or "?"
                     total[k] = (total[k] or 0) + #part.points
                 end
-                for _, part in ipairs(q.parts) do
+                for _, part in ipairs(whole) do
                     if total[part.item or part.what or "?"] <= LONE then
                         for _, p in ipairs(part.points) do
                             KeepArrow(q.id, p[1] * W, p[2] * H, off, col[1] * 0.5, col[2] * 0.5, col[3] * 0.5, 1)
@@ -664,7 +941,6 @@ end
 -- textures of the lit quests only, on their own frame, faded in.
 local GOLD = { 0.94, 0.76, 0.32 }
 local HUSH = 0.33
-local states = {}           -- [questID] = { hover, map, page, focus }
 -- (fresh: the pieces of quests lit just now, fading in; fresh.on: what's drawn now
 -- is one of those. Ones lit before stay as they are: a focused quest's gold and
 -- arrow no longer faded in again on every click in the log)
@@ -730,7 +1006,14 @@ local function Rethin()
         local grow = (gr.grow or 1) * thin
         for _, e in ipairs(gr.tex or {}) do
             if e[2] == "l" then e[1]:SetThickness(e[7] * grow)
-            elseif e[2] == "d" then e[1]:SetSize(e[7] * grow, e[7] * grow) end
+            elseif e[2] == "d" then
+                e[1]:SetSize(e[7] * grow, e[7] * grow)
+                local tier = e[11] and Tier(e[7])
+                if tier and tier ~= e[12] then
+                    e[12] = tier
+                    e[1]:SetTexture(ART[e[11]][tier])
+                end
+            end
         end
     end
 end
@@ -828,8 +1111,19 @@ local function Relight(fadeIn)
         gpool.fresh.on = fadeIn and not was[gr]
         if l.how == "gilt" and look == "dots" then
             Tint(gr, 1.25, 1.25)
+            -- (once a dot, not its rim too. Close in the halo is in the map's units, so it grew over
+            -- everything: past mid zoom it shrinks and fades. And one to a patch of the map: where
+            -- spawns crowd, halos on each stacked into solid gold, the user)
+            local k, seen = math.min(1, ZoomThin() / 0.5), {}
             for _, e in ipairs(gr.tex) do
-                if e[2] == "d" then GBlob(e[8], e[9], e[7] * 3, GOLD[1], GOLD[2], GOLD[3], 0.6) end
+                if e[2] == "d" and not e[10] then
+                    local size = e[7] * 3 * k
+                    local key = math.floor(e[8] / size) .. ":" .. math.floor(e[9] / size)
+                    if not seen[key] then
+                        seen[key] = true
+                        GBlob(e[8], e[9], size, GOLD[1], GOLD[2], GOLD[3], 0.3 * (0.4 + 0.6 * k))
+                    end
+                end
             end
         end
         if l.how then   -- (an X: a gold halo behind it, whatever the look)
@@ -896,12 +1190,22 @@ end
 
 -- Hover --------------------------------------------------------------------------
 
-local tipShown, tipKey, tipQuest   -- (tipQuest: the first quest in the tooltip, a click opens it)
+local tipShown, tipKey, tipQuest, tipInLog   -- (tipQuest: the first quest in the tooltip, a click opens it)
+-- (the mouse is on ground: docked, the minimap stands aside for it as it does for a pin, DockPatch.lua;
+-- seen: for /bfi check, what the last look found)
+local onGround, seenOver, seenHits, seenOwner = false, false, 0, "none"
+local glowing = false   -- (we lit a quest by hovering it: it's ours to let go, even with the tooltip long gone)
+function ns.QuestGroundUnderMouse() return onGround end
 -- a click on ground opens its quest's page, as a spot's or turn-in's click does
 -- (the quest window shown, questlog.fromPins)
 local function ClickOpens()
     local q = ns.db and ns.db.questlog
     return q and q.shown and q.fromPins and ns.OpenQuest and true or false
+end
+-- the tooltip up is ground's: ours, or Questie's over it (questie.tooltip)
+local function TipOurs()
+    local owner = GameTooltip:GetOwner()
+    return owner == host or (owner and owner == (ns.QuestTipProxy and ns.QuestTipProxy()))
 end
 local function Hover()
     local c = Cfg()
@@ -913,7 +1217,17 @@ local function Hover()
     local owner = GameTooltip:IsShown() and GameTooltip:GetOwner()
     -- (ours, or Questie's over this ground, questie.tooltip)
     local mine = owner == host or (tipShown and owner and owner == (ns.QuestTipProxy and ns.QuestTipProxy()))
-    if owner and not mine then tipShown = false return end   -- (a pin's tooltip)
+    -- (the minimap's blip names don't count: it lies over the map docked, and ground goes first)
+    local blip = owner and owner == Minimap
+    seenOver, seenHits, seenOwner = over and true or false, 0, owner and (owner.GetName and owner:GetName() or "unnamed") or "none"
+    onGround = false
+    if owner and not mine and not blip then   -- (another tooltip: a pin's, or the log's after a click opened it)
+        -- (a spot's own glow is its pin's to end. Any other: ours goes, or it stayed lit beside
+        -- the next quest you picked, with the mouse never crossing open map)
+        if glowing and owner.bfiGroup ~= "spots" and ns.HoverQuestGlow then ns.HoverQuestGlow(nil) end
+        tipShown, glowing = false, false
+        return
+    end
     -- (a menu up, e.g. this ground's own: no tooltip under it; shown again it
     -- flickered, the menu's opening hiding it each time)
     if ns.QuillMenuShown and ns.QuillMenuShown() then
@@ -961,12 +1275,14 @@ local function Hover()
             if not rank[q] then
                 rank[q] = {}
                 local n = 0
-                for i, part in ipairs(q.parts) do
-                    rank[q][part] = i
+                -- (by name: quiet has a quest's parts both whole, at its dot, and cut to its camp)
+                for i, part in ipairs(q.whole or q.parts) do
+                    rank[q][part.what or ""] = i
                     n = n + #part.points
                 end
                 local gr = groups[q.id]
-                size[q] = gr and gr.area or n
+                -- (quiet: by its spawns, what's drawn changes as it's lit, and the quests swapped)
+                size[q] = c.quiet ~= false and n or gr and gr.area or n
             end
         end
         table.sort(hits, function(a, b)
@@ -975,15 +1291,17 @@ local function Hover()
                 if size[qa] ~= size[qb] then return size[qa] < size[qb] end
                 return qa.id < qb.id
             end
-            return (rank[qa][a[2][4]] or 0) < (rank[qb][b[2][4]] or 0)
+            return (rank[qa][a[2][4].what or ""] or 0) < (rank[qb][b[2][4].what or ""] or 0)
         end)
         for i = 1, #hits do hits[i] = hits[i][2] end
         for i = #hits, 13, -1 do hits[i] = nil end   -- (12: an item's many droppers fold to one line)
     end
+    seenHits = #hits
+    onGround = #hits > 0
     if #hits == 0 then
         if tipShown and mine then ns.QuestTooltipLeave() end
-        if tipShown and ns.HoverQuestGlow then ns.HoverQuestGlow(nil) end
-        tipShown = false
+        if glowing and ns.HoverQuestGlow then ns.HoverQuestGlow(nil) end
+        tipShown, glowing = false, false
         return
     end
     -- (the same things under the cursor: the tooltip stays as it is, following it)
@@ -992,7 +1310,10 @@ local function Hover()
     local key = table.concat(keys, "|") .. (IsShiftKeyDown() and "+shift" or "")   -- (Shift shows the droppers)
     if tipShown and mine and key == tipKey then return end
     tipKey = key
-    if ns.HoverQuestGlow then ns.HoverQuestGlow(hits[1][3].id) end   -- (its ground lights up)
+    if ns.HoverQuestGlow then   -- (its ground lights up)
+        ns.HoverQuestGlow(hits[1][3].id)
+        glowing = true
+    end
     -- (the quests' lines: Pin.lua's ns.QuestSpotLines, shared with objective pins; Questie's with
     -- questie.tooltip on)
     local rows = {}
@@ -1002,10 +1323,12 @@ local function Hover()
         GameTooltip:SetOwner(host, "ANCHOR_CURSOR_RIGHT", 12, 12)
         folded = ns.QuestSpotLines(rows, c.drops)
     end
-    tipQuest = hits[1][3].id
+    tipQuest, tipInLog = hits[1][3].id, hits[1][3].inLog
     -- (the hints' "Hold Shift" also covers what's folded away)
     if ns.Hints then
-        ns.Hints({ ClickOpens() and { "Click", "open in quest log" } or nil, { "Right-click", "its menu" } })
+        if not IsShiftKeyDown() then
+            ns.Hints({ ClickOpens() and { "Click", "open in quest log" } or nil, { "Right-click", "its menu" } })
+        end
     elseif folded and ns.HoldShift then
         ns.HoldShift()
     end
@@ -1026,7 +1349,17 @@ local function Signature()
         tostring(c.look), tostring(c.color), tostring(c.colorBy), tostring(math.floor(canvas:GetWidth() + 0.5)),
         tostring(c.arrows), tostring(ns.IsShown("turnins")),
         -- (turn-ins come and go with the log, not with the ground's list)
-        c.arrows ~= false and tostring(ns.QuestVersion and ns.QuestVersion()) or "" }
+        c.arrows ~= false and tostring(ns.QuestVersion and ns.QuestVersion()) or "", tostring(c.quiet), tostring(FitScale()) }
+    if c.quiet ~= false and mapID then
+        -- (what's at hand, and where you are, in big steps: a few rings, so it's a quick redraw)
+        parts[#parts + 1] = tostring(stateKey) .. tostring(ns.IsShown("spots"))
+        if ns.RouteNow then
+            local route, at = ns.RouteNow()
+            parts[#parts + 1] = tostring(route) .. tostring(at)
+        end
+        local pos = C_Map.GetPlayerMapPosition(mapID, "player")
+        if pos then parts[#parts + 1] = math.floor(pos.x * WALK) .. "," .. math.floor(pos.y * WALK) end
+    end
     if ns.IsShown("ground") and c.look ~= "pins" and mapID and ns.QuestGround then
         -- (QuestData keeps its list until the quests change: summed again only then)
         local list = ns.QuestGround(mapID, c.all)
@@ -1086,9 +1419,12 @@ function ns.SetupQuestGround(m)
     -- a right-click on ground with its tooltip up: the menu an objective spot has (Pin.lua),
     -- not a zoom out (Browse.lua asks this first; the user, 2026-11-03)
     function ns.QuestGroundMenuAt()
-        if not (tipShown and tipQuest and GameTooltip:IsShown() and GameTooltip:GetOwner() == host and ns.QuillMenu) then return end
+        if not (tipShown and tipQuest and GameTooltip:IsShown() and TipOurs() and ns.QuillMenu) then return end
         local id, items = tipQuest, {}
         if ns.OpenQuest then items[#items + 1] = { "quest details", function() ns.OpenQuest(id) end } end
+        if tipInLog and ns.ToggleFocus then
+            items[#items + 1] = { ns.IsFocused(id) and "out of focus" or "focus quest", function() ns.ToggleFocus(id) end }
+        end
         if ns.ToggleQuestGlow then items[#items + 1] = { "its spots lit (again: off)", function() ns.ToggleQuestGlow(id) end } end
         if #items == 0 then return end
         GameTooltip:Hide()
@@ -1104,7 +1440,7 @@ function ns.SetupQuestGround(m)
             if button ~= "LeftButton" or IsModifierKeyDown() or not downX then return end
             local x, y = GetCursorPosition()
             if math.abs(x - downX) + math.abs(y - downY) > 6 * UIParent:GetEffectiveScale() then return end
-            if tipShown and tipQuest and GameTooltip:IsShown() and GameTooltip:GetOwner() == host and ClickOpens() then
+            if tipShown and tipQuest and GameTooltip:IsShown() and TipOurs() and ClickOpens() then
                 ns.OpenQuest(tipQuest)
             end
         end)
@@ -1131,7 +1467,8 @@ function ns.SetupQuestGround(m)
     end)
     -- (for /bfi check)
     function ns.QuestGroundInfo()
-        return string.format("%d quest spots drawn, %d blobs, %d rim pieces, %d dots, look %s, %d lit pieces",
-            #drawn, pool.nb, pool.nl, pool.nd, tostring(Cfg().look), gpool.nl + gpool.nb)
+        return string.format("%d quest spots drawn, %d blobs, %d rim pieces, %d dots, look %s, %d lit pieces; hover: over %s, %d hits, tooltip %s, shown %s",
+            #drawn, pool.nb, pool.nl, pool.nd, tostring(Cfg().look), gpool.nl + gpool.nb,
+            tostring(seenOver), seenHits, tostring(seenOwner), tostring(host:IsVisible()))
     end
 end

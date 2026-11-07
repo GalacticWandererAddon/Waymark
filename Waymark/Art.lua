@@ -19,7 +19,7 @@ local _, ns = ...
 -- Names chosen at run time go in ART below so it finds those too.
 ns.ART = {
     -- the toggle buttons and the settings headings (Options.lua TOGGLES, ns.ToggleIcon)
-    "cursor_quest_128", "cursor_questturnin_128", "cursor_attack_128", "cursor_inspect_128",
+    "cursor_quest_128", "cursor_questturnin_128", "cursor_attack_128", "cursor_questinteract_128", "cursor_inspect_128",
     "cursor_gatherherbs_128", "cursor_palette_128", "cursor_directions_128",
     "poi-workorders",
     "bonus-objective-star", "vignettekill", "vignettekillelite", "minimap-questarrow", "dungeon",
@@ -104,6 +104,7 @@ ns.ART_SUBSTITUTE = {
     ["cursor_quest_128"] = "Interface\\Cursor\\Quest",
     ["cursor_questturnin_128"] = "Interface\\Cursor\\QuestTurnIn",
     ["cursor_attack_128"] = "Interface\\Cursor\\Attack",
+    ["cursor_questinteract_128"] = "Interface\\Cursor\\Interact",
     ["cursor_inspect_128"] = "Interface\\Cursor\\Inspect",
     ["cursor_gatherherbs_128"] = "Interface\\Cursor\\GatherHerbs",
     -- the Rares & chests and RareScanner toggles: Era spells these atlases with capitals

@@ -516,6 +516,16 @@ function ns.SetupBrowse(map)
         elapsed = elapsed + dt
         if elapsed < 0.25 then return end
         elapsed = 0
+        -- (off a boat or zeppelin the game had put the map on the continent and left it there once you'd
+        -- landed, the user: not browsing, a continent shown while you stand in a zone goes to the zone)
+        if not browsed and map:IsVisible() and not UnitOnTaxi("player") and not IsInInstance() then
+            local shown, home = map:GetMapID(), HomeMap()
+            local a, h = shown and C_Map.GetMapInfo(shown), home and C_Map.GetMapInfo(home)
+            if a and h and shown ~= home and a.mapType == T.Continent and h.mapType and h.mapType >= T.Zone then
+                Show(map, home)
+                Changed()
+            end
+        end
         if not browsed then return end
         if not Cfg().enabled then ns.BrowseHome() return end
         -- you walked onto the map you're looking at: it's yours now (not the

@@ -59,10 +59,10 @@ function ns.GetMouseFocus()
     return foci and foci[1]
 end
 
--- The dungeon map and all that runs inside dungeons: off on Forever till it's been played there. None of
--- it has run in a live dungeon, and nobody should have to turn the addon off to do one. Entrances
--- on the zone maps stay. One line to undo.
-ns.DungeonsOff = ns.FOREVER
+-- The dungeon map and all that runs inside dungeons: on again on Forever since 1.2.5 (the user,
+-- 2026-11-07, after a live run in the Deadmines: secret names and GUIDs handled, Where you are off
+-- there). It was off from 1.2.3, none of it having run in a live dungeon. One line to turn it off again.
+ns.DungeonsOff = false
 
 -- The game's own objective markers and blue quest areas are Forever's only (the map's
 -- providers aren't attached elsewhere, BattlefieldInfo.lua): their settings, buttons

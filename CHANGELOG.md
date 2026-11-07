@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.2.5 (2026-11-07)
+
+**The dungeon map is back on Forever, quest objectives redone, and the book opens up to the Sunken Temple.**
+
+New
+- The dungeon map is on again on Forever: floors, boss list, bosses ticked as they die, the book's notes on the map. Floor arrows are clickable, and the floor name stays clear of the buttons on a small docked map.
+- A brass switch on dungeon and cave maps (bottom left) turns between the map and your minimap.
+- Docked in a dungeon, the X or the map's key now switches the square between the dungeon map and your minimap.
+- Each dungeon remembers its own map size. The first time in, it keeps the size the map had outside.
+- The book opens up to and including the Sunken Temple, with Forever's own dungeons (Ruins of Lordaeron, Excavation Site, City of Dalaran) on Forever.
+- Quest objectives as coloured dots, one colour per quest, with the quest you're on shown at its nearest camp. Or as pins, or Questie's, or the game's own: pick under Quests.
+- Quest tooltips show each objective's kind as an icon (slay, gather, use, explore, talk), the quest's level, and with Shift the XP for a finished quest.
+- Quests started by an item that drops: one "!" per camp of the monsters that drop it, the busiest camp clearest.
+- Quest items you buy show who sells them.
+- The tracker: buttons for quest items, finished quests last, and a soft shade behind the text.
+- Taming the Beast marks the beast to tame.
+
+Changed
+- Docked, the boss list, the book and the quill only show on the big map; the floor name sits top middle and its arrows bottom middle.
+- Dungeon levers and doors that open after a fight are off by default (Caves & dungeons, to turn them on).
+- The game's own minimap clock hides while Waymark's clock shows.
+- Docked, the game's own coordinates hide when Waymark's are on, or sit under the map.
+- Settings on the Quests page reworded: Objective icons, pins and dots. A few that did nothing are gone.
+- Quest tooltips are calmer: no rewards or drop chances, one line per objective.
+- All presets updated with the new settings.
+
+Fixed
+- Dungeons on Forever: no more errors from the game hiding monster names and GUIDs inside (looting, boss kills, tooltips).
+- Gamepad mode: the Battlefield Map no longer throws an error every frame (the game's own bug).
+- Docked: drag the map by its frame's edge with Ctrl, right-click the edge for the map's menu. Undocked: plain drag on the edge again.
+- Off a boat, the map shows your zone, not the continent.
+- The clock no longer catches clicks where its digits used to be.
+- Objectives in a capital show on its zone's map too.
+
+Known
+- Where you are inside a dungeon (the soft light) is off on Forever: the game hides the monster names it needs.
+- Forever's new dungeons have no map pictures yet.
+
 ## 1.2.4 (2026-11-06)
 
 **Simpler from the first install: a calmer map, far fewer settings, and a lot of docking fixes.** Current players keep their settings: pick Simple on Start here to get the new look.

@@ -1,5 +1,8 @@
 local _, ns = ...
 if ns.DungeonsOff then return end
+-- Not on Forever: inside, the game hides monsters' names and GUIDs (secret), the only clue this has,
+-- so it could never light anything (live Deadmines, 2026-11-07). Its setting is hidden there too.
+if ns.FOREVER then return end
 
 -- Where you are inside a dungeon, a guess. The game gives no position inside, but it does name the
 -- monsters around you: their nameplates, your target, and who you fight (the combat log). We know
@@ -737,7 +740,19 @@ function ns.DungeonWhereInfo()
                                          at and at[2] or 0, at and at[3] or 0) or "no guess"
     local lit = holder and holder:IsVisible() and (glow:IsShown() and string.format("glow shown (%.0f px)", glow:GetWidth())
                 or string.format("light on the floor (%d dots)", dotsUsed)) or ("light hidden: " .. (why or "?"))
-    return string.format("instance %s: %s; %s; seen: %s", tostring(hereInst), where, lit, #names > 0 and table.concat(names, ", ") or "none")
+    -- (what the nameplates and target give right now: a hidden name or "can attack" is never seen)
+    local function Probe(u)
+        local n, a = _G.UnitName(u), _G.UnitCanAttack("player", u)
+        local function S(v) return issecretvalue and issecretvalue(v) and "secret" or tostring(v) end
+        return u .. " " .. S(n) .. "/" .. S(a)
+    end
+    local plates = {}
+    for _, plate in ipairs(C_NamePlate and C_NamePlate.GetNamePlates and C_NamePlate.GetNamePlates() or {}) do
+        if plate.namePlateUnitToken and #plates < 4 then plates[#plates + 1] = Probe(plate.namePlateUnitToken) end
+    end
+    local now = string.format("plates %d%s; target %s", C_NamePlate and C_NamePlate.GetNamePlates and #C_NamePlate.GetNamePlates() or -1,
+        #plates > 0 and (" (" .. table.concat(plates, ", ") .. ")") or "", UnitExists("target") and Probe("target") or "none")
+    return string.format("instance %s: %s; %s; seen: %s; %s", tostring(hereInst), where, lit, #names > 0 and table.concat(names, ", ") or "none", now)
 end
 
 -- for the replay (tools\where_replay.lua): a sighting as if from the game

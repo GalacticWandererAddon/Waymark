@@ -884,6 +884,29 @@ local function Column(parent, x, y, width, side)
         -- and every size (a layer's scale) as times its usual, as the others show it
         if not fmt and (key == "scale" or key == "objectScale") then fmt = "%.2fx" end
         local get, set = Setting(group, key)
+        -- (a layer's size: in town or city view with a size of its own there, it's that one the slider
+        -- shows and moves. A slider that did nothing in Darnassus read as broken, the user)
+        if key == "scale" and ns.TownPinSize then
+            local get0, set0 = get, set
+            local function View()
+                local v = (ns.InCityView and ns.InCityView() and "cityView") or (ns.InTownView and ns.InTownView() and "townView")
+                return v and ns.db[v].sizes and ns.db[v].sizes[group] and v or nil
+            end
+            get = function()
+                local v = View()
+                if v then return ns.db[v].sizes[group] end
+                return get0()
+            end
+            set = function(value)
+                local v = View()
+                if v then
+                    ns.db[v].sizes[group] = value
+                    ns.OnSettingChanged(v, "sizes")
+                else
+                    set0(value)
+                end
+            end
+        end
         if rows then
             local s = CreateSlider(parent, 170, label, minV, maxV, step, get, set, fmt, zeroText, ctrlX - x)
             local h, hover = RowSlider(s)
@@ -2170,7 +2193,7 @@ local HOW_CLOSE_TIP = "How big the map picture is drawn: at 1x each pixel of it 
 local SHOWN_SWITCHES = {
     { "Quest givers", "Where you pick quests up and hand them in.", "built in, or QuestieDB", "questie", "shown", "quests", nil,
       get = function() return ns.QuestGiversOn() end, set = function(v) ns.SetQuestGivers(v) ns.RefreshControls() end },
-    { "Objectives", "Where your quests' monsters and items are.", "", "spots", "shown", "quests", nil,
+    { "Quest objectives", "Where your quests' monsters and items are.", "", "spots", "shown", "quests", nil,
       get = function() return ns.ObjectivesOn() end, set = function(v) ns.SetObjectives(v) ns.RefreshControls() end },
     { "Learned quest givers", "For quests the quest data lacks.", "built in", "learned", "shown", "quests" },
     { "Townsfolk", "Trainers, vendors, innkeepers...", "built in, or QuestieDB; learned", "townsfolk", "shown", "people" },
@@ -2675,7 +2698,6 @@ PAGES[#PAGES + 1] = { key = "clock", label = "Clock", build = function(p)
     local c = Column(p, 0, 0, HALF)
     c:Header("Clock")
     c:Check("Show a clock on the map", "clock", "shown")
-    c:Check("Disable the game's minimap clock", "clock", "hideGame")
     c:Requires("clock", "shown")
     c:Choice("Look", "clock", "look", {
         { "plain", "Plain digits" }, { "head", "In the header" }, { "sun", "Moon dial" }, { "arc", "The day's arc" },
@@ -2733,7 +2755,7 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
         if not (spots or ns.IsShown("questie") or ns.IsShown("turnins")) then return "No quest pins on" end
         if not questie then return "Waymark's pins" end
         if ns.db.questie.iconSet ~= "modern" then return "Waymark's pins with Questie's icons" end
-        return spots and ns.SpotsQuestieArt() and "Waymark's pins, spots with Questie's icons" or "Waymark's pins"
+        return spots and ns.SpotsQuestieArt() and "Waymark's pins, with Questie's look" or "Waymark's pins"
     end
     if questie then
         a:Header("Quest tooltips")
@@ -2763,46 +2785,30 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     a:Check("Turn-ins", "turnins", "shown", nil, ns.ToggleIcon("turnins"))
     a:Tip("Where to hand in finished quests.")
     a:Advanced()
-    a:CheckWith("Objectives", ns.ObjectivesOn, function(v)
+    a:CheckWith("Quest objectives", ns.ObjectivesOn, function(v)
         ns.SetObjectives(v)
         ns.RefreshControls()
-    end, nil, ns.ToggleIcon("spots"))
+    end, nil, ns.ToggleIcon("objview"))
     a:Tip("Where your quests' monsters, items and places are.")
     local looks = {}
-    if ns.QuestieArt() then looks[#looks + 1] = { "questie", "Questie's" } end
     looks[#looks + 1] = { "waymark", "Waymark's" }
-    if ns.FOREVER then looks[#looks + 1] = { "yours", "Yours (the game's own)" } end
+    if ns.QuestieArt() then looks[#looks + 1] = { "questie", "Questie's" } end
+    if ns.FOREVER then looks[#looks + 1] = { "yours", "Blizzard's" } end
     if #looks > 1 then
         a:Choice("Look", nil, nil, looks, ns.ObjectiveLook, function(v)
             ns.SetObjectives(ns.ObjectivesOn(), v)
             ns.RefreshControls()
         end)
-        a:Tip("Questie's: objective spots in its icons, where it's installed. Waymark's: in its own. Yours: Waymark leaves them alone, and the game's own markers and quest areas show.", "With advanced settings on, each layer has its own switch.")
+        a:Tip("Waymark's: a coloured dot a spawn, the quest at hand's camp; or pins, below. Questie's: pins in its icons, as you've set them in Questie. Blizzard's: the game's own objective markers and quest areas, ours off.", "With advanced settings on, each layer has its own switch.")
     end
+    a:Requires(function() return ns.ObjectiveLook() == "waymark" end)
+    a:CheckWith("Objective icons", function() return ns.db.objectivePins end, function(v)
+        ns.SetObjectivePins(v)
+        ns.RefreshControls()
+    end, nil, ns.ToggleIcon("spots"))
+    a:Tip("Waymark's look as icons, a sword or bag on each spot, in place of the dots.")
+    a:Requires()
     a:Advanced(true)
-    a:Check("Objective spots", "spots", "shown", nil, ns.ToggleIcon("spots"))
-    if advancedShown then
-        a:Live(function()
-            if ns.DockSplit() then return "Spots on the docked minimap, quest ground on the map." end
-            return Docked() and "On the map and the docked minimap, zoomed in or out." or "On the map."
-        end)
-    end
-    a:CheckWith("Docked: spots on the minimap, ground on the map", function() return ns.db.dock.splitQuests end,
-        function(v)
-            local d, g = ns.db.dock, ns.db.ground
-            d.splitQuests = v
-            -- (it needs the ground: on with this if it was off, and off again with it)
-            if v and not g.shown then
-                g.shown, d.splitGround = true, true
-                ns.OnSettingChanged("ground", "shown")
-            elseif not v and d.splitGround then
-                g.shown, d.splitGround = false, nil
-                ns.OnSettingChanged("ground", "shown")
-            end
-            ns.ApplyGroups()
-            ns.RefreshControls()
-        end)
-    a:Tip("Docked: objective spots show on the minimap and quest ground on the map, each only there. Turns quest ground on if it's off, and back off with this. Givers and turn-ins stay on both.")
     a:Advanced()
     a:Header("Look of givers and turn-ins", ns.ToggleIcon("questie"))
     a:Requires("questie", "shown")
@@ -2832,15 +2838,8 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     a:Tip("Hovering a monster, an item or a thing in the world your quests want: the quest and how far along that objective is (Kobold Vermin slain: 3/10). Where Questie is loaded, Questie's own lines do this instead.")
     a:Requires()
     a:Advanced(true)
-    a:Header("Objective spots", ns.ToggleIcon("spots"))
-    if ns.QuestieArt() then
-        a:CheckWith("Questie's icons", function() return ns.db.spots.questieIcons end, function(v)
-            ns.db.spots.questieIcons = v and true or false
-            ns.SpotIconsChanged()
-            if ns.RedrawQuestie then ns.RedrawQuestie() end
-        end)
-        a:Tip("Its theme's icons on these spots. Where they stand and how many stay Waymark's.")
-    end
+    -- (the pins of Waymark's look with Objective icons, and of Questie's: whose icons is the Look's to say)
+    a:Header("Objective pins", ns.ToggleIcon("spots"))
     a:Requires("spots", "shown")
     a:Slider("Opacity", 0, 1, 0.05, "spots", "alpha")
     a:Slider("Size", 0.2, 2, 0.05, "spots", "scale")
@@ -2851,38 +2850,30 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     a:Slider("At most, per objective", 0, 40, 1, "spots", "maxPer", "%d pins", "no limit")
     a:Tip("Above this, the most spread-out spots are kept, so the whole area is still marked. The tracker's distances still use every spawn.")
     a:Requires()
-    a:Header("Quest ground", ns.ToggleIcon("ground"))
-    a:Check("Show", "ground", "shown")
+    a:Header("Objective dots", ns.ToggleIcon("ground"))
     a:Tip("Where your quests' monsters, drops and things to use are, as ground on the map in each quest's colour. Hover it: what it is, what it drops and for which quest.")
     a:Requires("ground", "shown")
-    a:Choice("Look", "ground", "look", {
-        { "haze", "Haze" }, { "ink", "Ink rim" }, { "dots", "Spawn dots" }, { "pins", "Pins (loot bags)" },
-    })
-    a:Tip("Pins: the objective spot pins instead of ground, a loot bag, sword or cog on each spot, as before the ground.")
     a:Slider("Opacity", 0, 1, 0.05, "ground", "alpha")
-    a:Check("Also quests I could take", "ground", "all")
-    a:Tip("The ground of quests that givers on this map offer you and you haven't taken, fainter.")
     a:Check("Coloured", "ground", "color")
     a:Tip("Off: every quest's ground in one red.")
     a:Requires(function() return ns.db.ground.shown and ns.db.ground.color end)
     a:Choice("Colour by", "ground", "colorBy", { { "quest", "Each quest" }, { "type", "Quest type" } })
     a:Tip("Each quest: neighbouring quests in different colours. Quest type: by what the quest asks. Slay red, gather green, use blue, explore purple, escort teal. (Deliver and speak quests have no ground, only their ? pin.)")
     a:Requires("ground", "shown")
-    a:Check("Tooltip names the dropped item", "ground", "drops")
-    a:Check("Arrows at lone spots and turn-ins", "ground", "arrows")
-    a:Tip("For a quest in focus or found with \"find on map\": a small inked arrow at what's easy to miss, an objective with only one or two spots on the map (a thing to use, an item to pick up, one named monster) and where you hand it in.")
     a:Check("Fade other quests while one is lit", "ground", "hush")
     a:Tip("Hovering a quest (its tracker line, its log line or its ground) or finding it on the map lights it up in gold. With this on, the other quests' ground fades meanwhile so the lit one stands out. Off: they stay as they are, only the gold is added.")
+    a:Check("One dot for quests not in view", "ground", "quiet")
+    a:Tip("A quest in focus, under the mouse or open in the log: its dots, at its nearest camp. Every other quest: one dot. Off: every spawn of every quest.")
     a:Requires()
     if ns.FOREVER then
-        a:Header("Objective markers (the game's)", ns.ToggleIcon("questMarkers"))
+        a:Header("Blizzard's objective markers", ns.ToggleIcon("questMarkers"))
         if ns.QuestieKeepsObjectivesOff() then a:Note("Questie's theme keeps these and the quest areas off. Choose its Blizzard theme to use them.") end
         a:Check("Show", "objectives", "shown")
         a:Requires("objectives", "shown")
         a:Slider("Opacity", 0, 1, 0.05, "objectives", "alpha")
         a:Slider("Size", 0.2, 2, 0.05, "objectives", "scale")
         a:Requires()
-        a:Header("Quest areas (blue zones)", ns.ToggleIcon("questAreas"))
+        a:Header("Blizzard's quest areas (blue zones)", ns.ToggleIcon("questAreas"))
         a:Check("Show", "areas", "shown")
         a:Requires("areas", "shown")
         a:Slider("Opacity", 0, 1, 0.05, "areas", "alpha")
@@ -2917,10 +2908,6 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
         { "gaps", "Only ones " .. data .. " lacks" }, { "all", "All I've learned" },
     })
     b:Tip("\"Only ones " .. data .. " lacks\" fills its gaps. \"All I've learned\" shows the rest too, but never a second pin for a quest Quest givers or Turn-ins already show.")
-    b:Check("Turn-ins (\"?\")", "learned", "turnins")
-    b:Tip("A \"?\" where a finished quest is handed in.")
-    b:Check("Low-level (grey) quests", "learned", "trivial")
-    b:Check("Repeatable quests", "learned", "repeatable")
     b:Slider("Opacity", 0, 1, 0.05, "learned", "alpha")
     b:Slider("Size", 0.2, 2, 0.05, "learned", "scale")
     b:Requires()
@@ -2975,6 +2962,8 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
         { "level", "By level" }, { "log", "As in the quest log" },
     })
     a:Tip("Nearest first: quests about as near keep their places, so the list doesn't jump about as you walk.")
+    a:Check("Finished quests last", "tracker", "finishedLast")
+    a:Check("Buttons for quest items", "tracker", "itemButtons")
     a:Check("Sub-zone headings", "tracker", "groupByArea")
     a:Tip("Each quest under the area its nearest objective is in (Kharanos, Coldridge Valley...); quests with nothing here go under Elsewhere.")
     a:Check("Objectives under each quest", "tracker", "objectives")
@@ -3072,6 +3061,7 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     e:Header("Spacing and fading")
     e:Requires("tracker", "shown")
     e:Slider("Background opacity", 0, 1, 0.05, "tracker", "bgAlpha", pct, "none")
+    e:Slider("Soft shade behind the text", 0, 1, 0.05, "tracker", "textShade", pct, "none")
     e:Advanced(true)
     e:Slider("Between lines", 0, 8, 1, "tracker", "lineGap", "%d px")
     e:Slider("Between quests", 0, 20, 1, "tracker", "questGap", "%d px")
@@ -3620,6 +3610,10 @@ PAGES[#PAGES + 1] = { key = "dungeon", label = "Caves & dungeons", build = funct
     b:Slider("Icon size", 0.5, 2, 0.05, "dungeon", "objectScale")
     b:Check("All chests", "dungeon", "allChests")
     b:Tip("Also the chests that only sometimes stand in a spot (one of several, picked at random).")
+    b:Check("Levers", "dungeon", "switches")
+    b:Tip("The levers and switches that open a way.")
+    b:Check("Doors that open with a fight", "dungeon", "fightDoors")
+    b:Tip("Doors shut until the fight near them is won.")
     b:Check("All quest pins", "dungeon", "allQuests")
     b:Tip("Also the quest things found all over a floor. Off: only the ones that stand out.")
     b:Check("Patrols", "dungeon", "patrols")
@@ -3628,8 +3622,10 @@ PAGES[#PAGES + 1] = { key = "dungeon", label = "Caves & dungeons", build = funct
         b:Check("Monster dots (dev)", "dungeon", "devMobs")
         b:Tip("A small dot where each monster stands. Hover: its name and level.", "Hold Shift: what to watch for, and what it casts.")
     end
-    b:Check("Where you are (a guess)", "dungeon", "where")
-    b:Tip("The game gives no position inside, so the part of the floor whose monsters you've been seeing and fighting lights up softly.")
+    if ns.DungeonWhere then                                -- (not on Forever: the names it needs are hidden there, DungeonWhere.lua)
+        b:Check("Where you are (a guess)", "dungeon", "where")
+        b:Tip("The game gives no position inside, so the part of the floor whose monsters you've been seeing and fighting lights up softly.")
+    end
     b:Requires()
 end }
 
@@ -3913,6 +3909,7 @@ end
 -- Waymark: Combat's page (its own addon: it fills the page in, Combat\Waymark_Combat\Menus.lua)
 PAGES[#PAGES + 1] = { key = "combat", label = "Combat bars", build = function(p)
     WaymarkCombat.BuildSettings(Column(p, 0, 0, CONTENT_W))
+    WaymarkCombat.RefreshSettings = ns.RefreshControls
 end }
 
 PAGES[#PAGES + 1] = { key = "dev", label = "Dev", build = function(p)
@@ -3937,7 +3934,7 @@ PAGES[#PAGES + 1] = { key = "dev", label = "Dev", build = function(p)
             a:Tip(ns.DevCommandText(e) .. ": " .. e[3])
         end
     end
-    a:Note("Also: /waymark quest <id> (its box is on the command bar), /waymark <number> (the map's scale, 0.3-3).")
+    a:Note("Also: /waymark quest <id> and /route why <name> (their boxes are on the command bar), /waymark <number> (the map's scale, 0.3-3).")
 end }
 
 -- the Lab's pages (Lab\Lab.lua, never in a release): what's held for 1.3, in one place
@@ -5227,7 +5224,7 @@ local function BuildQuickPanel(map)
           function() ns.SetObjectives(true, "questie") end, function() return ns.QuestieArt() end },
         { "Waymark's", function() return ns.ObjectivesOn() and ns.ObjectiveLook() == "waymark" end,
           function() ns.SetObjectives(true, "waymark") end },
-        { "Yours", function() return ns.ObjectivesOn() and ns.ObjectiveLook() == "yours" end,
+        { "Blizzard's", function() return ns.ObjectivesOn() and ns.ObjectiveLook() == "yours" end,
           function() ns.SetObjectives(true, "yours") end, function() return ns.FOREVER end },
     }
     -- rares: the addon's own (Rares & chests), RareScanner's, or none
@@ -5251,7 +5248,7 @@ local function BuildQuickPanel(map)
     a:Tip("Where you pick quests up and hand them in.")
     SettingsMenu(a.last, "questie", "shown")
     Context(a.last.text, { "questie", "turnins" })
-    CycleRow(a, "Objectives", OBJECTIVES, "Where your quests' monsters and items are. Questie's: in its icons, where it's installed. Waymark's: in its own. Yours: Waymark leaves them alone, and the game's own show.",
+    CycleRow(a, "Quest objectives", OBJECTIVES, "Where your quests' monsters and items are. Questie's: in its icons, where it's installed. Waymark's: in its own. Yours: Waymark leaves them alone, and the game's own show.",
         { "spots" }, { "spots", "shown" })
     a:CheckWith("Low-level (grey) quests", ns.GetTrivialQuests, ns.SetTrivialQuests)
     a:Tip("Quest givers far below your level.")
@@ -5317,9 +5314,9 @@ local TOGGLES = {
     { "questie",   "shown",    "cursor_quest_128",                               "Quest givers", nil, nil,
       { { "questie", "shown" }, { "turnins", "shown" }, { "learned", "shown" } } },
     { "turnins",   "shown",    "cursor_questturnin_128",                         "Turn-ins" },
-    { "objview",   "shown",    "cursor_attack_128",                              "Objectives", "spots" },  -- (one button, either look: ns.SetObjectives)
+    { "objview",   "shown",    "cursor_questinteract_128",                       "Quest objectives", "spots" },  -- (one button, either look: ns.SetObjectives)
     { "spots",     "shown",    "cursor_attack_128",                              "Objective spots" },
-    { "ground",    "shown",    "cursor_directions_128",                          "Quest ground" },
+    { "ground",    "shown",    ns.MEDIA .. "InkDot",                             "Objective dots" },
     { "wilds",     "shown",    "vignettekill",                                   "Rares & chests" },
     { "townsfolk", "shown",    "Interface\\Minimap\\Tracking\\Innkeeper",         "Townsfolk" },
     { "tracker",   "shown",    "poi-workorders",                                 "Quest tracker" },

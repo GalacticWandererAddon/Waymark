@@ -220,6 +220,7 @@ end
 local OUR_BUTTONS = { "toggleStrip", "gear", "townButton", "cityButton", "dockButton", "bigMap", "close", "header" }
 local function PinUnderMouse(map)
     if not Minimap:IsMouseOver() then return false end
+    if ns.QuestGroundUnderMouse and ns.QuestGroundUnderMouse() then return true end   -- (ground counts as a pin)
     -- (the map's buttons too: /run GetMouseFoci named a child of the minimap over them)
     for _, key in ipairs(OUR_BUTTONS) do
         local f = ns.debugFrames[key]
@@ -280,7 +281,7 @@ local function Place(map)
     -- (hidden, not faded: the blips don't take the minimap's alpha, live)
     if mm:IsShown() ~= fits then mm:SetShown(fits) end
     DrawsYou(fits)
-    if mm.SetIconScale then mm:SetIconScale(math.max(0.6, math.sqrt(r))) end
+    if mm.SetIconScale then mm:SetIconScale(math.max(0.85, math.sqrt(r))) end   -- (0.6 was tiny at mid zoom)
 end
 
 local ticker = CreateFrame("Frame")

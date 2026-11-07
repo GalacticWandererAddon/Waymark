@@ -190,8 +190,8 @@ local ROWS = {
     { "Turn-ins", "turnins.shown", nil,                      T, T, F, T, T },
     { "Objective spots", "spots.shown", nil,                 F, F, F, F, F },
     { "A colour per quest", "spots.color", nil,              F, F, F, F, F },
-    { "Quest ground", "ground.shown", nil,                   F, F, F, F, F },
-    { "Its look", "ground.look", GROUND,                 "ink", "ink", "ink", "ink", "ink" },
+    { "Objective dots", "ground.shown", nil,                   F, F, F, F, F },
+    { "Its look", "ground.look", GROUND,                 "dots", "dots", "dots", "dots", "dots" },
     { "Its colours", "ground.colorBy", GROUND_BY,        "type", "type", "type", "type", "type" },
     { "Arrows to lone spots and turn-ins", "ground.arrows", nil, F, F, F, F, F },
     { "Objective markers (the game's)", "objectives.shown", nil, F, F, F, F, F },
@@ -306,7 +306,7 @@ for _, p in ipairs({ "questie.shown", "questie.color", "questie.alpha", "questie
                      "learned.shown", "spots.shown", "spots.color", "spots.alpha", "spots.scale", "spots.spacing",
                      "spots.maxPer", "spots.questieIcons", "objectives.shown", "objectives.alpha", "objectives.scale",
                      "areas.shown", "areas.alpha", "ground.shown", "ground.alpha", "ground.look", "ground.color",
-                     "ground.colorBy", "ground.all", "ground.drops", "ground.arrows", "ground.hush" }) do
+                     "ground.colorBy", "ground.all", "ground.drops", "ground.arrows", "ground.hush", "ground.quiet" }) do
     KEEP_QUEST[p] = true
 end
 local PURIST_OFF = { ["questie.shown"] = true, ["turnins.shown"] = true, ["learned.shown"] = true, ["spots.shown"] = true,

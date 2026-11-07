@@ -256,6 +256,7 @@ local function Draw(c, h, m)
     if look == "head" then return end
     local text
     f.text:ClearAllPoints()
+    f:SetHitRectInsets(0, 0, 0, 0)
     if look == "stamp" then return DrawStamp(f, c, h, m, scale) end
     if paper then
         local p = dial and DIAL or ARC
@@ -268,6 +269,9 @@ local function Draw(c, h, m)
         f.plate:SetTexture(Art(p.art .. (off and "PlateShort" or "Plate")))
         f.front:SetTexture(Art(p.art .. "Front"))
         f:SetSize(p.w * scale, p.h * scale)
+        -- (digits slid off the paper's foot: the foot they left isn't the clock's to catch clicks on.
+        -- It lay over the dungeon map's view switch, the user 2026-11-07. They keep their grip)
+        if off then f:SetHitRectInsets(0, 0, 0, math.max(0, (p.h - p.base - 2) * scale)) end
         PlaceDigits(f, c, p, scale)
         f.text:SetText(text)
         if halo then
@@ -381,10 +385,13 @@ end
 local function GameClock()
     local b = TimeManagerClockButton
     if not b then return end
-    local hide = Cfg().hideGame and true or false
+    -- (gone while ours shows, back with ours off: the user 2026-11-07, one clock is enough. The old
+    -- hideGame setting is gone)
+    local function Hidden() return ns.IsShown("clock") end
+    local hide = Hidden() and true or false
     if hide and not gameClockHooked then
         gameClockHooked = true
-        hooksecurefunc(b, "Show", function(self) if Cfg().hideGame then self:Hide() end end)
+        hooksecurefunc(b, "Show", function(self) if Hidden() then self:Hide() end end)
     end
     if hide then
         b:Hide()
@@ -419,7 +426,8 @@ local function Tip(self)
     GameTooltip:AddDoubleLine("Realm time", Digits(rh, rm, c.h24), 1, 0.82, 0, 1, 1, 1)
     GameTooltip:AddDoubleLine("Your computer", Digits(t.hour, t.min, c.h24), 1, 0.82, 0, 1, 1, 1)
     ns.Hints({ { "Drag", self == clock.grip and "slide the digits" or "move the clock" },
-               { "Right-click or Shift-click", "the clock's menu" } })
+               ns.ToggleTimekeeping and { "Right-click", "stopwatch, timer, alarm" } or nil,
+               { ns.ToggleTimekeeping and "Shift-click" or "Right-click or Shift-click", "the clock's menu" } })
     GameTooltip:Show()
 end
 
@@ -489,6 +497,10 @@ local function Menu()
     ns.QuillMenu(items)
 end
 
+ns.ClockMenu = Menu
+-- the time as the clock tells it (realm or computer): hour, minute (Timekeeping.lua's alarm)
+function ns.ClockNow() return Now(Cfg().source) end
+
 -- following the mouse: detached, on the screen; anchored, on and around the map
 local function Follow(c)
     local s = clock:GetEffectiveScale()
@@ -556,8 +568,14 @@ function ns.SetupClock(map)
     clock:SetScript("OnDragStart", StartDrag)
     clock:SetScript("OnDragStop", StopDrag)
     clock:SetScript("OnHide", function() StopDrag() StopSlide() end)
+    -- (right-click: the timekeeping window, Timekeeping.lua; its gear and Shift-click: this menu)
     local function Press(_, button)
-        if button == "RightButton" or (button == "LeftButton" and IsShiftKeyDown()) then Menu() end
+        if button == "RightButton" and ns.ToggleTimekeeping then
+            GameTooltip:Hide()
+            ns.ToggleTimekeeping()
+        elseif button == "RightButton" or (button == "LeftButton" and IsShiftKeyDown()) then
+            Menu()
+        end
     end
     for _, f in ipairs({ clock, clock.grip }) do
         f:SetScript("OnEnter", Tip)

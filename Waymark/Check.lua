@@ -469,20 +469,27 @@ function ns.RunCheck(noReload)
             for _, u in ipairs({ "target", "softenemy", "softinteract", "softfriend" }) do
                 local okE, exists = pcall(UnitExists, u)
                 local okG, g = pcall(UnitGUID, u)
+                if okG and issecretvalue and issecretvalue(g) then g = true end
+                if okE and issecretvalue and issecretvalue(exists) then exists = true end
                 if okE and (exists or (okG and g)) then                -- (an object: no unit, but a GUID and a name)
-                    local guid = UnitGUID(u) or ""
+                    -- (inside on Forever a GUID or name can be secret: shown as such, never indexed)
+                    local guid = UnitGUID(u)
+                    guid = (issecretvalue and issecretvalue(guid)) and "secret-" or guid or ""
+                    local name = UnitName(u)
+                    name = (issecretvalue and issecretvalue(name)) and "secret" or name or "?"
                     local ranges = {}
                     for i = 1, 4 do
                         local ok, r = pcall(CheckInteractDistance, u, i)
                         ranges[i] = ok and (r and "y" or "n") or "x"
                     end
                     local okD, d2, checked = pcall(UnitDistanceSquared, u)
+                    if okD and (ns.Known(d2) == nil or ns.Known(checked) == nil) then okD = false end
                     local spells = {}
                     for _, s in ipairs({ "Auto Shot", "Arcane Shot", "Scatter Shot", "Wing Clip", "Raptor Strike", "Attack" }) do
                         local ok, r = pcall(IsSpellInRange, s, u)
-                        if ok and r ~= nil then spells[#spells + 1] = s .. "=" .. tostring(r) end
+                        if ok and ns.Known(r) ~= nil then spells[#spells + 1] = s .. "=" .. tostring(r) end
                     end
-                    near[#near + 1] = string.format("%s %q (%s) interact 1-4 %s, distance %s, spells %s", u, UnitName(u) or "?",
+                    near[#near + 1] = string.format("%s %q (%s) interact 1-4 %s, distance %s, spells %s", u, name,
                         guid:match("^[^-]+") or "?", table.concat(ranges), okD and checked and string.format("%.1f", math.sqrt(d2)) or "none",
                         #spells > 0 and table.concat(spells, " ") or "none")
                 else
@@ -499,6 +506,7 @@ function ns.RunCheck(noReload)
         end
         if ns.QuestDataInfo then Check("quest data", ns.QuestSource() ~= nil, ns.QuestDataInfo(map:GetMapID())) end
         if ns.QuestGroundInfo then Check("quest ground (info)", true, ns.QuestGroundInfo()) end
+        if ns.QuestTargetsInfo then Check("quests in the log, their places (info)", true, ns.QuestTargetsInfo(map:GetMapID())) end
         if ns.WildsInfo then Check("rares & chests (info)", true, ns.WildsInfo()) end
 
         -- zoom as art on screen (MapControls' ArtX): where it is, its range, and

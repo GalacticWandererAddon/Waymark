@@ -3418,7 +3418,7 @@ function ns.QuillButton(parent, size)  -- (on ns: the file is at Lua's 200 local
     b:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("Write in the book")
-        GameTooltip:AddLine("Rewrite its lines, add your own, mark its pages and maps; the Battlefield map too while it's open.", 1, 1, 1, true)
+        ns.ShiftLines(self, { "Rewrite its lines, add your own, mark its pages and maps; the Battlefield map too while it's open." })
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -4062,6 +4062,11 @@ local function DungeonMapNotes()
         dm.quill = ns.QuillButton(dm.stamp, 34)
         dm.quill:SetPoint("RIGHT", dm.stamp, "LEFT", -6, 0)
     end
+    -- (smaller on a small map, as the boss list: docked they were too big, the user)
+    do
+        local ow = ns.dungeonOverlay and ns.dungeonOverlay:GetWidth() or 0
+        dm.stamp:SetScale(math.max(0.55, math.min(1, math.sqrt((ow > 0 and ow or 900) / 900))))
+    end
     local layer = dm.layer
     if layer:GetParent() ~= canvas then layer:SetParent(canvas) end
     local dg = Entry(idx)
@@ -4136,7 +4141,8 @@ local function DungeonMapNotes()
     -- the feather couldn't be clicked, and the quill couldn't be put away from here)
     dm.stamp:SetFrameLevel(ns.dungeonOverlay:GetFrameLevel() + 8)
     if dm.quill then dm.quill:SetFrameLevel(dm.stamp:GetFrameLevel() + 1) end
-    dm.stamp:Show()
+    -- (docked, only on the big map, as the boss list: on the square they're in the way, the user)
+    dm.stamp:SetShown(not (ns.Docked and ns.Docked()) or (ns.DockBigMovable and ns.DockBigMovable()) or false)
 end
 
 C_Timer.NewTicker(0.3, ns.Timed("Notebook tick", function()

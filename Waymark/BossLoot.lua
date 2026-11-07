@@ -6,8 +6,9 @@ local GetItemQualityColor = GetItemQualityColor or ns.GetItemQualityColor
 -- "What they carry": a dungeon's boss loot in a window beside the map (mock-up
 -- mockups\boss-loot.html, A). Opened from the quill menu of a boss on the dungeon
 -- map or of a dungeon's entrance pin (Dungeon.lua). Data\WorldQuests.lua's
--- bossloot: each boss's own drops with their chances, best first, quest items
--- last. A tab per boss in kill order (Data\DungeonEncounters.lua); each item its
+-- bossloot: each boss's own drops with their chances, best first, then quest items,
+-- then recipes (Forever gives some bosses over 20). A long list scrolls with the wheel.
+-- A tab per boss in kill order (Data\DungeonEncounters.lua); each item its
 -- icon, name in quality colour, slot and type, chance. Hover: the game's item
 -- tooltip; Shift-click links it, Ctrl-click tries it on. "Only what I can wear"
 -- (wilds.lootWear) hides armour and weapons your class can't use.
@@ -15,7 +16,12 @@ local GetItemQualityColor = GetItemQualityColor or ns.GetItemQualityColor
 
 local W = 330
 local ROW = 34
-local QUEST = 12  -- (item class)
+local MAX_LIST = 11.5 * (ROW + 2)  -- (more scrolls; the row cut in half says there's more)
+local QUEST, RECIPE = 12, 9  -- (item classes)
+-- a recipe the game hasn't sent yet goes by the first word of our name for it
+local RECIPE_WORDS = { Recipe = true, Pattern = true, Plans = true, Formula = true, Schematic = true,
+    Blueprint = true, Design = true, Manual = true }
+local ItemInstant = GetItemInfoInstant or (C_Item and C_Item.GetItemInfoInstant)
 
 -- what each class can wear: weapon subclasses, best armour (1 cloth .. 4 plate),
 -- shield, relic subclass
@@ -92,7 +98,12 @@ end
 -- Window ---------------------------------------------------------------------------
 
 local f, tabs, rows, labels = nil, {}, {}, {}
-local shown = { inst = nil, boss = nil }
+local shown = { inst = nil, boss = nil, maxScroll = 0 }
+
+local function Wheel(_, d)
+    local s = f.scroll
+    s:SetVerticalScroll(math.max(0, math.min(s:GetVerticalScroll() - d * 3 * (ROW + 2), shown.maxScroll)))
+end
 
 local function Text(parent, font, r, g, b)
     local t = parent:CreateFontString(nil, "OVERLAY", font)
@@ -134,7 +145,7 @@ end
 local function Row(i)
     local r = rows[i]
     if r then return r end
-    r = CreateFrame("Button", nil, f)
+    r = CreateFrame("Button", nil, f.list)
     r:SetSize(W - 12, ROW)
     -- (under the icon and text: the HIGHLIGHT layer would draw over them)
     r.hl = r:CreateTexture(nil, "BACKGROUND")
@@ -173,6 +184,8 @@ local function Row(i)
         local _, link = GetItemInfo(self.item)
         if link and HandleModifiedItemClick then HandleModifiedItemClick(link) end
     end)
+    r:EnableMouseWheel(true)
+    r:SetScript("OnMouseWheel", Wheel)
     rows[i] = r
     return r
 end
@@ -180,7 +193,7 @@ end
 local function Label(i, text)
     local l = labels[i]
     if not l then
-        l = Text(f, "GameFontDisableSmall", 0.55, 0.55, 0.55)
+        l = Text(f.list, "GameFontDisableSmall", 0.55, 0.55, 0.55)
         labels[i] = l
     end
     l:SetText(text)
@@ -216,6 +229,13 @@ local function Make()
     f.where:SetPoint("RIGHT", close, "LEFT", -2, 0)
     f.boss = Text(f, "GameFontHighlight", 1, 1, 1)
     f.bossSub = Text(f, "GameFontDisableSmall", 0.55, 0.55, 0.55)
+
+    f.scroll = CreateFrame("ScrollFrame", nil, f)
+    f.list = CreateFrame("Frame", nil, f.scroll)
+    f.list:SetSize(W, 1)
+    f.scroll:SetScrollChild(f.list)
+    f.scroll:EnableMouseWheel(true)
+    f.scroll:SetScript("OnMouseWheel", Wheel)
 
     f.wear = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
     f.wear:SetSize(20, 20)
@@ -259,6 +279,7 @@ function ns.OpenBossLoot(instanceID, name)
     if not f then Make() end
     local row = bosses[1]
     for _, b in ipairs(bosses) do if b[1] == name then row = b end end
+    local sameList = shown.inst == instanceID and shown.boss == row[1]
     shown.inst, shown.boss = instanceID, row[1]
     local _, data = Rows(instanceID)
     local entrance = ns.DungeonEntrances and ns.DungeonEntrances[instanceID]
@@ -288,18 +309,23 @@ function ns.OpenBossLoot(instanceID, name)
     f.boss:ClearAllPoints()
     f.boss:SetPoint("TOPLEFT", 10, y)
     f.boss:SetText(row[1])
-    y = y - 18
+    local top = y - 18
+    y = 0  -- (from here down: inside the scrolling list)
 
-    -- items: gear (filtered), then quest items
+    -- items: gear (filtered), then quest items, then recipes
     local wear = Cfg().lootWear
     f.wear:SetChecked(wear and true or false)
-    local gear, quest = {}, {}
+    local gear, quest, recipes = {}, {}, {}
     for i, item in ipairs(row[2]) do
         local _, _, q, _, _, _, subType, _, equipLoc, _, _, classID, sub = GetItemInfo(item)
         if not q and C_Item and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, item) end
         local e = { item = item, q = q, classID = classID, subType = subType, equipLoc = equipLoc, chance = row[3][i] }
+        local class = classID or (ItemInstant and select(6, ItemInstant(item)))
+        local word = (data.Item.name(item) or ""):match("^(%a+):")
         if classID == QUEST then
             quest[#quest + 1] = e
+        elseif class == RECIPE or RECIPE_WORDS[word] then
+            recipes[#recipes + 1] = e
         elseif not (wear and classID and not CanWear(classID, sub)) then
             gear[#gear + 1] = e
         end
@@ -326,22 +352,37 @@ function ns.OpenBossLoot(instanceID, name)
         y = y - ROW - 2
     end
     for _, e in ipairs(gear) do Put(e) end
-    if #gear == 0 then
+    if #gear == 0 and #recipes == 0 then
         nl = nl + 1
         Label(nl, "Nothing here you can wear"):SetPoint("TOPLEFT", 12, y - 2)
         y = y - 18
     end
-    if #quest > 0 then
+    local function Section(text, list)
+        if #list == 0 then return end
         nl = nl + 1
         y = y - 4
-        Label(nl, "QUEST ITEMS"):SetPoint("TOPLEFT", 12, y)
+        Label(nl, text):SetPoint("TOPLEFT", 12, y)
         y = y - 14
-        for _, e in ipairs(quest) do Put(e) end
+        for _, e in ipairs(list) do Put(e) end
     end
+    Section("QUEST ITEMS", quest)
+    Section("RECIPES", recipes)
     for i = n + 1, #rows do rows[i]:Hide() end
     for i = nl + 1, #labels do labels[i]:Hide() end
 
-    y = y - 6
+    -- the list's window: no taller than the screen has room for
+    local height = -y
+    local room = UIParent:GetHeight() * UIParent:GetEffectiveScale() / f:GetEffectiveScale() + top - 60
+    local view = math.min(height, MAX_LIST, math.max(room, 3 * (ROW + 2)))
+    f.list:SetHeight(math.max(height, 1))
+    f.scroll:ClearAllPoints()
+    f.scroll:SetPoint("TOPLEFT", 0, top)
+    f.scroll:SetSize(W, math.max(view, 1))
+    shown.maxScroll = math.max(0, height - view)
+    f.scroll:SetVerticalScroll(sameList and math.min(f.scroll:GetVerticalScroll(), shown.maxScroll) or 0)
+    f.hint:SetText(shown.maxScroll > 0 and ("scroll: %d items"):format(n) or "Shift-click: link")
+
+    y = top - view - 6
     f.wear:ClearAllPoints()
     f.wear:SetPoint("TOPLEFT", 8, y)
     f.hint:ClearAllPoints()

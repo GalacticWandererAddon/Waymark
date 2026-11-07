@@ -36,15 +36,16 @@ end
 
 -- who you're talking to: our key, its name and kind (nil for items, yourself...)
 local function Giver()
-    local guid = UnitGUID("questnpc") or UnitGUID("npc")
+    -- (inside a dungeon on live Forever names and GUIDs can be secret: then not learned)
+    local guid = ns.Known(UnitGUID("questnpc")) or ns.Known(UnitGUID("npc"))
     if not guid then return end
     local kind, _, _, _, _, id = strsplit("-", guid)
     id = tonumber(id)
     if not id then return end
     if kind == "Creature" then
-        return "c" .. id, UnitName("questnpc") or UnitName("npc"), "npc"
+        return "c" .. id, ns.Known(UnitName("questnpc")) or ns.Known(UnitName("npc")), "npc"
     elseif kind == "GameObject" then
-        return "o" .. id, UnitName("questnpc") or UnitName("npc"), "object"
+        return "o" .. id, ns.Known(UnitName("questnpc")) or ns.Known(UnitName("npc")), "object"
     end
 end
 
@@ -188,9 +189,10 @@ if not ns.FOREVER then pcall(mobEvents.RegisterEvent, mobEvents, "COMBAT_LOG_EVE
 mobEvents:SetScript("OnEvent", function(_, event)
     if not ns.db then return end
     if event == "LOOT_OPENED" then
-        local guid = GetLootSourceInfo and GetLootSourceInfo(1)
+        -- (a loot source's GUID, the target's name and GUID: secret inside a dungeon on live Forever)
+        local guid = GetLootSourceInfo and ns.Known((GetLootSourceInfo(1)))
         local name
-        if not guid and UnitIsDead("target") then guid, name = UnitGUID("target"), UnitName("target") end
+        if not guid and ns.Known(UnitIsDead("target")) then guid, name = ns.Known(UnitGUID("target")), ns.Known(UnitName("target")) end
         if guid then ns.Safe("Learn loot", MobSeen, guid, name) end
         return
     end
@@ -359,7 +361,8 @@ local function Show(id, q)
     local faction = UnitFactionGroup("player")
     if faction and next(q.factions or {}) and not q.factions[faction] then return false end
     if c.mode == "gaps" and QuestieKnows(id) then return false end
-    if not c.trivial and Trivial(q.level) then return false end
+    -- (grey ones by the givers' own Low-level box: a second box here went unseen, the user, 2026-11-07)
+    if not (ns.GetTrivialQuests and ns.GetTrivialQuests()) and Trivial(q.level) then return false end
     return true
 end
 
@@ -373,12 +376,11 @@ local function PinsFor(mapID)
             local available, turnins = {}, {}
             for id in pairs(g.offers) do
                 local q = db.quests[id]
-                if Show(id, q) and not Completed(id) and InLog(id) == nil
-                   and not (q.repeatable and not c.repeatable) then
+                if Show(id, q) and not Completed(id) and InLog(id) == nil then   -- (repeatables too, as other givers)
                     available[#available + 1] = id
                 end
             end
-            if c.turnins then
+            if ns.IsShown("turnins") then   -- (turn-ins by the main Turn-ins box)
                 for id in pairs(g.takes) do
                     if InLog(id) == true and Show(id, db.quests[id]) then turnins[#turnins + 1] = id end
                 end
@@ -513,6 +515,12 @@ function ns.SetupLearned(map)
     end
     function ns.RedrawLearned()
         if map:IsShown() then ns.Safe("Learn draw", provider.Draw, provider) end
+    end
+    -- (the givers' Turn-ins box now decides learned turn-ins too: drawn again when it changes)
+    if ns.OnSettingChanged then
+        hooksecurefunc(ns, "OnSettingChanged", function(group)
+            if group == "turnins" then ns.RedrawLearned() end
+        end)
     end
     -- what you learn shows up while the map is open
     local elapsed = 0

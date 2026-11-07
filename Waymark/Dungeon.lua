@@ -53,6 +53,7 @@ end
 -- Fallback dungeon map -------------------------------------------------------
 
 local overlay, tiles, floorText, prevBtn, nextBtn
+local floorCount  -- docked: the floor's "(2/3)", bottom middle between the arrows (floorText keeps the name)
 local titleName, titleCounter  -- the floor shown: its name and "(2/5)", for the header
 local floors, floorIndex, shownInstance
 local preview  -- a dungeon you clicked on the zone map, shown from outside (further down)
@@ -307,6 +308,15 @@ end
 
 -- the floor buttons < >: either side of the header while it carries the floor's name (on the
 -- header itself, so the map's clipping can't cut them off), else either side of the floor text
+-- over the map's top-edge strip (Dock.lua), which lay over their upper half: its strata and above
+-- it, whatever theirs was (fstack, the user 2026-11-07: the strip HIGH 22, the arrows under it)
+local function OverRim(b)
+    local strip = ns.MapRimTop and ns.MapRimTop()
+    if not (b and strip) then return end
+    b:SetFrameStrata(strip:GetFrameStrata())
+    b:SetFrameLevel(strip:GetFrameLevel() + 2)
+end
+
 local function PlaceSteps(show)
     local h = ns.ZoneHeader
     local onHeader = show and h and ns.IsShown("zoneName") and h:IsShown()
@@ -314,20 +324,47 @@ local function PlaceSteps(show)
     for i, b in ipairs({ prevBtn, nextBtn }) do
         if b:GetParent() ~= parent then b:SetParent(parent) end
         b:ClearAllPoints()
-        if onHeader then
+        if onHeader and ns.Docked and ns.Docked() then
+            -- (docked the header fills the square's top: beside it the arrows sat on the gear. Under its
+            -- middle instead, the two side by side)
+            b:SetFrameLevel(h:GetFrameLevel() + 5)
+            if i == 1 then b:SetPoint("TOPRIGHT", h, "BOTTOM", -1, -1) else b:SetPoint("TOPLEFT", h, "BOTTOM", 1, -1) end
+        elseif onHeader then
             b:SetFrameLevel(h:GetFrameLevel() + 5)
             if i == 1 then b:SetPoint("RIGHT", h, "LEFT", -2, 0) else b:SetPoint("LEFT", h, "RIGHT", 2, 0) end
+        elseif floorCount and floorCount:IsShown() then
+            if i == 1 then b:SetPoint("RIGHT", floorCount, "LEFT", -4, 0) else b:SetPoint("LEFT", floorCount, "RIGHT", 4, 0) end
         elseif i == 1 then
             b:SetPoint("RIGHT", floorText, "LEFT", -6, 0)
         else
             b:SetPoint("LEFT", floorText, "RIGHT", 6, 0)
         end
+        OverRim(b)
         b:SetShown(show and true or false)
     end
 end
 
-local function ShowFloor()
+-- (Dock.lua, whenever it places the frame's rim: docking or undocking moves the header, and the
+-- arrows went on beside it, under the gear, the user)
+local ShowFloor, shownDocked  -- (below; docked or not when the floor was last laid out)
+function ns.DungeonButtonsOverRim()
+    local docked = ns.Docked and ns.Docked() or false
+    if overlay and docked ~= shownDocked then
+        -- (docked or undocked: the floor's name and count go elsewhere, and the view may change with it
+        -- (the minimap view is the undocked map's only): all of it again, once the dock has settled.
+        -- Only the floor laid out again left the name hidden after a dock, the user)
+        shownDocked = docked
+        C_Timer.After(0, function() if ns.UpdateDungeon then ns.UpdateDungeon() end end)
+    elseif prevBtn and floors and #floors > 1 and overlay and overlay:IsShown() then
+        PlaceSteps(prevBtn:IsShown())
+    end
+    OverRim(prevBtn) OverRim(nextBtn)
+    OverRim(viewBtn)
+end
+
+ShowFloor = function()
     local f = floors[floorIndex]
+    shownDocked = ns.Docked and ns.Docked() or false
     for _, tex in ipairs(tiles) do tex:Hide() end
     if f.tiles then
         -- 12 tiles of 256 px (4 x 3); the picture is their top-left 1002 x 668,
@@ -361,8 +398,16 @@ local function ShowFloor()
         and (name:lower() == sub:lower() or name:lower() == zone:lower())
     local counter = count > 1 and ("(" .. floorIndex .. "/" .. count .. ")") or ""
     titleName, titleCounter = name, counter
+    -- (docked, the header hidden: the name top middle, shaded and outlined; the count and the arrows at
+    -- the bottom middle, clear of the gear and buttons on a small square, the user 2026-11-07)
+    local split = ns.Docked and ns.Docked() and not ns.IsShown("zoneName") and count > 1
+    floorCount:SetShown(split)
+    floorCount:SetText(split and counter or "")
+    floorText:SetFont(floorText.font, floorText.size, split and "OUTLINE" or "")
     if ns.IsShown("zoneName") then
         floorText:SetText("")  -- (the header carries the floor's name: ZoneName.lua, ns.DungeonFloorTitle)
+    elseif split then
+        floorText:SetText(name)
     elseif count <= 1 and not (preview and f.name) then
         floorText:SetText("")  -- one floor: nothing to tell apart (a preview keeps the dungeon's name)
     else
@@ -370,6 +415,8 @@ local function ShowFloor()
     end
     if ns.UpdateZoneName then ns.UpdateZoneName() end
     PlaceSteps(count > 1)
+    floorText.shade(split and floorText:GetText() ~= "")
+    floorCount.shade(false)  -- (none under the count, the user: its outline is enough)
 end
 
 -- Boss markers -----------------------------------------------------------------
@@ -587,6 +634,7 @@ end
 function ns.DungeonQuillChanged() if overlay and overlay:IsShown() then DrawBosses() end end
 
 local function MarkKilled(name)
+    name = ns.Known(name)  -- (an event's name could come secret inside on live Forever: then no tick)
     if not name then return end
     Kills()[name:lower()] = true
     DrawBosses()
@@ -613,6 +661,7 @@ end
 
 local function CheckReset(msg)
     local fmt = INSTANCE_RESET_SUCCESS
+    msg = ns.Known(msg)  -- (chat inside can be secret on live Forever)
     if not (fmt and msg) then return end
     local pat = fmt:gsub("([%(%)%.%+%-%*%?%[%]%^%$])", "%%%1"):gsub("%%s", "(.+)")
     local name = msg:match("^" .. pat .. "$")
@@ -859,9 +908,11 @@ UpdateList = function(lit)
     end
     local names, kind = {}, {}
     if shownInstance then names, kind = Encounters(shownInstance) end
-    if not (Cfg().bossList and #names > 0 and canvas:IsShown()) then list:Hide() return end
+    -- (docked, only on the big map: on the square it was in the way whatever its size, the user)
+    local small = ns.Docked and ns.Docked() and not (ns.DockBigMovable and ns.DockBigMovable())
+    if not (Cfg().bossList and #names > 0 and canvas:IsShown()) or small then list:Hide() return end
     list:ClearAllPoints()
-    if viewBtn and viewBtn:IsShown() then
+    if viewBtn and viewBtn:IsShown() and ns.Docked and ns.Docked() then
         list:SetPoint("TOPLEFT", viewBtn, "BOTTOMLEFT", 2, -8)
     else
         list:SetPoint("TOPLEFT", overlay, "TOPLEFT", 6, -8)
@@ -945,6 +996,8 @@ RefreshNotes = function() UpdateList() end
 
 local function CreateList(parent)
     list = CreateFrame("Frame", nil, parent)
+    -- (over the dungeon's object pins, DungeonObjects.lua at the canvas + 6 to 8: a quest pin sat on it)
+    list:SetFrameLevel(parent:GetFrameLevel() + 10)
     list:SetSize(140, 30)
     list:EnableMouse(true)  -- (a click between rows isn't one on the map)
     -- the slip: a window of the notebook's paper, its shadow on the map
@@ -1408,12 +1461,24 @@ local function UpdateFallback(map)
     -- button turns to that face, unless the dock is set to the map only)
     local docked = ns.Docked and ns.Docked()
     local minimapView = Cfg().view == "minimap" and not InCombat() and not docked
+    -- (docked: the square's minimap face, Dock.lua; the switch stays, all else of the dungeon map goes)
+    local dockMini = docked and ns.DockDungeonMinimap and ns.DockDungeonMinimap()
+    -- (docked: under the header, top left; else bottom left, over the coordinates, as in caves: the user)
+    viewBtn:ClearAllPoints()
+    if docked then
+        viewBtn:SetPoint("TOPLEFT", overlay, "TOPLEFT", 4, -26)
+    else
+        viewBtn:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", 6, 6 + (ns.CoordsCornerLift and ns.CoordsCornerLift() or 0))
+    end
     if not floors and not minimapView then overlay:Hide() return end  -- (no art: the minimap view still works)
     overlay:Show()
     coversIn = instanceID
-    viewBtn:SetText(minimapView and "Map" or "Minimap")
+    local art = ns.MEDIA .. ((minimapView or dockMini) and "StudMap" or "StudNeedle")
+    viewBtn.icon:SetTexture(art)
+    viewBtn.shine:SetTexture(art)
     -- (nothing to switch to without art)
-    viewBtn:SetShown(floors ~= nil and not (docked and ns.db.dock.mapOnly))
+    viewBtn:SetShown(floors ~= nil)
+    if ns.MapRimClearLeft then ns.MapRimClearLeft((viewBtn:IsShown() and docked) and 34 or 0) end
 
     if minimapView then
         canvas:Hide()
@@ -1423,6 +1488,13 @@ local function UpdateFallback(map)
         nextBtn:Hide()
         UpdateList()
         Borrow()
+    elseif dockMini then
+        canvas:Hide()
+        markerLayer:Hide()
+        floorText:Hide()
+        prevBtn:Hide()
+        nextBtn:Hide()
+        if list then list:Hide() end  -- (see-through, but its tooltips still came up)
     else
         GiveBack()
         canvas:Show()
@@ -1657,6 +1729,33 @@ local function CreateOverlay(map)
     floorText = top:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     floorText:SetPoint("TOP", 0, -4)
     floorText:SetShadowOffset(1, -1)
+    floorText.font, floorText.size = floorText:GetFont()
+    floorCount = top:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    floorCount:SetPoint("BOTTOM", 0, 6)
+    floorCount:SetFont(floorText.font, floorText.size, "OUTLINE")
+    floorCount:Hide()
+    -- the quest tracker's shade behind a line (Media\TextShade.tga: soft ends, Tracker.lua's Band)
+    local function Shade(fs)
+        local b = {}
+        for k, l in ipairs({ 0, 0.25, 0.75 }) do
+            b[k] = top:CreateTexture(nil, "BACKGROUND")
+            b[k]:SetTexture(ns.MEDIA .. "TextShade")
+            b[k]:SetTexCoord(l, k == 2 and 0.75 or l + 0.25, 0, 1)
+            b[k]:SetVertexColor(0, 0, 0, 0.6)
+            b[k]:Hide()
+        end
+        b[2]:SetPoint("TOPLEFT", fs, "TOPLEFT", 0, 4)
+        b[2]:SetPoint("BOTTOMRIGHT", fs, "BOTTOMRIGHT", 0, -4)
+        b[1]:SetPoint("TOPRIGHT", b[2], "TOPLEFT")
+        b[1]:SetPoint("BOTTOMRIGHT", b[2], "BOTTOMLEFT")
+        b[3]:SetPoint("TOPLEFT", b[2], "TOPRIGHT")
+        b[3]:SetPoint("BOTTOMLEFT", b[2], "BOTTOMRIGHT")
+        b[1]:SetWidth(7)  -- (hugging the text's ends, the user)
+        b[3]:SetWidth(7)
+        fs.shade = function(on) for _, t in ipairs(b) do t:SetShown(on and true or false) end end
+    end
+    Shade(floorText)
+    Shade(floorCount)
     local function Step(d)
         manualFloor = true
         floorIndex = (floorIndex - 1 + d) % #floors + 1
@@ -1665,13 +1764,34 @@ local function CreateOverlay(map)
         DrawBosses()
     end
     ns.DungeonStepFloor = function(d) if floors and #floors > 1 then Step(d) end end
-    prevBtn = CreateFrame("Button", nil, top, "UIPanelButtonTemplate")
-    prevBtn:SetSize(22, 18)
+    -- (ink, no box: the user picked A in mockups/dungeon-buttons.html. The arrows in the header's gold,
+    -- the switch a word in the notes' ink, underlined in red; the hit areas as the old buttons')
+    local function InkButton(w, h, font, size, color, hover)
+        local b = CreateFrame("Button", nil, top)
+        b:SetSize(w, h)
+        local fs = b:CreateFontString(nil, "OVERLAY")
+        SetHand(fs, size, font)
+        b:SetFontString(fs)
+        b.ink, b.inkHover = color, hover
+        local function Paint(over)
+            local c = over and b.inkHover or b.ink
+            fs:SetTextColor(c[1], c[2], c[3])
+        end
+        b.Paint = Paint
+        b:HookScript("OnEnter", function() Paint(true) end)
+        b:HookScript("OnLeave", function() Paint(false) end)
+        Paint(false)
+        return b, fs
+    end
+    local GOLD, GOLD_HI = { 1, 0.82, 0 }, { 1, 0.95, 0.77 }
+    local fs
+    prevBtn, fs = InkButton(22, 20, HAND, 20, GOLD, GOLD_HI)
+    fs:SetShadowOffset(1, -1)
     prevBtn:SetText("<")
     prevBtn:SetPoint("RIGHT", floorText, "LEFT", -6, 0)
     prevBtn:SetScript("OnClick", function() Step(-1) end)
-    nextBtn = CreateFrame("Button", nil, top, "UIPanelButtonTemplate")
-    nextBtn:SetSize(22, 18)
+    nextBtn, fs = InkButton(22, 20, HAND, 20, GOLD, GOLD_HI)
+    fs:SetShadowOffset(1, -1)
     nextBtn:SetText(">")
     nextBtn:SetPoint("LEFT", floorText, "RIGHT", 6, 0)
     nextBtn:SetScript("OnClick", function() Step(1) end)
@@ -1686,31 +1806,78 @@ local function CreateOverlay(map)
     end
 
     -- Map / Minimap switch, top left (the gear and toggle buttons are top right)
-    viewBtn = CreateFrame("Button", nil, top, "UIPanelButtonTemplate")
-    viewBtn:SetSize(70, 18)
-    viewBtn:SetPoint("TOPLEFT", 4, -4)
-    viewBtn:SetScript("OnClick", function()
+    -- (a brass stud, as the boss list's pin: a compass needle to the minimap, a folded map back; the
+    -- user picked "a, needle" in mockups/dungeon-buttons.html. Small, for the docked square)
+    -- (on a frame of its own beside the overlay, not in it: docked on the minimap face the overlay goes
+    -- see-through (Dock.lua) and took the switch with it, the way back. Shown and hidden with it)
+    local holder = CreateFrame("Frame", nil, overlay:GetParent():GetParent() or overlay:GetParent())
+    holder:SetAllPoints(overlay)
+    hooksecurefunc(overlay, "Show", function() holder:Show() end)
+    hooksecurefunc(overlay, "Hide", function() holder:Hide() end)
+    hooksecurefunc(overlay, "SetShown", function(_, on) holder:SetShown(on) end)
+    holder:SetShown(overlay:IsShown())
+    viewBtn = CreateFrame("Button", nil, holder)
+    viewBtn:SetSize(22, 22)
+    viewBtn.icon = viewBtn:CreateTexture(nil, "ARTWORK")
+    viewBtn.icon:SetAllPoints()
+    viewBtn.icon:SetTexture(ns.MEDIA .. "StudNeedle")
+    viewBtn.shine = viewBtn:CreateTexture(nil, "HIGHLIGHT")
+    viewBtn.shine:SetAllPoints()
+    viewBtn.shine:SetTexture(ns.MEDIA .. "StudNeedle")
+    viewBtn.shine:SetBlendMode("ADD")
+    viewBtn.shine:SetAlpha(0.25)
+    viewBtn:SetScript("OnMouseDown", function(self)
+        self.icon:ClearAllPoints()
+        self.icon:SetPoint("TOPLEFT", 1, -1)
+        self.icon:SetPoint("BOTTOMRIGHT", 1, -1)
+    end)
+    viewBtn:SetScript("OnMouseUp", function(self)
+        self.icon:ClearAllPoints()
+        self.icon:SetAllPoints()
+    end)
+    -- (the map's top-edge strip stops short of it while it shows, Dock.lua)
+    viewBtn:HookScript("OnShow", function()
+        if ns.MapRimClearLeft then ns.MapRimClearLeft((ns.Docked and ns.Docked()) and 34 or 0) end
+    end)
+    viewBtn:HookScript("OnHide", function() if ns.MapRimClearLeft then ns.MapRimClearLeft(0) end end)
+    OverRim(viewBtn)
+    viewBtn:SetPoint("TOPLEFT", overlay, "TOPLEFT", 4, -4)
+    viewBtn:SetScript("OnClick", function(self)
         if ns.Docked and ns.Docked() then
-            if ns.DockShowMinimap then ns.DockShowMinimap() end
+            -- (docked: the square's other face, the minimap; the X, the map's key or this brings it back)
+            GameTooltip:Hide()  -- (the switch goes with the dungeon map)
+            if ns.DockToggleDungeonMinimap then ns.DockToggleDungeonMinimap() end
             return
         end
         local c = Cfg()
         c.view = c.view == "minimap" and "art" or "minimap"
         if ns.RefreshControls then ns.RefreshControls() end
         ns.UpdateDungeon()
+        -- (the tooltip says what a click does next: told again, the user)
+        if GameTooltip:IsOwned(self) and self:IsMouseOver() then self:GetScript("OnEnter")(self) end
     end)
     viewBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("Switch view")
-        GameTooltip:AddLine("Minimap: your arrow and the game's own detail (borrows your minimap).", 1, 1, 1, true)
-        GameTooltip:AddLine("Map: the dungeon's map with boss markers.", 1, 1, 1, true)
+        local onMinimap = Cfg().view == "minimap" and not (ns.Docked and ns.Docked())
+        GameTooltip:AddLine(onMinimap and "The dungeon's map" or "Your minimap")
+        if ns.Docked and ns.Docked() then
+            ns.ShiftLines(self, { "Your minimap, in the dungeon map's place. The X or the map's key brings the dungeon map back." })
+        else
+            ns.ShiftLines(self, { "Minimap: your arrow and the game's own detail (borrows your minimap).",
+                                  "Map: the dungeon's map with boss markers." })
+        end
         GameTooltip:Show()
     end)
     viewBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     CreateList(top)  -- the bosses, below the switch
 
-    overlay:SetScript("OnSizeChanged", function() if floors and overlay:IsShown() then Layout() end end)
+    overlay:SetScript("OnSizeChanged", function()
+        if floors and overlay:IsShown() then
+            Layout()
+            UpdateList()  -- (docked: the list only on the big map)
+        end
+    end)
     overlay:HookScript("OnShow", function() if ns.UpdateZoneName then ns.UpdateZoneName() end end)
     overlay:HookScript("OnHide", function()
         PlaceSteps(false)  -- (off the header, back with the floor text)
@@ -2198,7 +2365,7 @@ function ns.SetupDungeon(map)
         end
         if event == "ENCOUNTER_END" then
             local _, encounterName, _, _, success = ...
-            if success == 1 then MarkKilled(encounterName) end
+            if ns.Known(success) == 1 then MarkKilled(encounterName) end
             return
         end
         if event == "BOSS_KILL" then

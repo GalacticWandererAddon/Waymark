@@ -409,18 +409,28 @@ local styleButton
 
 local function CreateStyleButton(map)
     local area = map.ScrollContainer or map
-    local b = CreateFrame("Button", nil, area, "BackdropTemplate")
-    b:SetSize(96, 18)
+    -- (the dungeon map's brass stud, the user 2026-11-07: a compass needle to the minimap pictures,
+    -- a folded map back to Blizzard's cave map; bottom left, over the coordinates)
+    local b = CreateFrame("Button", nil, area)
+    b:SetSize(22, 22)
     b:SetPoint("BOTTOMLEFT", area, "BOTTOMLEFT", 6, 6)
     b:SetFrameLevel(math.min(area:GetFrameLevel() + 5100, 9100))  -- over the cave view
-    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8",
-                    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 10,
-                    insets = { left = 2, right = 2, top = 2, bottom = 2 } })
-    b:SetBackdropColor(0.08, 0.06, 0.04, 0.85)
-    b:SetBackdropBorderColor(0.75, 0.6, 0.35)
-    b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    b.text:SetPoint("CENTER")
-    b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+    b.icon = b:CreateTexture(nil, "ARTWORK")
+    b.icon:SetAllPoints()
+    b.shine = b:CreateTexture(nil, "HIGHLIGHT")
+    b.shine:SetAllPoints()
+    b.shine:SetBlendMode("ADD")
+    b.shine:SetAlpha(0.25)
+    function b:Art(name)
+        self.icon:SetTexture(ns.MEDIA .. name)
+        self.shine:SetTexture(ns.MEDIA .. name)
+    end
+    b:SetScript("OnMouseDown", function(self)
+        self.icon:ClearAllPoints()
+        self.icon:SetPoint("TOPLEFT", 1, -1)
+        self.icon:SetPoint("BOTTOMRIGHT", 1, -1)
+    end)
+    b:SetScript("OnMouseUp", function(self) self.icon:ClearAllPoints() self.icon:SetAllPoints() end)
     b:SetScript("OnClick", function()
         local c = Cfg()
         c.minimapStyleEverywhere = not c.minimapStyleEverywhere
@@ -428,9 +438,9 @@ local function CreateStyleButton(map)
     end)
     b:SetScript("OnEnter", function()
         GameTooltip:SetOwner(b, "ANCHOR_TOP")
-        GameTooltip:AddLine("Cave art")
-        GameTooltip:AddLine(Cfg().minimapStyleEverywhere and "Showing the minimap pictures." or "Showing Blizzard's cave map.", 1, 1, 1, true)
-        ns.Hints({ { "Click", Cfg().minimapStyleEverywhere and "Blizzard's cave map" or "the minimap pictures" } })
+        GameTooltip:AddLine(Cfg().minimapStyleEverywhere and "Blizzard's cave map" or "The minimap pictures")
+        ns.ShiftLines(b, { Cfg().minimapStyleEverywhere and "Showing the minimap pictures. A click: Blizzard's cave map."
+                           or "Showing Blizzard's cave map. A click: the minimap pictures." })
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -448,7 +458,10 @@ local function UpdateStyleButton(map, kind, cont, x, y)
         return
     end
     styleButton:SetScale(ns.AddonScale() / math.max(0.1, map:GetScale()))  -- (its size on screen, like the map's buttons)
-    styleButton.text:SetText(kind == "extra" and "Map art" or "Minimap style")
+    styleButton:Art(kind == "extra" and "StudMap" or "StudNeedle")
+    styleButton:ClearAllPoints()
+    local area = map.ScrollContainer or map
+    styleButton:SetPoint("BOTTOMLEFT", area, "BOTTOMLEFT", 6, 6 + (ns.CoordsCornerLift and ns.CoordsCornerLift() or 0))
     styleButton:Show()
 end
 
@@ -700,6 +713,7 @@ local function UpdateQuestPins(k)
     questHolder:SetFrameLevel(viewCanvas:GetFrameLevel() + 3)  -- (over the art, under the arrow)
     questZone = questZone or CaveZone()
     local sig = tostring(questZone) .. ":" .. tostring(ns.QuestVersion and ns.QuestVersion()) .. ":" .. UnitLevel("player")
+        .. ":" .. tostring(ns.IsShown("ground")) .. tostring(ns.IsShown("spots"))
     if sig ~= questSig then
         questSig, questK = sig, nil
         local n, all, placed = 0, 0, 0
@@ -707,7 +721,7 @@ local function UpdateQuestPins(k)
         -- any there: the ones above ground over the cave stay off it; the user, 2026-11-03)
         local c = (state.kind == "blizzard" or state.kind == "micro") and ns.MapCaves[state.id]
         local only = ns.QuestsUnder and ns.QuestsUnder(c and c[1] or (GetMinimapZoneText and GetMinimapZoneText()))
-        for _, icon in ipairs(questZone and ns.QuestIconsShown(questZone) or {}) do
+        for _, icon in ipairs(questZone and ns.QuestIconsShown(questZone, true) or {}) do
             all = all + 1
             local skip = only and icon.group == "spots" and not only[icon.id]
             local ok, _, pos

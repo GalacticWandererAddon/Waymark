@@ -111,6 +111,14 @@ local function Place(map)
     end
 end
 
+-- how far a button in the map's bottom-left corner goes up to clear the coordinates (Dungeon.lua and
+-- Cave.lua's brass switch)
+function ns.CoordsCornerLift()
+    local c = ns.db and ns.db.coords
+    if not (c and ns.IsShown("coords") and c.side ~= "outside" and (c.where or "BOTTOMLEFT") == "BOTTOMLEFT") then return 0 end
+    return (c.size or 10) + 6
+end
+
 function ns.UpdateCoords()
     if not bar then return end
     local c = Cfg()

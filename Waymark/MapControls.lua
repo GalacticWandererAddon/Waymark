@@ -836,8 +836,12 @@ local function SetArrowSize(map, gm)
     local lo, s = sc and sc.zoomLevels and sc:GetScaleForMinZoom(), sc and sc:GetCanvasScale()
     local size = base
     if lo and s and lo > 0 and s > lo then size = base * (s / lo) ^ 0.35 end
-    -- (docked: one size at every zoom, the minimap's arrow's, so there's no jump between them)
-    if ns.Docked and ns.Docked() then size = base * 1.12 end
+    -- (docked: the minimap's arrow's size close in, so there's no jump between them; further out it
+    -- grows, up to 50% at the widest, where it looked small, the user, and at mid zoom too)
+    if ns.Docked and ns.Docked() then
+        local out = lo and s and lo > 0 and math.max(0, 1 - (s / lo - 1) / 6) or 0
+        size = base * 1.12 * (1 + 0.5 * out)
+    end
     if lastArrow and math.abs(size - lastArrow) < 0.25 then return end
     lastArrow = size
     pcall(gm.SetUnitPinSize, gm, "player", size)
@@ -1094,7 +1098,36 @@ local function PerZone(map)
     return Cfg().autoWidth and ns.ZoneBounds and map:GetMapID() and not (ns.InCave and ns.InCave())
 end
 
+-- In a dungeon or raid the map has a size of its own a dungeon (dungeonSizes, by instance): the first
+-- time in, the size the map had as you went in, or your normal size if it was closed; after that what
+-- you leave it at (the user, 2026-11-07: the dungeon's own shape opened it big).
+local function DungeonKey()
+    local inside, kind = IsInInstance()
+    if not (inside and (kind == "party" or kind == "raid")) then return end
+    if ns.Browsing and ns.Browsing() then return end
+    return select(8, GetInstanceInfo())
+end
+
+local function DungeonSize(map)
+    local key = DungeonKey()
+    if not key then return end
+    local c = Cfg()
+    c.dungeonSizes = c.dungeonSizes or {}
+    local s = c.dungeonSizes[key]
+    if not s then
+        local w, h = ManualSize()
+        if map:IsShown() and not c.big and not (ns.Docked and ns.Docked()) then
+            w, h = map:GetWidth(), map:GetHeight()
+        end
+        s = { math.max(MIN_W, w), math.max(MIN_H, h) }
+        c.dungeonSizes[key] = s
+    end
+    return s[1], s[2]
+end
+
 local function NormalSize(map)
+    local dw, dh = DungeonSize(map)
+    if dw then return dw, dh end
     local w, h = ManualSize()
     local c = Cfg()
     if not PerZone(map) then return w, h end
@@ -1292,6 +1325,9 @@ function ns.KeepScreenSize(k)
     if c.bigWidth then
         c.bigWidth, c.bigHeight = math.max(MIN_W, c.bigWidth * k), math.max(MIN_H, c.bigHeight * k)
     end
+    for id, s in pairs(c.dungeonSizes or {}) do
+        c.dungeonSizes[id] = { math.max(MIN_W, s[1] * k), math.max(MIN_H, s[2] * k) }
+    end
     StopGlide()
     UpdateShape(true)
 end
@@ -1317,6 +1353,10 @@ function ns.SetMapSize(w, h, dragging)
         else
             c.bigWidth, c.bigHeight = nil, nil
         end
+    elseif DungeonKey() then
+        Cfg().dungeonSizes = Cfg().dungeonSizes or {}
+        local mw, mh = ManualSize()
+        Cfg().dungeonSizes[DungeonKey()] = w and { math.max(MIN_W, w), math.max(MIN_H, h) } or { mw, mh }
     elseif w then
         w, h = math.max(MIN_W, w), math.max(MIN_H, h)
         if perZone then

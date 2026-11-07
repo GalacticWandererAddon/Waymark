@@ -465,7 +465,10 @@ local function Collect()
         local pa, pb = lastOrder[a.id] or math.huge, lastOrder[b.id] or math.huge
         if pa ~= pb then return pa < pb end
     end
+    -- (finished quests last in their list, whatever the order, a route's too)
+    local doneLast = c.finishedLast ~= false
     table.sort(out, function(a, b)
+        if doneLast and (a.complete and true or false) ~= (b.complete and true or false) then return b.complete and true or false end
         if sort == "distance" then
             local n = Nearer(a, b)
             if n ~= nil then return n end
@@ -873,7 +876,13 @@ local function Row(i)
     r.count:SetWordWrap(false)
     r.rule = r:CreateTexture(nil, "ARTWORK")
     r.rule:SetHeight(1)
+    r.bands = {}   -- (tracker.textShade: Band)
     r:SetScript("OnClick", function(self, button)
+        -- a route line (the Lab's): what's to do at that stop, on a click, not on hover
+        if self.routeStop then
+            if button == "LeftButton" and ns.RouteStepTip then ns.RouteStepTip(self, self.routeStop) end
+            return
+        end
         -- a sub-zone heading: its quests folded away under it, or shown again
         if self.kind == "area" and self.area then
             local c = Cfg()
@@ -919,6 +928,7 @@ local function Row(i)
     -- a quest's title lights up under the mouse, as in the game's tracker,
     -- and its objective areas light up on the map
     r:SetScript("OnEnter", function(self)
+        if self.routeStop or (self.kind == "area" and not self.area) then return end
         if self.kind == "area" or self.kind == "untracked" then
             GameTooltip:SetOwner(self, "ANCHOR_LEFT")
             GameTooltip:AddLine(self.text:GetText() or "")
@@ -965,10 +975,40 @@ end
 -- texture path; indent: from the left. extra (optional): level, levelColor,
 -- levelW (the level column), count, countColor (at the right), rule (a thin
 -- rule after the text), flashKey (its key in flashAt). Returns the y below it.
+-- a soft dark band under some words (tracker.textShade, tools/text_shade_art.py): a stretched middle with
+-- feathered ends of a fixed width, so a long line's ends are as soft as a short one's
+local CAP = 12
+local function Band(row, i, x, w, h, a)
+    local b = row.bands[i]
+    if not b then
+        b = {}
+        for k, l in ipairs({ 0, 0.25, 0.75 }) do
+            b[k] = row:CreateTexture(nil, "BACKGROUND")
+            b[k]:SetTexture(ns.MEDIA .. "TextShade")
+            b[k]:SetTexCoord(l, k == 2 and 0.75 or l + 0.25, 0, 1)
+        end
+        b[1]:SetPoint("TOPRIGHT", b[2], "TOPLEFT")
+        b[3]:SetPoint("TOPLEFT", b[2], "TOPRIGHT")
+        row.bands[i] = b
+    end
+    b[2]:ClearAllPoints()
+    b[2]:SetPoint("TOPLEFT", row, "TOPLEFT", x, 5)
+    b[2]:SetSize(math.max(1, w), h + 10)
+    for k = 1, 3 do
+        if k ~= 2 then b[k]:SetSize(CAP, h + 10) end
+        b[k]:SetVertexColor(0, 0, 0, a)
+        b[k]:Show()
+    end
+end
+local function NoBand(row, i)
+    for _, t in ipairs(row.bands[i] or {}) do t:Hide() end
+end
+
 local function Line(i, y, width, kind, text, color, quest, icon, indent, extra)
     local row = Row(i)
     extra = extra or {}
     row.kind, row.quest, row.color = kind, quest, color
+    row.area, row.routeStop = nil, extra and extra.route
     row.flashKey, row.countColor = extra.flashKey, extra.countColor or color
     local c = Cfg()
     local font, size, flags = TextFor(kind)
@@ -1057,12 +1097,27 @@ local function Line(i, y, width, kind, text, color, quest, icon, indent, extra)
     end
     local hgt = math.max(row.text:GetStringHeight(), size) + 1
     row:ClearAllPoints()
-    row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
+    row:SetPoint("TOPLEFT", content, "TOPLEFT", CAP, -y)  -- (CAP: room for a band's soft left end)
     row:SetSize(width, hgt)
     row.top, row.bottom = y, y + hgt  -- (ScrollTo: what fits whole)
+    -- a soft band under the words, so they read with no background: the text, and the count on its own,
+    -- nothing under the icons or the gap between (the level column counts as text)
+    local shade = c.textShade or 0
+    if shade > 0 and text ~= "" then
+        local from = extra.level and indent or x
+        Band(row, 1, from, x - from + math.min(row.text:GetStringWidth(), row.text:GetWidth()), hgt, shade)
+    else
+        NoBand(row, 1)
+    end
+    if shade > 0 and extra.count then
+        local cw = row.count:GetStringWidth()
+        Band(row, 2, width - cw, cw, hgt, shade)
+    else
+        NoBand(row, 2)
+    end
     -- only the text itself answers the mouse (the tooltip, the clicks): a
     -- quest's title, a sub-zone heading
-    local live = kind == "quest" or kind == "area"
+    local live = kind == "quest" or kind == "area" or row.routeStop ~= nil
     row:EnableMouse(live)
     if live then
         local tw = math.min(row.text:GetStringWidth(), row.text:GetWidth())
@@ -1221,6 +1276,26 @@ local function WantGameHidden()
     return h and frame and frame:IsShown() and true or false
 end
 
+-- Controller mode: Hide from addon code runs the tracker's own scripts under our
+-- taint, on every quest update (see the OnShow hook below). The gamepad UI then
+-- gets blocked closing the map (SetPreferredGamepadInteractTarget, a player's
+-- report). See-through and tiny instead: no scripts run, and it can't catch a click.
+local faded = {}
+local function Fade(f, on)
+    if on and not faded[f] then
+        faded[f] = f:GetScale()
+        f:SetAlpha(0)
+        f:SetScale(0.001)
+    elseif not on and faded[f] then
+        f:SetScale(faded[f])
+        f:SetAlpha(1)
+        faded[f] = nil
+    end
+end
+local function ControllerUI()
+    return InputUtil and InputUtil.IsGamepadUIEnabled and InputUtil.IsGamepadUIEnabled()
+end
+
 local function ApplyGameTracker()
     local want = WantGameHidden()
     if want == gameHidden then return end
@@ -1234,7 +1309,9 @@ local function ApplyGameTracker()
     gameHidden = want
     for _, name in ipairs(GAME_TRACKERS) do
         local f = _G[name]
-        if f then
+        if f and name == "ObjectiveTrackerFrame" and (faded[f] or ControllerUI()) then
+            Fade(f, want)
+        elseif f then
             if not hooked[name] then
                 hooked[name] = true
                 -- the game shows its tracker again on every quest update
@@ -1269,6 +1346,7 @@ local function Draw()
     -- (detached: with the map closed too)
     local want = map and (map:IsShown() or c.detached) and ns.IsShown("tracker") and (#list > 0 or #untracked > 0 or not c.hideEmpty)
     frame:SetShown(want and true or false)
+    ns.trackerDraws = (ns.trackerDraws or 0) + 1  -- (the quest item buttons follow at once)
     ApplyGameTracker()
     if not want then return end
 
@@ -1303,7 +1381,10 @@ local function Draw()
     local pad = math.max(PAD, inside + 4)
     header:ClearAllPoints()
     header:SetPoint("TOPLEFT", pad, -pad)
-    scroll:SetPoint("BOTTOMRIGHT", -pad, pad)
+    -- (the list reaches a band's end cap past its rows on both sides, so the shade fades
+    -- out before a heading and past the counts, not cut off by the scroll; the rows sit
+    -- CAP in from the content's left, where they always were on screen)
+    scroll:SetPoint("BOTTOMRIGHT", -pad + CAP, pad)
 
     local width = math.max(60, frame:GetWidth() - pad * 2)
     local headH = DrawHeader(width)
@@ -1311,7 +1392,7 @@ local function Draw()
     -- the list
     local gutter = c.icons ~= false and ((c.fontSize or 12) + 10) or 0
     local WHITE, GREY, GREEN = { 1, 1, 1 }, { 0.6, 0.6, 0.6 }, { 0.3, 1, 0.3 }
-    content:SetWidth(width)
+    content:SetWidth(width + CAP)
     local n = 0  -- (lines used)
     -- the level column (levelColumn): as wide as the widest level shown, its tag left
     -- out: a tagged level (25D) pushes its own title along, the others keep no gap for it
@@ -1367,7 +1448,7 @@ local function Draw()
         -- (the Lab's quest routes: the next stops, over the quests)
         for _, l in ipairs(ns.RouteLines and ns.RouteLines() or {}) do
             n = n + 1
-            y = Line(n, y, width, l.kind, l.text, l.color, nil, nil, l.indent or 0)
+            y = Line(n, y, width, l.kind, l.text, l.color, nil, nil, l.indent or 0, { route = l.stop })
         end
         if n > 0 then y = y + (c.questGap or 6) end
         if hereCount == 0 then
@@ -1632,7 +1713,7 @@ local function Build(map)
 
     -- the list: scrolls with the mouse wheel, no scroll bar
     scroll = CreateFrame("ScrollFrame", nil, frame)
-    scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -4)
+    scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", -CAP, -4)
     scroll:SetPoint("BOTTOMRIGHT", -PAD, PAD)
     content = CreateFrame("Frame", nil, scroll)
     content:SetSize(1, 1)
@@ -3573,3 +3654,138 @@ warm:SetScript("OnEvent", function(self)
         end)
     end)
 end)
+
+-- Quest items: a button left of the quest's line for the item you use for it (tracker.itemButtons),
+-- a thin bronze edge, a cooldown sweep, the count, red out of range. (On the quest's icon was tried:
+-- bigger than a line, it ran into the headings with the objectives folded.) Not on a quest folded to
+-- its title. Secure buttons can't move in a fight, or hang off
+-- anything that does: they sit on UIParent, placed from the rows out of combat, twice a second,
+-- which also covers scrolling, bags and a moved tracker.
+do
+    local SIZE = 24
+    local buttons = {}
+    local Cooldown = (C_Container and C_Container.GetItemCooldown) or GetItemCooldown
+    local InRange = (C_Item and C_Item.IsItemInRange) or IsItemInRange
+    local Count = (C_Item and C_Item.GetItemCount) or GetItemCount
+
+    local function Button(i)
+        local b = buttons[i]
+        if b then return b end
+        b = CreateFrame("Button", "WaymarkTrackerItem" .. i, UIParent, "SecureActionButtonTemplate")
+        b:SetSize(SIZE, SIZE)
+        b:SetFrameStrata("MEDIUM")
+        b:RegisterForClicks("AnyUp", "AnyDown")
+        b:SetAttribute("type", "item")
+        -- a thin edge: dark bronze, a pixel of black inside it
+        local edge = b:CreateTexture(nil, "BACKGROUND")
+        edge:SetAllPoints()
+        edge:SetColorTexture(0.55, 0.43, 0.22, 0.9)
+        local inner = b:CreateTexture(nil, "BORDER")
+        inner:SetPoint("TOPLEFT", 1, -1)
+        inner:SetPoint("BOTTOMRIGHT", -1, 1)
+        inner:SetColorTexture(0, 0, 0, 1)
+        b.icon = b:CreateTexture(nil, "ARTWORK")
+        b.icon:SetPoint("TOPLEFT", 2, -2)
+        b.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+        b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        local lit = b:CreateTexture(nil, "HIGHLIGHT")
+        lit:SetAllPoints(b.icon)
+        lit:SetColorTexture(1, 1, 1, 0.2)
+        b.cd = CreateFrame("Cooldown", nil, b, "CooldownFrameTemplate")
+        b.cd:SetAllPoints(b.icon)
+        b.cd:SetDrawEdge(false)
+        b.count = b:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+        b.count:SetPoint("BOTTOMRIGHT", 2, -1)
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+            GameTooltip:SetItemByID(self.item)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        buttons[i] = b
+        return b
+    end
+
+    -- what changes in a fight too: the sweep, the count, red out of reach of a foe you target
+    -- (item range on a friend in a fight may bring "Interface action failed": foes only)
+    local function Refresh(b)
+        local start, dur = Cooldown(b.item)
+        if start and dur and dur > 1.5 then b.cd:SetCooldown(start, dur) else b.cd:Clear() end
+        local n = Count(b.item) or 0
+        b.count:SetText(n > 1 and n or "")
+        local far = false
+        if UnitExists("target") and UnitCanAttack("player", "target") and InRange then
+            local ok, r = pcall(InRange, b.item, "target")
+            far = ok and r == false
+        end
+        if far then b.icon:SetVertexColor(1, 0.3, 0.3) else b.icon:SetVertexColor(1, 1, 1) end
+    end
+
+    -- which item a quest uses, asked on the slow tick only: placing runs every frame something moves
+    local itemFor = {}
+    local function Place(fresh)
+        if InCombatLockdown() then return end
+        if fresh then wipe(itemFor) end
+        local c, used = Cfg(), 0
+        local left = frame and frame:IsVisible() and c.itemButtons ~= false and not c.collapsed and frame:GetLeft()
+        if left then
+            local u = UIParent:GetEffectiveScale()
+            local x = left * frame:GetEffectiveScale() / u - 3
+            for _, r in ipairs(rows) do
+                local q = r.kind == "quest" and r.quest
+                -- (a quest folded to its title: its item goes too)
+                if q and r:IsVisible() and r:GetAlpha() > 0 and not q.complete and not q.untracked
+                   and not (c.folded and c.folded[q.id]) then
+                    local item = itemFor[q.id]
+                    if item == nil then
+                        local ok, found = pcall(ns.QuestUseItem, q.id, q.index)
+                        item = ok and found or false
+                        itemFor[q.id] = item
+                    end
+                    local _, mid = r:GetCenter()
+                    if item and mid then
+                        used = used + 1
+                        local b = Button(used)
+                        if b.item ~= item then
+                            b.item = item
+                            b:SetAttribute("item", "item:" .. item)
+                            b.icon:SetTexture(GetItemIcon and GetItemIcon(item) or 134400)
+                        end
+                        local y = mid * r:GetEffectiveScale() / u
+                        if b.x ~= x or b.y ~= y then
+                            b.x, b.y = x, y
+                            b:ClearAllPoints()
+                            b:SetPoint("RIGHT", UIParent, "BOTTOMLEFT", x, y)
+                        end
+                        b:Show()
+                    end
+                end
+            end
+        end
+        for i = used + 1, #buttons do buttons[i]:Hide() end
+    end
+
+    -- twice a second: items asked again (bags, quests), sweeps and red. Every frame, cheaply: placed
+    -- again the moment the tracker moves, scrolls, folds, hides or draws anew
+    local ticker, since, last = CreateFrame("Frame"), 0, ""
+    ticker:SetScript("OnUpdate", function(_, e)
+        if not ns.db then return end
+        since = since + e
+        if since >= 0.5 then
+            since = 0
+            Place(true)
+            for _, b in ipairs(buttons) do
+                if b:IsShown() and b.item then Refresh(b) end
+            end
+            return
+        end
+        if not frame then return end
+        local vis = frame:IsVisible()
+        local sig = vis and string.format("%.1f %.1f %.1f %d %s", frame:GetLeft() or 0, frame:GetTop() or 0,
+            scrollY or 0, ns.trackerDraws or 0, tostring(Cfg().collapsed)) or "hidden"
+        if sig ~= last then
+            last = sig
+            Place()
+        end
+    end)
+end

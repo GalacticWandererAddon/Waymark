@@ -69,6 +69,23 @@ local function Mixed(own, real)
                     return v
                 end
             end
+            -- a swept quest (Data\ForeverSwept.lua) is only part of a row: what it lacks, races, earlier
+            -- steps and givers, is QuestieDB's, or it read as open to anyone, any time
+            if key == "GetAll" and f and g then
+                fn = function(id, keys, ...)
+                    local v = f(id, keys, ...)
+                    if not (ns.ForeverSwept and ns.ForeverSwept[id]) then return v end
+                    local ok, w = pcall(g, id, keys, ...)
+                    if not (ok and w) then return v end
+                    local out = {}
+                    for i = 1, #keys do
+                        local x = v and v[i]
+                        if x == nil or (type(x) == "table" and next(x) == nil) then x = w[i] end
+                        out[i] = x
+                    end
+                    return out
+                end
+            end
             t[key] = fn
             return fn
         end })
@@ -200,6 +217,44 @@ function ns.EachSpawnOnMap(spawns, fn)
     end
 end
 local EachSpawn = ns.EachSpawnOnMap
+
+-- A capital is its own map, inside its zone: an objective in Darnassus showed on the city's map only, so
+-- from Teldrassil's it appeared as you walked in (the user). fn(x, y) for spawns on this map, or in the
+-- capital on it, placed by the world. Objectives only: every city giver on the zone map would crowd it.
+local CITY_IN = { [1457] = 1438, [1453] = 1429, [1455] = 1426, [1454] = 1411, [1456] = 1412, [1458] = 1420 }
+local worldBox = {}
+local function WorldBox(mapID)
+    local b = worldBox[mapID]
+    if b == nil then
+        b = false
+        if C_Map.GetWorldPosFromMapPos and CreateVector2D then
+            local ok1, _, p = pcall(C_Map.GetWorldPosFromMapPos, mapID, CreateVector2D(0, 0))
+            local ok2, _, q = pcall(C_Map.GetWorldPosFromMapPos, mapID, CreateVector2D(1, 1))
+            if ok1 and ok2 and p and q and p.x ~= q.x and p.y ~= q.y then
+                b = { x0 = p.x, y0 = p.y, dx = q.x - p.x, dy = q.y - p.y }
+            end
+        end
+        worldBox[mapID] = b
+    end
+    return b
+end
+-- (and the other way: the data files some of a capital's spots under its zone. Eyes of the Sentinels had
+-- one of four on Darnassus's own map)
+local function EachOnMap(spawns, mapID, fn)
+    EachSpawn(spawns, function(m, x, y)
+        if m == mapID then
+            fn(x, y)
+        elseif CITY_IN[m] == mapID or CITY_IN[mapID] == m then
+            local a, b = WorldBox(m), WorldBox(mapID)
+            if a and b then
+                -- (a map's x runs with the world's y)
+                local tx, ty = (a.y0 + x * a.dy - b.y0) / b.dy, (a.x0 + y * a.dx - b.x0) / b.dx
+                if tx >= 0 and tx <= 1 and ty >= 0 and ty <= 1 then fn(tx, ty) end
+            end
+        end
+    end)
+end
+ns.EachObjectiveOnMap = EachOnMap
 
 -- where you met a monster the data has no place for (Learn.lua, WaymarkQuestDB.mobs),
 -- as spawns keyed "m<uiMapID>", 0-100 as the data's are
@@ -334,6 +389,7 @@ local function GameObjectives(id)
     end
     return out
 end
+ns.QuestGameObjectives = GameObjectives   -- (Pin.lua: a quest's own words for a "Credit" objective)
 
 -- Settings of our own (were Questie's) ------------------------------------------
 
@@ -352,6 +408,7 @@ end
 function ns.SetTrivialQuests(on)
     QCfg().trivial = on and true or false
     Bump()
+    if ns.RedrawLearned then ns.RedrawLearned() end   -- (learned givers follow this box too)
     if ns.RedrawQuestie then ns.RedrawQuestie() end
     if ns.RefreshControls then ns.RefreshControls() end  -- main window and quick panel both show it
 end
@@ -401,7 +458,7 @@ end
 -- holiday and other event quests: the world event decides, and that isn't
 -- known here, so they're left out (QuestSort IDs, negative zoneOrSort)
 local EVENT_SORTS = {
-    [-22] = true, [-284] = true, [-364] = true, [-366] = true, [-369] = true, [-370] = true,
+    [-22] = true, [-284] = true, [-364] = true, [-366] = true, [-368] = true, [-369] = true, [-370] = true,
     [-374] = true, [-375] = true, [-376] = true, [-1002] = true, [-1003] = true, [-1005] = true,
 }
 
@@ -587,8 +644,45 @@ local function BuildGivers()
         n = n + 1
         if n % 50 == 0 then coroutine.yield() end
     end
+    -- (monsters that drop a quest's item: one "!" a camp, not one on every monster. Captain Sander's
+    -- Hidden Treasure put one on each murloc of Westfall's coast, the user. Every dropper of the same
+    -- quests together, a mark per DROP_CAMP of the map, at the middle of the spawns in it)
+    local DROP_CAMP = 0.08
+    local camps = {}   -- [quests key] = { quests, [map] = { [cell] = { x, y, n, names = { name = true } } } }
     for npc, quests in pairs(byDropNpc) do
-        AddGiver(NpcSpawns(npc), N().name(npc), "itemFromMonster", quests)
+        table.sort(quests)
+        local key = table.concat(quests, ",")
+        local c = camps[key]
+        if not c then c = { quests = quests, maps = {} } camps[key] = c end
+        local name = N().name(npc)
+        EachSpawn(NpcSpawns(npc), function(m, x, y)
+            local cells = c.maps[m]
+            if not cells then cells = {} c.maps[m] = cells end
+            local k = math.floor(x / DROP_CAMP) * 100 + math.floor(y / DROP_CAMP)
+            local cell = cells[k]
+            if not cell then cell = { x = 0, y = 0, n = 0, names = {}, first = name } cells[k] = cell end
+            cell.x, cell.y, cell.n = cell.x + x, cell.y + y, cell.n + 1
+            cell.names[name] = true
+        end)
+        n = n + 1
+        if n % 50 == 0 then coroutine.yield() end
+    end
+    for _, c in pairs(camps) do
+        for m, cells in pairs(c.maps) do
+            local list = givers[m]
+            if not list then list = {} givers[m] = list end
+            -- (still a lot, the user: the busiest camp a map in full, the others faint)
+            local top
+            for _, cell in pairs(cells) do
+                if not top or cell.n > top.n then top = cell end
+            end
+            for _, cell in pairs(cells) do
+                local more = -1
+                for _ in pairs(cell.names) do more = more + 1 end
+                list[#list + 1] = { x = cell.x / cell.n, y = cell.y / cell.n, starterType = "itemFromMonster", quests = c.quests,
+                                    name = cell.first .. (more > 0 and " and " .. more .. " more" or ""), faint = cell ~= top or nil }
+            end
+        end
         n = n + 1
         if n % 50 == 0 then coroutine.yield() end
     end
@@ -675,6 +769,11 @@ function ns.LearnedMobsChanged()
     wipe(targets)
     Bump()
 end
+-- Taming the Beast: the data's objective is the Taming Rod you're handed, which is nowhere. The beast
+-- is only in the quest's text, so here's each quest's
+local TAME = { [6061] = 2956, [6087] = 2959, [6088] = 2970, [6062] = 3099, [6083] = 3107, [6082] = 3126,
+               [6064] = 1126, [6084] = 1201, [6085] = 1196, [6063] = 1998, [6101] = 2043, [6102] = 1996 }
+
 local function Targets(id)
     local t = targets[id]
     if t then return t end
@@ -707,6 +806,15 @@ local function Targets(id)
                     sources[k], chances[k] = O().name(obj), oc[j]
                 end
             end
+            -- (and who sells it: an Empty Vial is anyone's trade goods, and had no place at all, the user)
+            local ok, sellers = pcall(function() return I().vendors and I().vendors(o[1]) end)
+            for _, npc in ipairs(ok and sellers or {}) do
+                k = k + 1
+                if k <= MAX_SOURCES then
+                    lists[k] = NpcSpawns(npc) or {}
+                    sources[k] = N().name(npc)
+                end
+            end
             t[#t + 1] = { icon = "loot", name = I().name(o[1]), text = o[2], spawnLists = lists, sources = sources,
                           chances = chances }
         end
@@ -727,8 +835,32 @@ local function Targets(id)
     for _, e in ipairs(Q().extraObjectives(id) or {}) do
         if e[1] then t[#t + 1] = { icon = "event", name = e[3], text = e[3], spawnLists = { e[1] } } end
     end
+    local spawns = TAME[id] and NpcSpawns(TAME[id])
+    if spawns then
+        local name = N().name(TAME[id])
+        t = { { icon = "slay", name = name, text = "Tame " .. tostring(name), spawnLists = { spawns } } }
+    end
     targets[id] = t
     return t
+end
+
+-- the item you use for a quest and carry now, else nil: what the game names for its log line, or
+-- what the quest hands you or asks for, if it has a use
+function ns.QuestUseItem(id, index)
+    local Count = (C_Item and C_Item.GetItemCount) or GetItemCount
+    local Spell = (C_Item and C_Item.GetItemSpell) or GetItemSpell
+    if index and GetQuestLogSpecialItemInfo then
+        local link = GetQuestLogSpecialItemInfo(index)
+        local item = link and tonumber(link:match("item:(%d+)"))
+        if item then return item end
+    end
+    local list = {}
+    local ok, extra = pcall(Q().GetAll, id, { "sourceItemId" })
+    if ok and extra and (extra[1] or 0) > 0 then list[1] = extra[1] end
+    for _, o in ipairs((Q().objectives(id) or {})[3] or {}) do list[#list + 1] = o[1] end
+    for _, item in ipairs(list) do
+        if Count(item) > 0 and Spell(item) then return item end
+    end
 end
 
 -- the game objective a target belongs to (by name in its text), else nil
@@ -738,6 +870,14 @@ local function MatchObjective(target, game)
     for _, g in ipairs(game) do
         if g.text and g.text:lower():find(name, 1, true) then return g end
     end
+end
+
+-- The data can name someone a quest doesn't ask you to kill or bring anything from: Forever's
+-- Camping 101: Skinning lists its trainer, and asks you to raise your skill. So when the game's one
+-- objective isn't a kill or an item and doesn't name the target, the game's words go on the spot.
+local function GameGoal(game)
+    local g = game and #game == 1 and game[1]
+    if g and g.type and g.type ~= "monster" and g.type ~= "item" and g.text and g.text ~= "" then return g end
 end
 
 -- Icons --------------------------------------------------------------------------
@@ -971,7 +1111,14 @@ function ns.QuestKind(id)
     if not Source() then return nil end
     local word
     local o = Q().objectives(id) or {}
-    if (o[1] and o[1][1]) or (o[5] and o[5][1]) then word = "Slay"
+    -- (kill credit with no monster named, a place to visit or a thing to do there: Eyes of the Sentinels
+    -- read Slay, the user. Such credit says no word of its own)
+    local kc, killing = o[5], false
+    if type(kc) == "table" and type(kc[1]) == "table" and type(kc[1][1]) ~= "table" then kc = { kc } end
+    for _, c in ipairs(type(kc) == "table" and kc or {}) do
+        if type(c) == "table" and c[2] and c[2] ~= 0 then killing = true end
+    end
+    if (o[1] and o[1][1]) or killing then word = "Slay"
     elseif o[3] and o[3][1] then word = "Gather"
     elseif o[2] and o[2][1] then word = "Use" end
     local trig = not word and Q().triggerEnd(id)
@@ -996,6 +1143,22 @@ function ns.QuestKind(id)
     if not tag and zone > 0 and LoadZones() and dungeonArea[zone] then tag = "Dungeon" end
     kinds[id] = { word or false, tag or false }
     return word, tag
+end
+
+-- In your log the game knows better than the data: Slay only if it asks for a kill
+local KindFromData = ns.QuestKind
+local GAME_KIND = { item = "Gather", object = "Use" }
+function ns.QuestKind(id)
+    local word, tag = KindFromData(id)
+    if word ~= "Slay" then return word, tag end
+    local game = GameObjectives(id)
+    if #game == 0 then return word, tag end
+    local other
+    for _, g in ipairs(game) do
+        if not g.type or g.type == "monster" then return word, tag end
+        other = other or GAME_KIND[g.type]
+    end
+    return other, tag
 end
 
 -- [questID] = { level, base XP }: QuestieDB's support table (false: none)
@@ -1264,7 +1427,7 @@ function ns.QuestIcons(mapID)
                 local icon = best.trivial and "available_gray" or (anyRep and #quests == 1 and "repeatable") or "available"
                 out[#out + 1] = {
                     x = g.x * 100, y = g.y * 100, id = best.id, name = QuestName(best.id), group = "questie",
-                    level = bestLevel, starterType = g.starterType, who = g.name, sub = g.sub, quests = quests,
+                    level = bestLevel, starterType = g.starterType, who = g.name, sub = g.sub, quests = quests, faint = g.faint,
                     trivial = best.trivial or nil,
                     kind = art and "file" or nil, value = art and (QUESTIE_ICONS .. icon .. ".blp") or nil,
                     l = 0, r = 1, t = 0, b = 1,
@@ -1294,8 +1457,9 @@ function ns.QuestIcons(mapID)
             end
         else
             local game = GameObjectives(id)
-            local qp = QuestieProfile()
-            -- (Questie's own colours where it has them, so ours match its pins)
+            -- (Questie's own colours and glow where it has them, so ours match its pins: in Questie's look only.
+            -- In Waymark's, Questie's colour setting coloured ours though A colour per quest was off, the user)
+            local qp = ns.SpotsQuestieArt() and QuestieProfile() or nil
             local questie = QuestieQuestOf(id)
             local color = (ns.db.spots.color or qp and qp.questObjectiveColors)
                 and (questie and questie.Color or QuestColor(id)) or nil
@@ -1303,18 +1467,21 @@ function ns.QuestIcons(mapID)
             local questGlow = ns.db.spots.color and color or nil
             for _, t in ipairs(Targets(id)) do
                 local g = MatchObjective(t, game)
+                local goal = not g and GameGoal(game)
+                g = g or goal
                 if not (g and g.finished) then
+                    local icon = goal and "event" or t.icon
                     local spotGlow = glowOn and (questie and QuestieObjectiveColor(questie, t.name)
-                        or questGlow or SPOT_GLOW[t.icon]) or nil
-                    local spec = IconSpec(t.icon)
+                        or questGlow or SPOT_GLOW[icon]) or nil
+                    local spec = IconSpec(icon)
                     -- (on the map a masked icon is drawn whole, the mask exactly over
                     -- it: pins are small and scaled, a cropped one's mask landed off)
                     local mask = spec and spec.mask or nil
                     local crop = (spec and not mask) and spec.crop or NO_CROP
                     local points = {}
                     for i, spawns in ipairs(t.spawnLists) do
-                        EachSpawn(spawns, function(m, x, y)
-                            if m == mapID and #points < MAX_SPOTS then points[#points + 1] = { x, y, i } end
+                        EachOnMap(spawns, mapID, function(x, y)
+                            if #points < MAX_SPOTS then points[#points + 1] = { x, y, i } end
                         end)
                     end
                     -- every spawn is kept (the tracker's distances use them all);
@@ -1323,10 +1490,10 @@ function ns.QuestIcons(mapID)
                     for k, p in ipairs(points) do
                         out[#out + 1] = {
                             x = p[1] * 100, y = p[2] * 100, id = id, name = QuestName(id), group = "spots",
-                            who = t.name, source = t.sources and t.sources[p[3]],
+                            who = goal and goal.text or t.name, source = not goal and t.sources and t.sources[p[3]] or nil,
                             chance = t.chances and t.chances[p[3]],
-                            objective = g and g.text or t.text, objIcon = t.icon,
-                            kind = "file", value = IconPath(t.icon),
+                            objective = g and g.text or t.text, objIcon = icon,
+                            kind = "file", value = IconPath(icon),
                             l = crop[1], r = crop[2], t = crop[3], b = crop[4], mask = mask,
                             iconColor = color, questieGlow = spotGlow, thinned = not keep[k] or nil,
                         }
@@ -1409,16 +1576,19 @@ function ns.QuestGround(mapID, all)
                     inLog = inLog, parts = {} }
         for _, t in ipairs(Targets(id)) do
             local g = game and MatchObjective(t, game)
+            local goal = not g and GameGoal(game)
+            g = g or goal
             if not (g and g.finished) then
                 for i, spawns in ipairs(t.spawnLists) do
                     local pts = {}
-                    EachSpawn(spawns, function(m, x, y)
-                        if m == mapID and #pts < MAX_SPOTS then pts[#pts + 1] = { x, y } end
+                    EachOnMap(spawns, mapID, function(x, y)
+                        if #pts < MAX_SPOTS then pts[#pts + 1] = { x, y } end
                     end)
                     if #pts > 0 then
                         q.parts[#q.parts + 1] = {
-                            icon = t.icon, what = t.sources and t.sources[i] or t.name,
-                            item = t.icon == "loot" and t.name or nil, text = g and g.text or t.text, points = pts,
+                            icon = goal and "event" or t.icon,
+                            what = goal and goal.text or t.sources and t.sources[i] or t.name,
+                            item = not goal and t.icon == "loot" and t.name or nil, text = g and g.text or t.text, points = pts,
                             chance = t.chances and t.chances[i],
                         }
                     end
@@ -1439,6 +1609,48 @@ function ns.QuestGround(mapID, all)
     end
     groundCache, groundKey = out, key
     return out
+end
+
+-- (for /bfi check) each quest in your log: its objectives' places in the data, on this map and in all,
+-- and whether it's hidden; for a quest whose marks are missing
+function ns.QuestTargetsInfo(mapID)
+    if not (Source() and LoadZones()) then return "no quest data" end
+    local out = {}
+    -- (and what's drawn on the zone's map, the city's zone where you're in a city: pins and ground parts a quest)
+    local zone = CITY_IN[mapID] or mapID
+    local pins, ground = {}, {}
+    pcall(function()
+        for _, icon in ipairs(ns.QuestIcons(zone) or {}) do
+            if icon.group == "spots" then pins[icon.id] = (pins[icon.id] or 0) + 1 end
+        end
+        for _, q in ipairs(ns.QuestGround(zone, false) or {}) do ground[q.id] = #q.parts end
+    end)
+    for id, e in pairs(Log()) do
+        local here, all, n, maps = 0, 0, 0, {}
+        local ok = pcall(function()
+            for _, t in ipairs(Targets(id)) do
+                n = n + 1
+                for _, spawns in ipairs(t.spawnLists or {}) do
+                    EachSpawn(spawns, function(m)
+                        all = all + 1
+                        maps[m] = (maps[m] or 0) + 1
+                    end)
+                    EachOnMap(spawns, mapID, function() here = here + 1 end)
+                end
+            end
+        end)
+        -- (which maps the spots are filed under, the most first)
+        local list = {}
+        for m, c in pairs(maps) do list[#list + 1] = { m, c } end
+        table.sort(list, function(a, b) return a[2] > b[2] end)
+        for k, e in ipairs(list) do list[k] = e[1] .. "=" .. e[2] end
+        local o = Q().objectives(id)
+        out[#out + 1] = string.format("%d %s: %s targets, %d spots here, %d in all (maps %s), on map " .. zone .. ": " .. (pins[id] or 0) .. " pins, " .. (ground[id] or 0) .. " ground parts%s%s%s", id, tostring(QuestName(id)),
+            ok and n or "error", here, all, table.concat(list, " ", 1, math.min(#list, 4)), o and "" or ", no objectives in the data",
+            QCfg().hidden[id] and ", hidden" or "", e.complete and ", complete" or "")
+    end
+    table.sort(out)
+    return table.concat(out, "; ")
 end
 
 -- the quest data has this quest (for "only quests QuestieDB lacks"; with our
@@ -1899,7 +2111,7 @@ end
 
 local function OnUnit(tip, guid)
     if not TipsOn() then return end
-    local npc = NpcOf(guid)
+    local npc = NpcOf(ns.Known(guid))  -- (secret inside a dungeon on live Forever)
     if not npc then return end
     BuildWants()
     AddWants(tip, wantNpc[npc])
@@ -1921,7 +2133,7 @@ end
 local function OnPlain(tip)
     if not TipsOn() or ShowsUnitOrItem(tip) then return end
     if tip:GetOwner() ~= UIParent then return end
-    local name = GameTooltipTextLeft1 and GameTooltipTextLeft1:GetText()
+    local name = GameTooltipTextLeft1 and ns.Known(GameTooltipTextLeft1:GetText())
     if not name or tip:NumLines() > 2 then return end
     BuildWants()
     AddWants(tip, wantObj[name])

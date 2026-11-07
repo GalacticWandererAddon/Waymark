@@ -28,8 +28,9 @@ local function Cfg(pin)
 end
 
 -- Red/orange/yellow/green/gray, as the game colours quest levels
+-- (not the game's on Forever: asked with a level it gave gold for every quest, Questie's green ones too)
 local function DifficultyColor(level)
-    if GetQuestDifficultyColor then
+    if GetQuestDifficultyColor and not ns.FOREVER then
         local ok, c = pcall(GetQuestDifficultyColor, level)
         if ok and c and c.r then return c.r, c.g, c.b end
     end
@@ -166,7 +167,9 @@ end
 
 function BFIQuestiePinMixin:ApplyCurrentAlpha()
     local group = self.bfiGroup or "questie"
-    self:SetAlpha(ns.PinAlpha(group))
+    -- (a camp of monsters dropping a quest's item, not the busiest: faint)
+    local faint = self.icon and self.icon.faint
+    self:SetAlpha(ns.PinAlpha(group) * (faint and 0.3 or 1))
 end
 
 -- After one of our pins is rescaled: pin offsets are in the pin's own scaled
@@ -239,8 +242,9 @@ function ns.DressQuestIcon(owner, tex, group, icon)
             tex:SetVertexColor(r, g, b)
         end
     elseif icon.iconColor then
-        -- each quest's spots in a colour of its own (spots.color)
-        tex:SetDesaturated(false)
+        -- each quest's spots in a colour of its own (spots.color): on the art made grey first, or the
+        -- colour only tinted the icon's own and hardly showed, the user
+        tex:SetDesaturated(true)
         tex:SetVertexColor(icon.iconColor[1], icon.iconColor[2], icon.iconColor[3], 1)
     else
         tex:SetDesaturated(false)
@@ -412,12 +416,20 @@ local function QuestieTip(pin, npcs, spots)
             npcOrder[n.name] = t
         end
         for _, s in ipairs(spots) do
-            local list = {}
+            -- (one line an objective, every source under it: a line a spot stacked one item many times, the user)
+            local list, byText = {}, {}
             for _, icon in ipairs(s.lines) do
                 local have, need = (icon.objective or ""):match("(%d+)%s*/%s*(%d+)")
                 local color = Lib:GetRGBForObjective({ Collected = tonumber(have), Needed = tonumber(need) })
+                local key = color .. (icon.objective or icon.who or "")
+                local whos = byText[key]
+                if not whos then
+                    whos = {}
+                    byText[key] = whos
+                    list[#list + 1] = { [key] = whos }
+                end
                 local who = icon.source or icon.who
-                list[#list + 1] = { [color .. (icon.objective or icon.who or "")] = who and { [who] = true } or {} }
+                if who then whos[who] = true end
             end
             questOrder[s.id] = list
         end
@@ -445,6 +457,20 @@ local function QuestieTip(pin, npcs, spots)
 end
 
 
+-- a quest's kind as the pins' own icon, in place of the word (the user, 2026-11-07): the sword you hover
+-- on the map is the sword in the tooltip. Escort: the signpost; Deliver and Speak: the speech bubble
+local KIND_ICON = {
+    Slay = "Interface\\Cursor\\Attack", Gather = "Interface\\Cursor\\Buy", Use = "Interface\\Cursor\\Interact",
+    Explore = "Interface\\Cursor\\Inspect", Escort = "Interface\\Cursor\\Directions",
+    Deliver = "Interface\\Cursor\\Speak", Speak = "Interface\\Cursor\\Speak",
+}
+local function KindIcon(word)
+    local path = word and KIND_ICON[word]
+    if path then return "|T" .. path .. ":14:14|t" end
+    return word and "|cff999999" .. word .. "|r" or ""
+end
+ns.QuestKindIcon = KindIcon
+
 -- "135 xp " in a calm faint blue, or ""
 local function XPText(id)
     local xp = ns.QuestXP and ns.QuestXP(id) or 0
@@ -452,10 +478,10 @@ local function XPText(id)
     return "|cff8cb4d8" .. (FormatLargeNumber and FormatLargeNumber(xp) or xp) .. " xp|r "
 end
 
--- a quest further along (chain, breadcrumb): its line and XP, indented
-local function AddLinkedQuest(id)
-    local line, r, g, b = QuestLine(id)
-    GameTooltip:AddDoubleLine("        " .. line, XPText(id), r, g, b, 1, 1, 1)
+-- a quest further along (chain, breadcrumb): one line, the first of them, and how many more
+local function AddLinked(label, list)
+    local line, r, g, b = QuestLine(list[1])
+    GameTooltip:AddLine("      " .. label .. line .. (list[2] and "  +" .. (#list - 1) or ""), r, g, b)
 end
 
 -- a long text as indented lines, each its own: the tooltip's wrap starts its
@@ -488,39 +514,32 @@ local function AddMore(id, withText)
     if more.dungeon then GameTooltip:AddLine("      Instance: " .. more.dungeon, 0.7, 0.7, 0.7) end
     local text = withText and (ns.QuestDetails(id) or {}).text
     if text and text ~= "" then AddIndented("      ", text, SOFT[1], SOFT[2], SOFT[3]) end
-    local rw = ns.QuestRewards and ns.QuestRewards(id)
-    if rw then
-        local function Item(e)
-            local _, _, quality, _, _, _, sub, _, slot = GetItemInfo(e[1])
-            local r, g, b = 1, 1, 1
-            if quality and GetItemQualityColor then r, g, b = GetItemQualityColor(quality) end
-            if not quality and C_Item and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, e[1]) end
-            local kind = sub and sub ~= "" and sub or (slot and _G[slot]) or ""
-            GameTooltip:AddDoubleLine("        " .. e[2] .. (e[3] > 1 and " x" .. e[3] or ""), kind, r, g, b, GREY[1], GREY[2], GREY[3])
+    -- (no rewards: any quest opens in the log for those, the user)
+    -- (one line: the biggest, and how many more. Five factions' +25 took five lines)
+    local rep = more.rep and more.rep[1] and more.rep
+    -- (the same to every city of a side: one line for the side)
+    local SIDES = { Alliance = { Darnassus = 1, Stormwind = 1, Ironforge = 1, ["Gnomeregan Exiles"] = 1, Alliance = 1, Exodar = 1 },
+                    Horde = { Orgrimmar = 1, ["Thunder Bluff"] = 1, Undercity = 1, ["Darkspear Trolls"] = 1, Horde = 1, Silvermoon = 1 } }
+    for side, names in pairs(rep and #rep > 2 and SIDES or {}) do
+        local all = true
+        for _, e in ipairs(rep) do
+            if e[2] ~= rep[1][2] or not names[e[1]] then all = false end
         end
-        if rw.choice[1] then
-            GameTooltip:AddLine("      " .. (#rw.choice > 1 and "Choose one:" or "Reward:"), GREY[1], GREY[2], GREY[3])
-            for _, e in ipairs(rw.choice) do Item(e) end
-        end
-        if rw.fixed[1] then
-            GameTooltip:AddLine("      " .. (rw.choice[1] and "And:" or "Reward:"), GREY[1], GREY[2], GREY[3])
-            for _, e in ipairs(rw.fixed) do Item(e) end
-        end
-        if rw.copper and GetCoinTextureString then
-            GameTooltip:AddLine("      " .. GetCoinTextureString(rw.copper), 1, 1, 1)
+        if all then
+            GameTooltip:AddLine(string.format("      %+d %s", rep[1][2], side), REP[1], REP[2], REP[3])
+            rep = nil
         end
     end
-    for _, rep in ipairs(more.rep or {}) do
-        GameTooltip:AddLine(string.format("      %+d %s", rep[2], rep[1]), REP[1], REP[2], REP[3])
+    if rep then
+        local top = rep[1]
+        for _, e in ipairs(rep) do
+            if e[2] > top[2] then top = e end
+        end
+        GameTooltip:AddLine(string.format("      %+d %s%s", top[2], top[1], rep[2] and "  and " .. (#rep - 1) .. " more" or ""),
+            REP[1], REP[2], REP[3])
     end
-    if more.breadcrumbs and more.breadcrumbs[1] then
-        GameTooltip:AddLine("Breadcrumb quests:", SOFT[1], SOFT[2], SOFT[3])  -- (from the line's start, as chain's)
-        for _, b in ipairs(more.breadcrumbs) do AddLinkedQuest(b) end
-    end
-    if more.chain and more.chain[1] then
-        GameTooltip:AddLine("Next in chain:", SOFT[1], SOFT[2], SOFT[3])  -- (from the line's start: the user)
-        for _, c in ipairs(more.chain) do AddLinkedQuest(c) end
-    end
+    if more.breadcrumbs and more.breadcrumbs[1] then AddLinked("From: ", more.breadcrumbs) end
+    if more.chain and more.chain[1] then AddLinked("Next: ", more.chain) end
 end
 
 -- What a quest asks for here, the same on objective pins and quest ground: each quest's name in gold,
@@ -529,55 +548,95 @@ end
 -- kinds of monster drop: one line, the monsters under it only while Shift is held. Shift also: XP and
 -- the extras. rows: { { quest = { id, name, level, inLog }, part = { what, item, text } }, ... }, a
 -- quest's rows together, the same quest table in each; drops: false leaves the items out.
+-- One column, count first, as Questie's: an item you gather is its own line, what drops it only
+-- with Shift held.
 -- Returns true when something was folded away.
+-- The tooltip's first line has the game's bigger font: a list of quests read uneven, the first
+-- bigger than the rest. Evened out for this tooltip, the header's font back for the next.
+local evened
+local function FirstLineBack()
+    if not evened then return end
+    if ns.TipFontsBack then ns.TipFontsBack() end  -- (first: fonts it holds are from before)
+    GameTooltipTextLeft1:SetFontObject(evened[1])
+    GameTooltipTextRight1:SetFontObject(evened[2])
+    evened = false
+end
+local function EvenFirstLine()
+    if evened or not (GameTooltipText and GameTooltipTextLeft1 and GameTooltipTextRight1) then return end
+    if evened == nil then
+        GameTooltip:HookScript("OnHide", FirstLineBack)
+        if GameTooltip:HasScript("OnTooltipCleared") then GameTooltip:HookScript("OnTooltipCleared", FirstLineBack) end
+    end
+    evened = { GameTooltipTextLeft1:GetFontObject(), GameTooltipTextRight1:GetFontObject() }
+    GameTooltipTextLeft1:SetFontObject(GameTooltipText)
+    GameTooltipTextRight1:SetFontObject(GameTooltipText)
+    -- (the font brings its white: the line's own colours back)
+    GameTooltipTextLeft1:SetTextColor(1, 0.82, 0)
+    GameTooltipTextRight1:SetTextColor(GREY[1], GREY[2], GREY[3])
+end
+
 function ns.QuestSpotLines(rows, drops)
     local shift = IsShiftKeyDown()
-    local droppers, folded = {}, false
-    for _, row in ipairs(rows) do
-        local part = row.part
-        if part.item and drops ~= false and part.item ~= part.what then
-            local k = row.quest.id .. ":" .. part.item
-            droppers[k] = (droppers[k] or 0) + 1
-        end
-    end
+    local folded = false
     local itemDone = {}
     local lastQuest
+    -- (Shift's extras only for a quest alone: for several, each one's filled the screen)
+    local quests, seenQuest = 0, {}
+    for _, row in ipairs(rows) do
+        if not seenQuest[row.quest] then
+            seenQuest[row.quest] = true
+            quests = quests + 1
+        end
+    end
     local function Close()
-        if lastQuest and shift then ns.Safe("tooltip extras", AddMore, lastQuest.id, false) end
+        if lastQuest and shift and quests == 1 then ns.Safe("tooltip extras", AddMore, lastQuest.id, false) end
     end
     for _, row in ipairs(rows) do
         local q, part = row.quest, row.part
         if q ~= lastQuest then
             Close()
-            if lastQuest then GameTooltip:AddLine(" ") end
-            lastQuest = q
+            lastQuest = q   -- (no blank line between quests: the gold titles part them, as in Questie's)
             local dr, dg, db = DifficultyColor(q.level or 0)
             local ok, word = pcall(ns.QuestKind or function() end, q.id)
             word = ok and word or nil
-            local tr, tg, tb = 0.73, 0.44, 0.37   -- (a kind without a colour: the plain ground ink, lightened)
-            if ns.QuestTypeColor and ns.QuestTypeColor(word) then tr, tg, tb = ns.QuestTypeColor(word) end
-            GameTooltip:AddDoubleLine(string.format("%s |cff%02x%02x%02x[%d]|r", q.name or "?", dr * 255, dg * 255, db * 255, q.level or 0),
-                (shift and XPText(q.id) or "") .. (word or "") .. (q.inLog and "" or (word and ", " or "") .. "available"),
-                1, 0.82, 0, tr, tg, tb)
+            GameTooltip:AddDoubleLine(string.format("|cff%02x%02x%02x[%d]|r %s", dr * 255, dg * 255, db * 255, q.level or 0, q.name or "?"),
+                -- (the kind, Gather or Slay, with Shift and in grey: it widened every tooltip, and in
+                -- colour it read as a level)
+                (shift and XPText(q.id) .. KindIcon(word) or "") .. (q.inLog and "" or (shift and word and " " or "") .. "available"),
+                1, 0.82, 0, GREY[1], GREY[2], GREY[3])
+            if GameTooltip:NumLines() == 1 then EvenFirstLine() end
         end
         local have, need = (part.text or ""):match("(%d+)%s*/%s*(%d+)")
-        local count = have and (have .. "/" .. need) or ""
-        local ch = shift and part.chance and ns.ChanceText and ns.ChanceText(part.chance)
-        ch = ch and ", " .. ch or ""
-        local left = "  " .. (part.what or "?") .. ch
-        local many = part.item and droppers[q.id .. ":" .. part.item]
-        if many and many > 2 then
+        local count = have and (have .. "/" .. need .. " ") or ""
+        -- (the data calls some objectives just "Credit": the quest's own words instead, each still to do)
+        local generic = (part.what == nil or part.what == "Credit") and ns.QuestGameObjectives
+        if generic then
+            if not itemDone[q.id .. ":credit"] then
+                itemDone[q.id .. ":credit"] = true
+                local any = false
+                for _, g in ipairs(ns.QuestGameObjectives(q.id) or {}) do
+                    if g.text and g.text ~= "" and not g.finished then
+                        GameTooltip:AddLine("  " .. g.text, 1, 1, 1)
+                        any = true
+                    end
+                end
+                if not any then GameTooltip:AddLine("  " .. (part.what or "?"), 1, 1, 1) end
+            end
+        else
+        -- (always the item, what drops it with Shift; no drop chances: the user, 2026-11-07. The box
+        -- that turned the item line off read backwards and is gone)
+        local ch = ""
+        if part.item and part.item ~= part.what then
             local k = q.id .. ":" .. part.item
             if not itemDone[k] then
                 itemDone[k] = true
-                GameTooltip:AddDoubleLine("  " .. part.item, count, 1, 1, 1, 0.7, 0.7, 0.7)
+                GameTooltip:AddLine("  " .. count .. part.item, 1, 1, 1)
                 if not shift then folded = true end
             end
             if shift then GameTooltip:AddLine("    " .. (part.what or "?") .. ch, 0.8, 0.8, 0.8) end
-        elseif part.item and drops ~= false and part.item ~= part.what then
-            GameTooltip:AddDoubleLine(left, part.item .. (count ~= "" and "  " .. count or ""), 1, 1, 1, 0.7, 0.7, 0.7)
         else
-            GameTooltip:AddDoubleLine(left, count, 1, 1, 1, 0.7, 0.7, 0.7)
+            GameTooltip:AddLine("  " .. count .. (part.what or "?") .. ch, 1, 1, 1)
+        end
         end
     end
     Close()
@@ -614,6 +673,8 @@ local function OwnTip(pin, npcs, spots, shift)
         GameTooltip:SetOwner(pin, "ANCHOR_CURSOR")
     end
     local first = true
+    local quests = 0   -- (Shift's extras only for a quest alone: for several, each one's filled the screen)
+    for _, n in ipairs(npcs) do quests = quests + #n.quests end
     for _, n in ipairs(npcs) do
         if not first then GameTooltip:AddLine(" ") end
         first = false
@@ -624,7 +685,7 @@ local function OwnTip(pin, npcs, spots, shift)
                 break
             end
             local d = ns.QuestDetails and ns.QuestDetails(q.id) or {}
-            local _, r, g, b, title = QuestLine(q.id, q.title, q.level)
+            local line, r, g, b = QuestLine(q.id, q.title, q.level)
             local mr, mg, mb = r, g, b
             if q.turnin then mr, mg, mb = 1, 0.82, 0
             elseif d.repeatable or q.repeatable then mr, mg, mb = 0.3, 0.65, 1 end
@@ -632,23 +693,21 @@ local function OwnTip(pin, npcs, spots, shift)
             if ns.QuestKind then word, tag = ns.QuestKind(q.id) end
             local right = tag and (TAG_COLOR[tag] or TAG) .. tag .. "|r" or ""
             local sep = right ~= "" and "  " or ""
-            if q.turnin then
-                right = right .. sep .. "|cff33ff33Complete|r"
+            if q.turnin then   -- (with Shift its XP, what you get for handing it in, the user)
+                -- (in the Complete green, so a turn-in's XP reads apart from one you'd take)
+                local xp = shift and XPText(q.id) or ""
+                right = right .. sep .. (xp ~= "" and xp:gsub("|cff8cb4d8", "|cff33ff33") or "|cff33ff33Complete|r")
             elseif shift then
                 right = right .. sep .. XPText(q.id)
             elseif word then
-                -- (in its kind's colour, as on quest ground; grey without one)
-                local wr, wg, wb
-                if ns.QuestTypeColor then wr, wg, wb = ns.QuestTypeColor(word) end
-                local wc = wr and string.format("|cff%02x%02x%02x", wr * 255, wg * 255, wb * 255) or WORD
-                right = right .. (right ~= "" and " · " or "") .. wc .. word .. "|r"
+                right = right .. (right ~= "" and " " or "") .. KindIcon(word)
             end
             GameTooltip:AddDoubleLine(string.format("|cff%02x%02x%02x%s|r  %s", mr * 255, mg * 255, mb * 255,
-                q.turnin and "?" or "!", title), right, r, g, b, 1, 1, 1)
+                q.turnin and "?" or "!", line), right, r, g, b, 1, 1, 1)
             if d.items and d.items[1] then
                 GameTooltip:AddLine("      Starts from: " .. table.concat(d.items, ", "), GREY[1], GREY[2], GREY[3])
             end
-            if shift then ns.Safe("tooltip extras", AddMore, q.id, true) end
+            if shift and quests == 1 then ns.Safe("tooltip extras", AddMore, q.id, true) end
         end
     end
     if #npcs > 0 and not shift then ns.HoldShift() end  -- (what they ask, and the hints)
@@ -682,6 +741,7 @@ local function RestoreFonts()
     for fs, f in pairs(shrunk) do fs:SetFont(f[1], f[2], f[3]) end
     wipe(shrunk)
 end
+ns.TipFontsBack = RestoreFonts
 -- each line's text at s of its size (lines added since, or reset by the
 -- game, are caught on the next Show); true if any changed
 local function ShrinkFonts(tip, s)
@@ -748,7 +808,10 @@ function ns.QuestTooltip(pin, npcs, spots, questie, hints)
         GameTooltip.ShownAsMapIcon, GameTooltip._Rebuild = nil, nil
         OwnTip(pin, npcs, spots or {}, IsShiftKeyDown())
     end
-    for _, h in ipairs(hints or {}) do GameTooltip:AddLine(h, 0.5, 0.5, 0.5) end
+    -- (not with Shift held: you're reading, not looking for what to click)
+    if not IsShiftKeyDown() then
+        for _, h in ipairs(hints or {}) do GameTooltip:AddLine(h, 0.5, 0.5, 0.5) end
+    end
     GameTooltip:Show()
 end
 
@@ -841,6 +904,9 @@ function BFIQuestiePinMixin:OnMouseUp(button)
             end
         elseif self.questId and ns.OpenQuest then
             items[#items + 1] = { "quest details", function() ns.OpenQuest(self.questId) end }
+        end
+        if self.bfiGroup == "spots" and self.questId and ns.ToggleFocus then
+            items[#items + 1] = { ns.IsFocused(self.questId) and "out of focus" or "focus quest", function() ns.ToggleFocus(self.questId) end }
         end
         if self.bfiGroup == "spots" and self.questId and ns.ToggleQuestGlow then
             items[#items + 1] = { "its spots lit (again: off)", function() ns.ToggleQuestGlow(self.questId) end }

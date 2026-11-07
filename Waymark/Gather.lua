@@ -932,6 +932,7 @@ events:SetScript("OnEvent", function(_, event, unit, a, b, c)
         return
     end
     -- UNIT_SPELLCAST_SUCCEEDED: (unit, castGUID, spellID)
+    if issecretvalue and (issecretvalue(a) or issecretvalue(b)) then return end
     if a ~= cast.guid or not cast.target or cast.target == "" then return end
     local target = cast.target
     cast.target = nil

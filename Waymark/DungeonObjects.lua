@@ -170,7 +170,8 @@ local function Shown(c, list, patrols)
         local minor = Minor(o)
         local k = o[1]
         if (k == "chest" and minor and not c.allChests) or ((k == "quest" or k == "mob") and minor and not c.allQuests)
-           or k == "danger" or (k == "patrol" and c.patrols == false) then  -- ("danger": easy pulls, gone)
+           or k == "danger" or (k == "patrol" and c.patrols == false)
+           or (k == "switch" and not c.switches) or (k == "event" and not c.fightDoors) then  -- (off at first: start small, the user)  -- ("danger": easy pulls, gone)
             -- (left out)
         else
             out[#out + 1] = o
@@ -252,6 +253,7 @@ local function Update()
     local writing = ns.Quill and ns.Quill() and true or false
     for _, p in ipairs(pins) do if p.dragging then return end end  -- (not while one's being moved)
     local s = key .. ":" .. mode .. ":" .. scale .. ":" .. tostring(writing) .. ":" .. tostring(c.allChests) .. tostring(c.allQuests)
+              .. tostring(c.switches) .. tostring(c.fightDoors)
               .. tostring(c.patrols)
     if s ~= sig then
         sig = s

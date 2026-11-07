@@ -56,6 +56,7 @@ local function InCombat() return InCombatLockdown and InCombatLockdown() end
 local function Clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
 
 local applied      -- the minimap as it was before we squared it (nil: it's the game's)
+local dungeonMinimap = false  -- inside a dungeon, docked: the square's minimap face (below, CloseMap)
 local pending      -- a change asked for in combat: done when it ends
 local LiftButtons  -- (below, with the buttons)
 local mapWas       -- the map's own anchors and strata before docking
@@ -359,6 +360,21 @@ local function Square()
     for _, f in ipairs({ MinimapCluster, MinimapBackdrop }) do
         if f then for _, r in ipairs({ f:GetRegions() }) do Stash(r, a.stashed) end end
     end
+    -- Forever's own coordinates (minimapShowPlayerCoords) hang 18 under the minimap, which now lies
+    -- under our square: with our coordinates on, theirs go (one pair is enough); else they sit just
+    -- under the square's edge. As they were when undocked.
+    local pc = MinimapCluster and MinimapCluster.MinimapContainer and MinimapCluster.MinimapContainer.PlayerCoords
+    if pc then
+        if ns.IsShown("coords") then
+            Stash(pc, a.stashed)
+        else
+            a.coordPoints = {}
+            for i = 1, pc:GetNumPoints() do a.coordPoints[i] = { pc:GetPoint(i) } end
+            pc:ClearAllPoints()
+            pc:SetPoint("TOP", BattlefieldMapFrame or mm, "BOTTOM", 0, -3)
+            a.coords = pc
+        end
+    end
     if Cfg().wheel then
         for _, name in ipairs(ZOOM_BUTTONS) do Stash(name, a.stashed) end
         -- (Forever's, on the minimap itself: the old global names find nothing there)
@@ -378,6 +394,15 @@ local function Unsquare()
     if ns.DockPatchOff then ns.DockPatchOff() end
     local mm, a = Minimap, applied
     applied = nil
+    -- (the dungeon's minimap face ends with the dock: docked again, the square was the minimap face
+    -- with the dungeon map's floor name hidden, the user)
+    if dungeonMinimap then
+        dungeonMinimap = false
+        C_Timer.After(0, function()
+            if ns.DockRefreshFace then ns.DockRefreshFace() end  -- (the dungeon map seen again, its mouse back)
+            if ns.UpdateDungeon then ns.UpdateDungeon() end
+        end)
+    end
     ReleaseCluster()
     mm:ClearAllPoints()
     for _, p in ipairs(a.points) do mm:SetPoint(p[1], p[2], p[3], p[4], p[5]) end
@@ -390,9 +415,14 @@ local function Unsquare()
     end
     if a.rotate == "1" then SetCVar("rotateMinimap", "1") end
     for _, s in ipairs(a.stashed) do s[1]:SetParent(s[2]) end
+    if a.coords and a.coordPoints then
+        a.coords:ClearAllPoints()
+        for _, p in ipairs(a.coordPoints) do a.coords:SetPoint(p[1], p[2], p[3], p[4], p[5]) end
+    end
     mm:EnableMouseWheel(a.wheel and true or false)
     if edge then edge:Hide() end
     Redraw()
+    if ns.UpdateClock then ns.UpdateClock() end  -- (placed on the square while docked: back on the map)
     if ns.DockQuestiePins then ns.DockQuestiePins() end  -- (Questie's pins back)
 end
 
@@ -510,7 +540,9 @@ local BIG_GAP = 24  -- between the square's border and the big map's, map units
 
 -- The square's rim takes a right-click for the map's menu: docked with no header there's nowhere
 -- else to ask, and on the minimap side the map takes no mouse at all. Four strips on the frame's
--- edge, not over the picture, so a right-click on the map itself stays what it was.
+-- edge, not over the picture, so a right-click on the map itself stays what it was. Ctrl-drag moves
+-- the square, as the header does. (In the border's strata: /fstack had the mouse on BorderFrame, HIGH,
+-- over the strips in MEDIUM, so with the header hidden there was no menu and no way to move it.)
 local rim
 local function PlaceRim(map)
     if not rim then
@@ -521,16 +553,34 @@ local function PlaceRim(map)
         rim.sides = {}
         for i, side in ipairs({ "LEFT", "RIGHT", "TOP", "BOTTOM" }) do
             local f = CreateFrame("Frame", nil, rim)
-            f:SetFrameLevel(5600)
+            f:SetFrameStrata("HIGH")
+            -- (level: just over the border, something took the left and top edges, the user. The top one
+            -- stops short of the corner, for the buttons there)
+            f:SetFrameLevel(1000)
             f:EnableMouse(true)
+            -- (the border you see lies outside the map frame: the strip answers out over it too)
+            f:SetHitRectInsets(side == "LEFT" and -12 or 0, side == "RIGHT" and -12 or 0,
+                side == "TOP" and -12 or 0, side == "BOTTOM" and -12 or 0)
             f:SetPoint(side == "RIGHT" and "TOPRIGHT" or side == "BOTTOM" and "BOTTOMLEFT" or "TOPLEFT")
-            f:SetPoint(side == "LEFT" and "BOTTOMLEFT" or side == "TOP" and "TOPRIGHT" or "BOTTOMRIGHT")
+            if side == "TOP" then f:SetPoint("TOPRIGHT", -72, 0)
+            else f:SetPoint(side == "LEFT" and "BOTTOMLEFT" or "BOTTOMRIGHT") end
+            -- (undocked a plain drag moves the map, as the edge did before these strips lay over it, the user;
+            -- docked Ctrl-drag moves the square)
+            f:SetScript("OnMouseDown", function(_, button)
+                if button ~= "LeftButton" then return end
+                if applied then
+                    if IsControlKeyDown() and ns.DockSquareDragStart then ns.DockSquareDragStart() end
+                elseif ns.MapMoveStart then
+                    ns.MapMoveStart()
+                end
+            end)
             f:SetScript("OnMouseUp", function(_, button)
                 if button == "RightButton" and ns.MapFrameMenu then ns.MapFrameMenu() end
+                if button == "LeftButton" and not applied and ns.MapMoveStop then ns.MapMoveStop() end
             end)
             f:SetScript("OnEnter", function(self)
                 GameTooltip:SetOwner(self, "ANCHOR_TOP")
-                ns.Hints({ { "Right-click", "the map's menu" } })
+                ns.Hints({ { "Right-click", "the map's menu" }, applied and { "Ctrl-drag", "move it" } or { "Drag", "move it" } })
                 GameTooltip:Show()
             end)
             f:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -543,12 +593,40 @@ local function PlaceRim(map)
     s[2]:SetWidth(math.max(7, i[2] + 2))
     s[3]:SetHeight(math.max(7, i[3] + 2))
     s[4]:SetHeight(math.max(7, i[4] + 2))
+    -- (undocked too, the user: there in the map's own strata, over its border, so other windows over
+    -- the map aren't reached through; and not out over the top, where the header is dragged)
+    local border = map.BorderFrame
+    for k, f in ipairs(s) do
+        if applied then
+            f:SetFrameStrata("HIGH")
+            f:SetFrameLevel(1000)
+        else
+            f:SetFrameStrata((border or map):GetFrameStrata())
+            f:SetFrameLevel((border or map):GetFrameLevel() + 20)
+        end
+        -- (the top: docked out over the border; undocked a little out too, short of the header's middle,
+        -- and deeper in, as the frame's top edge is thin: too small to hit, the user)
+        -- (clearLeft: the dungeon map's view switch sits in the top-left corner. The strip took its
+        -- clicks though fstack had the switch on top, the user 2026-11-07: so it starts past it)
+        if k == 3 then f:SetHitRectInsets(rim.clearLeft or 0, 0, applied and -12 or -6, applied and 0 or -8) end
+    end
+    if ns.DungeonButtonsOverRim then ns.DungeonButtonsOverRim() end  -- (the floor arrows and the view switch stay on top)
     rim:Show()
+end
+-- (the top strip: the dungeon's floor arrows on the header go over it, Dungeon.lua)
+function ns.MapRimTop() return rim and rim:IsShown() and rim.sides[3] end
+-- the top strip's left end kept clear by px (0: the whole edge), Dungeon.lua's view switch
+function ns.MapRimClearLeft(px)
+    if not rim or (rim.clearLeft or 0) == px then return end
+    rim.clearLeft = px
+    local f = rim.sides[3]
+    local _, r, t, b = f:GetHitRectInsets()
+    f:SetHitRectInsets(px, r, t, b)
 end
 
 function ns.DockPlace(map)
     if not applied then
-        if rim then rim:Hide() end
+        PlaceRim(map)   -- (the frame's edge takes a right-click undocked too)
         return false
     end
     PlaceRim(map)
@@ -784,7 +862,16 @@ end
 local mouseWas  -- the map's and the scroll area's own mouse settings, while it lets them through
 local faded = {}  -- [frame] = its own alpha, see-through on the minimap face
 
-local function MinimapFace() return applied and Cfg().face ~= "map" and not Cfg().mapOnly end
+-- Inside a dungeon or raid, docked, the X, the map's key and the dungeon map's switch turn to the
+-- minimap face and back, Map only or not: the dungeon's art covered the minimap and nothing
+-- brought it back (the user, 2026-11-07). Ends as you leave.
+local function InDungeon()
+    local inside, kind = IsInInstance()
+    return inside and (kind == "party" or kind == "raid")
+end
+local function MinimapFace()
+    return applied and ((Cfg().face ~= "map" and not Cfg().mapOnly) or (dungeonMinimap and InDungeon())) or false
+end
 ns.DockMinimapFace = MinimapFace  -- (MapControls: no centering of its own meanwhile)
 
 -- On the minimap face the map's view must reach as close as the minimap's closest
@@ -1026,6 +1113,13 @@ end
 
 -- back to the minimap face, at zoom z (default its farthest, where the map took over)
 local function CloseMap(z)
+    if Cfg().mapOnly and InDungeon() and not IsBig() then
+        dungeonMinimap = true
+        ApplyFace()
+        LiftButtons()
+        if ns.UpdateDungeon then ns.UpdateDungeon() end  -- (its switch shows the way back)
+        return
+    end
     if Cfg().mapOnly then
         -- (Map only: never the minimap face; the big map still goes back to the square)
         if IsBig() then
@@ -1050,6 +1144,24 @@ end
 -- (Dungeon.lua: the dungeon map's Minimap button while docked)
 function ns.DockShowMinimap(z) CloseMap(z) end
 
+-- back from the minimap face inside a dungeon
+local function DungeonMapFace()
+    dungeonMinimap = false
+    ApplyFace()
+    LiftButtons()
+    RedrawPicture(BattlefieldMapFrame)
+    if ns.UpdateDungeon then ns.UpdateDungeon() end
+end
+function ns.DockDungeonMinimap() return dungeonMinimap and InDungeon() and applied and true or false end
+function ns.DockToggleDungeonMinimap()
+    if ns.DockDungeonMinimap() then DungeonMapFace() else CloseMap() end
+end
+local leaving = CreateFrame("Frame")
+leaving:RegisterEvent("PLAYER_ENTERING_WORLD")
+leaving:SetScript("OnEvent", function()
+    if dungeonMinimap and not InDungeon() then DungeonMapFace() end
+end)
+
 -- MapControls ToggleBigMap while docked: the big map face, grown from the
 -- square's corner, and back to the square (still the map face). At once, not
 -- in a glide: each step of one rebuilt the zoom steps and the game faded its
@@ -1062,6 +1174,8 @@ local smallView  -- { scale, scrollX, scrollY, mapID, held, minimapZoom = from t
 
 function ns.DockToggleBig()
     if not applied then return end
+    -- (the big map from the dungeon's minimap face opened empty, the user: the map face first)
+    if dungeonMinimap and DungeonMapFace then DungeonMapFace() end
     local map = BattlefieldMapFrame
     local sc = map and map.ScrollContainer
     if IsBig() then
@@ -1144,8 +1258,9 @@ end
 -- saved with the docked set (dock.buttonPos, by its name), placed from the
 -- docked frame's corners. Only while docked.
 local function MakeMovable(child)
-    -- (live Forever's tracking button sits in a frame with no name)
+    -- (live Forever's tracking button and mail sit in frames with no name)
     local name = child:GetName() or (MinimapCluster and child == MinimapCluster.Tracking and "MinimapTracking")
+        or (MinimapCluster and child == MinimapCluster.IndicatorFrame and "MinimapMail")
     if movable[child] or not name or not ns.HoldToMove then return end
     movable[child] = true
     local key = "minimap:" .. name
@@ -1159,7 +1274,8 @@ local function MakeMovable(child)
     end
     if child:IsMouseEnabled() then Hold(child) end
     for _, b in ipairs({ child:GetChildren() }) do
-        if b:IsObjectType("Button") or b:IsObjectType("DropdownButton") then Hold(b) end
+        -- (the mail icon is a plain frame)
+        if b:IsObjectType("Button") or b:IsObjectType("DropdownButton") or b == child.MailFrame then Hold(b) end
     end
 end
 
@@ -1302,7 +1418,13 @@ function ns.PlaceMinimapButtons()
             child:ClearAllPoints()
             child:SetPoint(p[1], p[5] and UIParent or Ghost(map), p[2], p[3], p[4])
         elseif not (applied and ns.PlaceMoved and ns.PlaceMoved(child)) then
-            OwnPoints(child)
+            -- (the mail's own place is on the square: until you move it, beside it, over the tracking)
+            if applied and map and MinimapCluster and child == MinimapCluster.IndicatorFrame then
+                child:ClearAllPoints()
+                child:SetPoint("CENTER", IsBig() and Ghost(map) or map, "BOTTOMLEFT", -14, 40)
+            else
+                OwnPoints(child)
+            end
         end
     end
     PlaceUnder(saved)
@@ -1958,7 +2080,8 @@ function ns.SetupDock(map)
         C_Timer.After(0, function()
             if not applied or self:IsShown() then return end
             self:Show()
-            if Cfg().face == "map" then CloseMap() else OpenMap() end
+            if ns.DockDungeonMinimap() then DungeonMapFace()
+            elseif Cfg().face == "map" then CloseMap() else OpenMap() end
         end)
     end)
     map:HookScript("OnShow", function() ApplyFace() end)
