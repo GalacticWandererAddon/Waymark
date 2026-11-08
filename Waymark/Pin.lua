@@ -920,6 +920,23 @@ function BFIQuestiePinMixin:OnMouseUp(button)
         if TomTom and TomTom.AddWaypoint and icon.x then
             items[#items + 1] = { "a TomTom arrow to it", function() QuestArrow(self) end }
         end
+        -- (the Lab's route, while it's on: this first, the rest planned from here)
+        if ns.RouteGoTo and ns.RouteIsOn and ns.RouteIsOn() and self.questId then
+            local kind = self.bfiGroup == "questie" and "pickup" or self.bfiGroup == "turnins" and "turnin" or "work"
+            items[#items + 1] = { "route: I'm going here", function()
+                local map = self.GetMap and self:GetMap()
+                ns.RouteGoTo(self.questId, kind, map and map:GetMapID(), icon.x and icon.x / 100, icon.y and icon.y / 100)
+            end }
+        end
+        -- (dev only, DevBar.lua: a report for Claude when the pin is wrong, a click a choice, the user 2026-11-08)
+        if ns.ReportMenu then
+            items[#items + 1] = { "report...", function()
+                local map = self.GetMap and self:GetMap()
+                ns.ReportMenu({ questName = #quests == 1 and self.questName or nil, quests = quests, group = self.bfiGroup,
+                    who = icon.who, map = map and map:GetMapID(),
+                    x = icon.x and math.floor(icon.x * 10) / 10, y = icon.y and math.floor(icon.y * 10) / 10 })
+            end }
+        end
         if #items > 0 and ns.QuillMenu then ns.QuillMenu(items) end
         return
     end

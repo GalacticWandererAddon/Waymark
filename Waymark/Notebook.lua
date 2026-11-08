@@ -251,7 +251,9 @@ local function Place(p, words, x0, y0, size, color, font, seed, parent, over)
         local c = (over.turnAt and wi >= over.turnAt) and DEEP_INK or over.ink or color
         local fs = Text(p, size, c, parent, font)
         fs:SetText(wd.w)
-        if font == HAND_WHISPER then fs:SetHeight(size * 2) end  -- (their long tails aren't cut off)
+        -- (their long tails aren't cut off: Homemade Apple's line box is ascent 1327 + descent 880 on a 1024 em,
+        -- 2.16 x the size, so the box has to be taller than that; 2 cut the loops of y, p, g)
+        if font == HAND_WHISPER then fs:SetHeight(size * 2.6) end
         lineDrift[wd.line] = lineDrift[wd.line] or drift * Between(r, 0.2, 1.4)
         local dx, dy = Between(r, -0.7, 0.7) * wob, Between(r, -1.3, 1.3) * wob
         local x, y = x0 + wd.x + dx, y0 - wd.line * lh + dy + lineDrift[wd.line] * wd.x / 100
@@ -2117,13 +2119,13 @@ local function Dungeon(dg)
     -- elsewhere (marginAt), the notes make way for it there instead)
     local mWords, mH, mPage, mX, mY
     if dg.margin then
-        mWords, mH = Layout(dg.margin, MARGIN_W, 15, HAND_BODY)
+        mWords, mH = Layout(dg.margin, dg.marginW or MARGIN_W, 15, HAND_BODY)  -- (marginW: a page's own wrap width)
         mPage, mX, mY = left, 58, -(PH - 42 - mH)
         if dg.marginAt then mPage, mX, mY = PagePoint(dg.marginAt) end
     end
     local floorY = -(PH - (dg.margin and not dg.marginAt and 42 + mH + 14 or 50))
     local function MakeWay(pg, nx, nw, ny, nh)
-        if dg.marginAt and mPage == pg and nx < mX + MARGIN_W and nx + nw > mX and ny > mY - mH - 6 and ny - nh < mY + 6 then
+        if dg.marginAt and mPage == pg and nx < mX + (dg.marginW or MARGIN_W) and nx + nw > mX and ny > mY - mH - 6 and ny - nh < mY + 6 then
             return mY - mH - 10
         end
         return ny
@@ -2183,14 +2185,16 @@ local function Dungeon(dg)
         local whisper = a.hand == "whisper"
         local size, font, color = whisper and 15 or 19, whisper and HAND_WHISPER or HAND_BODY, whisper and WHISPER or INK
         if a.hand == "ewen" then size, font, color = 17, HAND_EWEN, EWEN end  -- (Ewen's, in her own ink)
-        local ax = x - 14
-        local w = (page == left and y > -150 and width - 64 or width) + 14
-        y = y - 4
+        -- (a.down, a.right: Alt-dragged by the wanderer, off its place in the flow; down pushes the rest down too)
+        local down, inset = a.down or 0, a.right or 0
+        local ax = x - 14 + inset
+        local w = (page == left and y > -150 and width - 64 or width) + 14 - inset
+        y = y - 4 - down
         local wds, h = Layout(a[1], w, size, font)
         y = MakeWay(page, ax, w, y, h)
         if page == left and (a.turn or y - h < floorY) then
-            page, x, y = right, 66, rightY
-            ax, w = x - 14, width + 14
+            page, x, y = right, 66, rightY - down
+            ax, w = x - 14 + inset, width + 14 - inset
             wds, h = Layout(a[1], w, size, font)
             y = MakeWay(page, ax, w, y, h)
         end
@@ -2242,7 +2246,15 @@ local function Dungeon(dg)
                         Show(spread)
                     end },
                 })
-            end, function(dx, dy) Reorder(slot, dx, dy) end)
+            end, function(dx, dy)
+                if not IsAltKeyDown() then Reorder(slot, dx, dy) return end
+                -- (Alt held: moved freely, not reordered; the gap it leaves above stays)
+                local c = AuthorCopy(spread).asides[k]
+                local d = math.max(-30, math.floor((c.down or 0) - dy + 0.5))
+                local r = math.max(0, math.min(width - 80, math.floor((c.right or 0) + dx + 0.5)))
+                c.down, c.right = d ~= 0 and d or nil, r ~= 0 and r or nil
+                Show(spread)
+            end)
         end
         y = y - h - 10
     end
@@ -2365,7 +2377,7 @@ local function Dungeon(dg)
     -- the sign-off after the notes, or where the wanderer dragged it (signAt: its centre on the book)
     -- (noSign: a page left unsigned; right-click the sign-off as the wanderer to leave it off)
     local sp, sx, sy = page, x + 170, y - 20
-    if dg.signAt then sp, sx, sy = PagePoint(dg.signAt) end
+    if dg.signAt then sp, sx, sy = PagePoint(dg.signAt) else sy = math.max(sy, -(PH - 36)) end  -- (never off the foot)
     if not dg.noSign then
         local sign = SignOff(sp, id, 44, INK)
         sign:SetPoint("CENTER", sp, "TOPLEFT", sx, sy)
@@ -2432,8 +2444,8 @@ local function Dungeon(dg)
         local mp, mx, my = mPage, mX, mY
         local put = Place(mp, mWords, mx, my, 15, INK_SOFT, HAND_BODY, id .. ":margin")
         if wanderer then
-            Hit(mp, mx, my, MARGIN_W, mH, function()
-                EditAt(mp, mx, my, MARGIN_W + 20, 15, HAND_BODY, INK_SOFT, dg.margin, SetMargin, put, true)
+            Hit(mp, mx, my, dg.marginW or MARGIN_W, mH, function()
+                EditAt(mp, mx, my, (dg.marginW or MARGIN_W) + 20, 15, HAND_BODY, INK_SOFT, dg.margin, SetMargin, put, true)
             end, nil, function(dx, dy)
                 AuthorCopy(spread).marginAt = BookPoint(mp, mx + dx, my + dy)
                 Show(spread)

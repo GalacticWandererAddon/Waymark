@@ -11,7 +11,23 @@ local _, ns = ...
 -- rewards with ids: Soaptastesok's community sheet (WoW Forever Leveling Tools). Larcenist's Belt is left off 96987:
 -- the sheet gives it the Solid Gold Band's id. Quest-item objectives and Starving Arcane's kills are text only.
 ns.ForeverQuestData = {
+-- Classic quests Forever doesn't offer at all (the user's quest notes): never shown as on offer. By id, or
+-- by name for a quest with a copy at each capital.
+-- "Your Reward has Arrived!" (60860 and its kin, innkeepers): a reward letter's quest, not on offer (2026-11-08).
+gone={},
+goneNames={ ["Your Reward has Arrived!"]=true },
+-- Classic quests Forever gives otherwise: these fields of the row replaced (WorldQuests.lua), by its field
+-- number in the row (9 preQuestSingle, 16 starts { npcs, objects, items }). From the user's quest notes and
+-- what Learn.lua saw: who offered it, after what.
+-- Teldrassil (940): Forever's chain is The Enchanted Glade, Darkness in the Glade (98392), The Oracle Tree
+-- (98398), then the Oracle Tree Bark (object 673378) offers it, not Sentinel Arynia (2026-11-08).
+fix={
+[940]={ [9]={98398}, [16]={nil,{673378}} },
+},
 quests={
+-- Teldrassil (the user's quest note, 2026-11-08: Byancie doesn't offer it yet with The Great Tree Provides in the log;
+-- the sweep had nothing before it. Byancie makes the salve from what that quest brings her: after it)
+[99073]={"Easing Suffering",10,4,nil,nil,141,nil,nil,{99050},nil,nil,nil,nil,nil,nil,{{6094}},{},nil,"Take the Lashwater Salve to Sentinel Eralya Leafshadow on the road to the Oracle Tree.",85,nil,nil,nil,nil},
 -- Ruins of Lordaeron: the Horde's
 [92401]={"A Frightened Request",22,15,178,0,130,0,0,nil,nil,nil,nil,nil,nil,nil,{{250686}},{{250686}},nil,"Investigate the disappearance of Edward Heartweaver in the Ruins of Lordaeron.",4600,nil,81,nil,{{{251485,1},{251486,1}}}},
 [92421]={"Light's Justice",22,15,178,0,1497,0,0,nil,nil,nil,nil,nil,nil,nil,{{266484}},{{266484}},{nil,nil,{{268580}}},"Collect 25 Intact Limbs within The Ruins of Lordaeron for Morbin Lightbane in the Undercity.",4600,nil,81,nil,{{{279874,1},{279875,1}},nil,4500}},

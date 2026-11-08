@@ -125,7 +125,7 @@ function ns.SetupLine(map)
     local ticker = ns.TimedFrame("Line tick")
     ticker:SetScript("OnUpdate", function(_, dt)
         elapsed = elapsed + dt
-        if elapsed < 0.1 then return end
+        if elapsed < ns.Tick(0.1) then return end
         elapsed = 0
         pcall(ns.UpdateLine)
     end)

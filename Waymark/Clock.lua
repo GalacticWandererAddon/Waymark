@@ -316,6 +316,8 @@ local function Draw(c, h, m)
     end
 end
 
+local placedUI -- UIParent's scale when a detached clock was last placed
+
 -- at a spot inside the map, clear of the coordinates, the close button and a soft edge
 local function Place(c)
     local area = home.ScrollContainer or home
@@ -340,10 +342,13 @@ local function Place(c)
         local aw, ah = UIParent:GetSize()
         local w, h = clock:GetSize()
         local lx, ly = math.min(0.5, w / 2 / aw), math.min(0.5, h / 2 / ah)
-        c.x = math.max(lx, math.min(1 - lx, c.x or 0.5))
-        c.y = math.max(ly, math.min(1 - ly, c.y or 0.5))
+        -- (kept on the screen as shown, not as saved: at load the screen's size isn't final, and the
+        -- saved spot stays what you dragged it to)
+        local x = math.max(lx, math.min(1 - lx, c.x or 0.5))
+        local y = math.max(ly, math.min(1 - ly, c.y or 0.5))
         clock:ClearAllPoints()
-        clock:SetPoint("CENTER", UIParent, "TOPLEFT", c.x * aw / g, -c.y * ah / g)
+        clock:SetPoint("CENTER", UIParent, "TOPLEFT", x * aw / g, -y * ah / g)
+        placedUI = UIParent:GetEffectiveScale()
         return
     end
     if point == "MAP" then
@@ -562,6 +567,7 @@ function ns.ClockFree() return Cfg().where == "FREE" end
 
 function ns.SetupClock(map)
     home = map
+    ns.db.clockTrace = nil   -- (a dev trace, gone)
     clock = Build(map)
     ns.debugFrames.clock = clock
     clock:RegisterForDrag("LeftButton")
@@ -589,11 +595,23 @@ function ns.SetupClock(map)
     local events = CreateFrame("Frame")
     events:RegisterEvent("ADDON_LOADED")
     events:SetScript("OnEvent", function(_, _, name) if name == "Blizzard_TimeManager" then GameClock() end end)
+    -- (a detached clock is placed from the screen's size: at load that isn't the final one yet, the
+    -- UI scale comes after, and the clock came back short of its spot, nearer the top left, the user
+    -- 2026-11-08. Placed again whenever the screen's UI size changes)
+    UIParent:HookScript("OnSizeChanged", function()
+        if ns.db and Cfg().where == "FREE" and ns.UpdateClock then ns.UpdateClock() end
+    end)
     local since = 0
     clock:SetScript("OnUpdate", ns.Timed("Clock tick", function(_, dt)
         local c = Cfg()
         if dragging then Follow(c) end
         if sliding then Slide(c) end
+        -- (the UI scale comes in seconds after a load, and not always with a size change: a detached clock
+        -- is placed again when it does. The trace showed UIParent at 0.64 after, the clock at 0.64 of its spot)
+        if c.where == "FREE" and not dragging then
+            local ui = UIParent:GetEffectiveScale()
+            if ui ~= placedUI then ns.UpdateClock() end
+        end
         local hover = c.show ~= "hover" or (ns.MouseOnMap and ns.MouseOnMap(map)) or dragging
             or clock:IsMouseOver() or false
         local want = hover and 1 or 0

@@ -149,6 +149,7 @@ local function On(map)
              mouse = mm:IsMouseEnabled(), wheel = mm.IsMouseWheelEnabled and mm:IsMouseWheelEnabled(), points = {} }
     for i = 1, mm:GetNumPoints() do held.points[i] = { mm:GetPoint(i) } end
     ns.DockHoldSquare(true)
+    if ns.DockPatchMask then ns.DockPatchMask(true) end  -- (the docked shape: the patch itself is never cut)
     ns.DockMapUnder(true)
     mm:EnableMouse(false)
     if mm.EnableMouseWheel then mm:EnableMouseWheel(false) end
@@ -173,7 +174,12 @@ function ns.DockPatchOff()
     end
     mm:ClearAllPoints()
     for _, p in ipairs(h.points) do mm:SetPoint(p[1], p[2], p[3], p[4], p[5]) end
+    -- (the game keeps drawing the picture at the patch's small size until a zoom change: the big map
+    -- opened from the patch left a small minimap in the square's corner, the user 2026-11-08)
+    local resized = math.abs(mm:GetWidth() - h.w) > 0.5
     mm:SetSize(h.w, h.h)
+    if resized and ns.DockRedraw then ns.DockRedraw() end
+    if ns.DockPatchMask then ns.DockPatchMask(false) end
     mm:Show()
     -- (going to the minimap side, the map stays under and the land off: put back and redone a moment
     -- later, the real minimap flashed up between)
@@ -265,7 +271,9 @@ local function Place(map)
     local mm = Minimap
     if mm:GetZoom() ~= zoom then mm:SetZoom(zoom) end
     local m, c = mm:GetEffectiveScale(), canvas:GetEffectiveScale()
-    local side = square:GetWidth() * square:GetEffectiveScale() * r / m
+    -- (the minimap's whole side: a tall docked shape's box is narrower)
+    local fw = ns.DockShapeFracs and ns.DockShapeFracs() or 1
+    local side = square:GetWidth() / fw * square:GetEffectiveScale() * r / m
     local x = (canvas:GetLeft() + pos.x * canvas:GetWidth()) * c / m
     local y = (canvas:GetBottom() + (1 - pos.y) * canvas:GetHeight()) * c / m
     mm:SetSize(side, side)

@@ -115,6 +115,12 @@ local function BuildPage()
     Switch(col, "Waymark's quest tracker", "tracker", "shown", "In place of the game's.")
     Switch(col, "A clock on the map", "clock", "shown")
     Switch(col, "Clear view", "clearView", "on", "Just the map, no frame.")
+    -- (performance mode: its own settings page, where the player picks what it lightens)
+    col.y = col.y - 6
+    col:Note("The addon has a lower performance cost mode for handhelds and older PC's.", 1, 0.96, 0.86)
+    col:Button("Click here to enable", function()
+        if ns.ToggleOptions then ns.ToggleOptions("performance") end
+    end)
     if ns.FOREVER then
         col.y = col.y - 6
         col:Note("Forever is new, and I'm still squashing issues with the new client. If something looks "

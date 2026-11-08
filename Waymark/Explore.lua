@@ -699,7 +699,7 @@ function ns.SetupExplore(map)
     ticker:SetScript("OnUpdate", function(_, dt)
         UpdateFlash()
         elapsed = elapsed + dt
-        if elapsed < 0.1 then return end
+        if elapsed < ns.Tick(0.1) then return end
         sinceCheck = sinceCheck + elapsed
         elapsed = 0
         if not map:IsVisible() then

@@ -81,15 +81,35 @@ local function RestorePosition(map)
     -- (positions saved by the earlier tab-moving version are left alone)
     if pos and pos.kind == "topleft" then
         -- never off the screen: at least a corner's worth of it left on
-        -- (undocking once pushed it thousands of units off the left edge)
-        pos.x = Clamp(pos.x, 0, UIParent:GetWidth() - 40)
-        pos.y = Clamp(pos.y, 40, UIParent:GetHeight())
-        PinTopLeft(map, pos.x, pos.y)
+        -- (undocking once pushed it thousands of units off the left edge). Kept on as shown, not as saved:
+        -- at load the screen's size isn't final (the UI scale comes seconds later), and writing the clamp
+        -- back pulled a map in a corner toward the middle at every load (players on CurseForge, 2026-11-08)
+        PinTopLeft(map, Clamp(pos.x, 0, UIParent:GetWidth() - 40), Clamp(pos.y, 40, UIParent:GetHeight()))
     end
     PlaceTab(map)
 end
 function ns.RestoreMapPosition()
     if BattlefieldMapFrame then RestorePosition(BattlefieldMapFrame) end
+end
+
+-- ...and placed again when the UI scale lands (it doesn't always come with a size change; the clock
+-- showed it, Clock.lua). Twice a second, not while it's being moved or in combat
+local mapMoving
+do
+    local watch, last, wait = CreateFrame("Frame"), nil, 0
+    watch:SetScript("OnUpdate", function(_, dt)
+        wait = wait - dt
+        if wait > 0 then return end
+        wait = 0.5
+        local map = BattlefieldMapFrame
+        if not (map and ns.db) then return end
+        local now = UIParent:GetEffectiveScale() .. ":" .. UIParent:GetWidth() .. ":" .. UIParent:GetHeight()
+        if now == last then return end
+        if last == nil then last = now return end
+        if mapMoving or InCombatLockdown() then return end   -- (later: tried again)
+        last = now
+        ns.Safe("MapControls scale", RestorePosition, map)
+    end)
 end
 
 local mover
@@ -121,12 +141,12 @@ local function SetupMover(map)
         map:SetClampedToScreen(true)
         if map.SetDontSavePosition then pcall(map.SetDontSavePosition, map, true) end  -- we save it
         map:StartMoving()
-        moving = true
+        moving, mapMoving = true, true
     end
     function ns.MapMoveStop()
         if ns.DockSquareDragStop and ns.DockSquareDragStop() then return end
         if not moving then return end
-        moving = false
+        moving, mapMoving = false, false
         map:StopMovingOrSizing()
         if ns.Docked and ns.Docked() then
             if ns.DockBigMoved then ns.DockBigMoved(map) end  -- (not your map's own spot)
@@ -1075,20 +1095,36 @@ end
 -- screen (ArtX, before), a bigger map drew the zone bigger fully zoomed out, so
 -- resizing the map changed the detail. Full is never past this map's closest
 -- zoom, so it can always be reached. 0..1.
+local DETAIL_REACH = 8   -- (a usual map's room, fully out to closest)
 function ns.DetailFade(map)
     local sc = map.ScrollContainer
     if not sc then return 1 end
     local lo, hi = ZoomRange(sc)
     if not lo then return 1 end
-    return ns.DetailFadeAt(sc:GetCanvasScale() / lo, hi / lo)
+    -- By how close you are to the closest step, as on a map of DETAIL_REACH steps' room: the same zoom
+    -- the same detail at any size of the map (by fully out, a resize moved you along the fade), and
+    -- none fully out (a big map has little room: fully out is near the closest; the user 2026-11-08)
+    local s = sc:GetCanvasScale()
+    local fade = ns.DetailFadeAt(DETAIL_REACH * s / hi, DETAIL_REACH)
+    return fade * Clamp((s / lo - 1) / 0.25, 0, 1)
 end
 
 -- the same for x times closer than fully out, on a map that goes reach times
 -- (ZoneArt's ns.ContinentZoneZoom: a zone seen on the big map's continent)
 function ns.DetailFadeAt(x, reach)
     local d = ns.db.detail
-    local full = math.min(d.fullZoom or 5.5, reach)
-    local from = math.min(d.fromZoom or 3.5, full)
+    local full0, from0 = d.fullZoom or 5.5, d.fromZoom or 3.5
+    -- A big map has less zoom room: fully out is closer already, the closest step the same. Cut to
+    -- that room, both ends landed on the closest step: a hard switch there, and with no room left the
+    -- detail full at once (corner-dragged into the screen's bottom, the user 2026-11-08). Short of
+    -- room, the fade is spread over what there is instead; with none, there's no detail
+    if not reach or reach <= 1.05 then return 0 end
+    local full, from = full0, from0
+    if reach < full0 and full0 > 1 then
+        full = reach
+        from = 1 + (from0 - 1) * (reach - 1) / (full0 - 1)
+    end
+    from = math.min(from, full)
     if full <= from * 1.001 then return x >= full * 0.999 and 1 or 0 end
     return Clamp(math.log(math.max(x, 1e-6) / from) / math.log(full / from), 0, 1)
 end
@@ -1219,7 +1255,9 @@ local function RefitZoom(map)
         if cx and not Follows(sc) then x, y = cx, cy end
         pcall(ApplyView, sc, levels[1].scale, x, y)
     elseif lo0 and lo0 > 0 and not anim then
-        pcall(ApplyView, sc, s0 / lo0 * levels[1].scale, x0, y0)
+        -- (zoomed in, a resize keeps the zoom: you see more or less of the map, the close-up detail
+        -- stays as it was. It was kept as times closer than fully out, which moved with the size)
+        pcall(ApplyView, sc, Clamp(s0, levels[1].scale, levels[#levels].scale), x0, y0)
     end
 end
 

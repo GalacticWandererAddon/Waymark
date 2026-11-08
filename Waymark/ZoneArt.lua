@@ -959,7 +959,7 @@ local function Update()
     if not (host and map) then return end
     local c = Cfg()
     local id = map:GetMapID()
-    if not (c.zoneArt and map:IsVisible() and IsOverview(id)) then
+    if not (c.zoneArt and not ns.Perf("art") and map:IsVisible() and IsOverview(id)) then
         host:Hide()
         GlowAlpha(1)
         return
@@ -1214,6 +1214,7 @@ end
 -- another continent, the player's continent's are set on an unseen frame a few a frame, then
 -- every other continent's, all kept (a file stays loaded while some texture holds it).
 local WARM_PER_FRAME = 8
+local WARM_HOLD = 60  -- frames a warm texture stays drawn at most (hidden sooner once its file is loaded)
 local warmFrame, warmTicker, warmFor
 local warmTex = {}
 
@@ -1260,7 +1261,7 @@ end
 
 local function Warm()
     local cont = PlayerContinent()
-    if not (cont and ns.db and Cfg().zoneArt) or warmFor then return end
+    if not (cont and ns.db and Cfg().zoneArt) or warmFor or ns.Perf("art") or ns.Perf("warm") then return end
     warmFor = cont
     if not warmFrame then
         -- (shown, a pixel in the screen's corner, all but see-through: a client may only
@@ -1285,24 +1286,50 @@ local function Warm()
             if not seen[f] then seen[f], files[#files + 1] = true, f end
         end
     end
-    local i = 0
+    -- In performance mode each texture is drawn only until its file has loaded (or WARM_HOLD
+    -- frames), then hidden: it still holds the file. Left shown, all ~2000 of them are drawn every
+    -- frame for the whole session (the handheld player's lag, 2026-11-08). Only there: hidden, the
+    -- game let the art go and the map drew slowly for the user, so out of it they stay shown.
+    local light = ns.db and ns.db.perf and ns.db.perf.on
+    local i, hid, n, at = 0, 0, 0, {}
     warmTicker:SetScript("OnUpdate", function(self)
+        n = n + 1
+        while light and hid < i do
+            local t = warmTex[hid + 1]
+            local loaded = t.IsObjectLoaded and t:IsObjectLoaded()
+            if not loaded and n - at[hid + 1] < WARM_HOLD then break end
+            t:Hide()
+            hid = hid + 1
+        end
+        if i >= #files then
+            if hid >= i or not light then self:SetScript("OnUpdate", nil) end
+            return
+        end
         for _ = 1, WARM_PER_FRAME do
             i = i + 1
             local f = files[i]
-            if not f then
-                self:SetScript("OnUpdate", nil)
-                return
-            end
+            if not f then i = i - 1 break end
             if not warmTex[i] then
                 warmTex[i] = warmFrame:CreateTexture()
                 warmTex[i]:SetAllPoints(warmFrame)
             end
+            warmTex[i]:Show()
+            at[i] = n
             if warmCell[f] then warmTex[i]:SetTexture(f, "CLAMP", "CLAMP", "TRILINEAR")
             else warmTex[i]:SetTexture(f) end
         end
     end)
 end
+
+-- performance mode turned on: the warmed files let go (the next login warms nothing)
+function ns.ZoneArtUnwarm()
+    if not (ns.Perf("art") or ns.Perf("warm")) or not warmFor then return end
+    if warmTicker then warmTicker:SetScript("OnUpdate", nil) end
+    for _, t in ipairs(warmTex) do t:SetTexture(nil) t:Hide() end
+    warmFor = nil
+end
+-- and off again: warmed as after a login
+function ns.ZoneArtWarm() ns.Safe("ZoneArt Warm", Warm) end
 
 function ns.SetupZoneArt(map)
     local warmEvents = CreateFrame("Frame")

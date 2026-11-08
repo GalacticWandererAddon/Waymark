@@ -368,7 +368,12 @@ function ns.QuestsUnder(name)
     return set
 end
 
+-- (turned in this session: the game's completed flag comes a moment after QUEST_TURNED_IN, and the
+-- refresh on that event saw the quest neither in the log nor done, so its "!" came back till a /reload:
+-- the Sprouted Fronds, the user 2026-11-08)
+local turnedIn = {}
 local function Done(id)
+    if turnedIn[id] then return true end
     if C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted then return C_QuestLog.IsQuestFlaggedCompleted(id) end
     return IsQuestFlaggedCompleted and IsQuestFlaggedCompleted(id) or false
 end
@@ -531,6 +536,10 @@ local function Available(id)
     local q = Info(id)
     if not q.name then return false, "unknown quest" end
     if QCfg().hidden[id] then return false, "hidden (Shift-click)" end
+    local FQ = ns.FOREVER and ns.ForeverQuestData
+    if FQ and ((FQ.gone and FQ.gone[id]) or (FQ.goneNames and FQ.goneNames[q.name])) then
+        return false, "not offered on Forever (Data/ForeverQuests.lua gone)"
+    end
     if Log()[id] then return false, "in your quest log" end
     local repeatable = HasBit(q.specialFlags or 0, 1)
     if Done(id) and not repeatable then return false, "done" end
@@ -605,11 +614,11 @@ end
 -- background; what's available is decided as the map draws.
 local givers, giversState = {}, nil  -- state: nil, "building", "done"
 
-local function AddGiver(spawns, name, starterType, quests, sub)
+local function AddGiver(spawns, name, starterType, quests, sub, key)
     EachSpawn(spawns, function(m, x, y)
         local list = givers[m]
         if not list then list = {} givers[m] = list end
-        list[#list + 1] = { x = x, y = y, name = name, sub = sub, starterType = starterType, quests = quests }
+        list[#list + 1] = { x = x, y = y, name = name, sub = sub, starterType = starterType, quests = quests, key = key }
     end)
 end
 
@@ -635,12 +644,12 @@ local function BuildGivers()
         if n % 100 == 0 then coroutine.yield() end
     end
     for npc, quests in pairs(byNpc) do
-        if Friendly(N().friendlyToFaction(npc)) then AddGiver(NpcSpawns(npc), N().name(npc), nil, quests, N().subName(npc)) end
+        if Friendly(N().friendlyToFaction(npc)) then AddGiver(NpcSpawns(npc), N().name(npc), nil, quests, N().subName(npc), "c" .. npc) end
         n = n + 1
         if n % 50 == 0 then coroutine.yield() end
     end
     for obj, quests in pairs(byObject) do
-        AddGiver(O().spawns(obj), O().name(obj), "Object", quests)
+        AddGiver(O().spawns(obj), O().name(obj), "Object", quests, nil, "o" .. obj)
         n = n + 1
         if n % 50 == 0 then coroutine.yield() end
     end
@@ -1398,9 +1407,65 @@ local iconCache, iconStamp = {}, nil
 function ns.QuestIconsKept(mapID)
     return iconStamp == version .. ":" .. UnitLevel("player") and iconCache[mapID] ~= nil
 end
+-- The givers on a map, with those the data files under the capital's zone (or the capital's own, on the
+-- zone's map) moved onto it, as EachOnMap does for objectives. Kept per map: the index doesn't change.
+local giversOn = {}
+local function GiversOn(mapID)
+    local l = giversOn[mapID]
+    if l then return l end
+    l = {}
+    for _, g in ipairs(givers[mapID] or {}) do l[#l + 1] = g end
+    for other, list in pairs(givers) do
+        if other ~= mapID and (CITY_IN[other] == mapID or CITY_IN[mapID] == other) then
+            local a, b = WorldBox(other), WorldBox(mapID)
+            if a and b then
+                for _, g in ipairs(list) do
+                    local tx, ty = (a.y0 + g.x * a.dy - b.y0) / b.dy, (a.x0 + g.y * a.dx - b.x0) / b.dx
+                    if tx >= 0 and tx <= 1 and ty >= 0 and ty <= 1 then
+                        local c = {}
+                        for k, v in pairs(g) do c[k] = v end
+                        c.x, c.y = tx, ty
+                        l[#l + 1] = c
+                    end
+                end
+            end
+        end
+    end
+    if giversState == "done" then giversOn[mapID] = l end
+    return l
+end
+
+-- Who you've seen offering each quest (Learn.lua's givers): [questID] = { [key] = true }, keys "c" .. npc,
+-- "o" .. object. Where you have, that's the quest's giver: the data's others lose it (the user, 2026-11-08:
+-- Teldrassil from the Oracle Tree Bark on Forever, not Sentinel Arynia). Only a creature or an object counts
+-- (Learn.lua's Giver), never an item or a player sharing.
+local learnedBy, learnedStamp = {}, nil
+local function LearnedBy()
+    local stamp = ns.learnedVersion or 0
+    if learnedStamp == stamp then return learnedBy end
+    learnedStamp = stamp
+    wipe(learnedBy)
+    for key, g in pairs(WaymarkQuestDB and WaymarkQuestDB.givers or {}) do
+        for id in pairs(g.offers or {}) do
+            learnedBy[id] = learnedBy[id] or {}
+            learnedBy[id][key] = true
+        end
+    end
+    return learnedBy
+end
+-- the data's givers for a quest don't include this one you met (Learn.lua shows its pin then)
+function ns.DataGiverDiffers(id, key)
+    if not Source() then return false end
+    local ok, by = pcall(Q().startedBy, id)
+    if not (ok and by) then return true end
+    for _, npc in ipairs(by[1] or {}) do if "c" .. npc == key then return false end end
+    for _, obj in ipairs(by[2] or {}) do if "o" .. obj == key then return false end end
+    return true
+end
+
 function ns.QuestIcons(mapID)
     if not (mapID and Source() and LoadZones()) then return {} end
-    local stamp = version .. ":" .. UnitLevel("player")
+    local stamp = version .. ":" .. UnitLevel("player") .. ":" .. (ns.learnedVersion or 0) .. tostring(ns.IsShown("learned"))
     if iconStamp ~= stamp then wipe(iconCache) iconStamp = stamp end
     if iconCache[mapID] then return iconCache[mapID] end
     local out = {}
@@ -1408,10 +1473,23 @@ function ns.QuestIcons(mapID)
 
     -- quest givers
     if EnsureGivers() then
-        for _, g in ipairs(givers[mapID] or {}) do
+        -- (where you met a giver on this map wins over the data's spawn, one pin: Forever moved some,
+        -- Byancie in Dolanaar, the user 2026-11-08, and the learned spot is the real one)
+        local moved = {}
+        for _, g in ipairs(GiversOn(mapID)) do
+            local lx, ly
+            if g.key and ns.LearnedSpot then lx, ly = ns.LearnedSpot(g.key, mapID) end
+            if lx and moved[g.key] then
+                -- (another spawn of the same giver: already at the learned spot)
+            else
+            if lx then moved[g.key] = true end
             local quests, best, bestLevel, anyRep = {}, nil, nil, false
+            -- (only while the learned pins show: they're where the quest is then)
+            local seen = ns.IsShown("learned") and LearnedBy() or {}
             for _, id in ipairs(g.quests) do
                 local a = IsAvailable(id)
+                -- (you've met who really gives it, and it isn't this one: not here)
+                if a and seen[id] and not (g.key and seen[id][g.key]) then a = nil end
                 if a then
                     quests[#quests + 1] = id
                     local lvl = QuestLevel(Info(id))
@@ -1426,12 +1504,13 @@ function ns.QuestIcons(mapID)
             if best then
                 local icon = best.trivial and "available_gray" or (anyRep and #quests == 1 and "repeatable") or "available"
                 out[#out + 1] = {
-                    x = g.x * 100, y = g.y * 100, id = best.id, name = QuestName(best.id), group = "questie",
+                    x = (lx or g.x) * 100, y = (ly or g.y) * 100, id = best.id, name = QuestName(best.id), group = "questie",
                     level = bestLevel, starterType = g.starterType, who = g.name, sub = g.sub, quests = quests, faint = g.faint,
                     trivial = best.trivial or nil,
                     kind = art and "file" or nil, value = art and (QUESTIE_ICONS .. icon .. ".blp") or nil,
                     l = 0, r = 1, t = 0, b = 1,
                 }
+            end
             end
         end
     end
@@ -1443,16 +1522,16 @@ function ns.QuestIcons(mapID)
         elseif e.complete then
             local rep = HasBit(Info(id).specialFlags or 0, 1)
             for _, f in ipairs(Finishers(id)) do
-                EachSpawn(f.spawns, function(m, x, y)
-                    if m == mapID then
-                        out[#out + 1] = {
-                            x = x * 100, y = y * 100, id = id, name = QuestName(id), group = "turnins",
-                            level = QuestLevel(Info(id)), who = f.name, quests = { id },
-                            kind = art and "file" or nil,
-                            value = art and (QUESTIE_ICONS .. (rep and "repeatable_complete" or "complete") .. ".blp") or nil,
-                            l = 0, r = 1, t = 0, b = 1,
-                        }
-                    end
+                -- (EachOnMap: a capital's own map too, where the data files the hand-in under its zone. Fandral
+                -- Staghelm's two in Darnassus had no "?" while the route knew them, the user 2026-11-08)
+                EachOnMap(f.spawns, mapID, function(x, y)
+                    out[#out + 1] = {
+                        x = x * 100, y = y * 100, id = id, name = QuestName(id), group = "turnins",
+                        level = QuestLevel(Info(id)), who = f.name, quests = { id },
+                        kind = art and "file" or nil,
+                        value = art and (QUESTIE_ICONS .. (rep and "repeatable_complete" or "complete") .. ".blp") or nil,
+                        l = 0, r = 1, t = 0, b = 1,
+                    }
                 end)
             end
         else
@@ -1727,7 +1806,11 @@ ns.questChanges = {}
 local sigs = { QUEST_LOG_UPDATE = LogSignature, SKILL_LINES_CHANGED = SkillSignature,
                UPDATE_FACTION = RepSignature }
 local lastSig = {}
-events:SetScript("OnEvent", function(_, event)
+events:SetScript("OnEvent", function(_, event, a)
+    if event == "QUEST_TURNED_IN" and a then
+        turnedIn[a] = true
+        C_Timer.After(2, Bump)  -- (once the game's own flag is in too)
+    end
     -- (on login every event fires once: noted as they are, so only a real change
     -- later throws the quest caches away)
     if event == "PLAYER_ENTERING_WORLD" then

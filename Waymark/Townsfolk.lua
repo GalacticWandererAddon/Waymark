@@ -29,8 +29,9 @@ ns.TOWNSFOLK_TYPES = {
         { key = "Battlemaster",   label = "Battlemaster",    icon = TRACKING .. "battlemaster" },
         { key = "Spirit Healer",  label = "Spirit healer",   icon = "Interface\\RaidFrame\\Raid-Icon-Rez" },
         { key = "Class Trainer",  label = "Class trainer",   icon = TRACKING .. "class" },
-        -- (the game's attack cursor: a sword with no square behind it, as the other pins)
-        { key = "Weapon Master",  label = "Weapon master",   icon = "Interface\\Cursor\\Attack" },
+        -- (an axe of ours, tools/weapon_master_art.py: the game's attack cursor, a sword, is a "slay" objective's
+        -- icon too, the user 2026-11-08)
+        { key = "Weapon Master",  label = "Weapon master",   icon = MEDIA .. "WeaponMaster" },
         { key = "Portal Trainer", label = "Portal trainer",  icon = "Interface\\Minimap\\Vehicle-AllianceMagePortal" },
     },
     vendors = {
@@ -65,6 +66,10 @@ local function PinRank(key)
     if type(key) == "number" then key = "professions" end  -- (a profession's trainers)
     return PIN_RANK[key] or #PIN_ORDER + 1
 end
+-- A type that's everywhere round a spot says little there: with CROWD or more of it within CROWD_YARDS, a
+-- pin there shows its next type in PIN_ORDER (the user, 2026-11-08: Auberdine's forge, four repair
+-- vendors, was all anvils over the trade goods and the tailoring supplier)
+local CROWD, CROWD_YARDS = 3, 60
 
 -- older learned townsfolk were filed under types since folded into others
 local LEARNED_AS = { Food = "Drink", General = "Bags" }
@@ -697,15 +702,35 @@ function BFITownsfolkProviderMixin:Draw()
         perType[#perType + 1] = { t = t, points = points, object = object }
     end
 
-    -- one pin per NPC: the first of its ticked types in PIN_ORDER; the others
+    -- a type's rank at a spot: PIN_ORDER, a crowded type after all the rest
+    local yw, yh
+    if ns.MapYards then yw, yh = ns.MapYards(mapID) end
+    local function Rank(e, x, y)
+        local r = PinRank(e.t.key)
+        if not yw or e.object then return r end
+        local n, r2 = 0, CROWD_YARDS * CROWD_YARDS
+        for _, q in ipairs(e.points) do
+            local dx, dy = (q.x - x) * yw, (q.y - y) * yh
+            if dx * dx + dy * dy <= r2 then
+                n = n + 1
+                if n >= CROWD then return r + #PIN_ORDER + 1 end
+            end
+        end
+        return r
+    end
+
+    -- one pin per NPC: the first of its ticked types by Rank; the others
     -- go in its tooltip
-    local best, labels = {}, {}
+    local best, labels, kinds = {}, {}, {}   -- (kinds[id]: every ticked type the NPC is)
     for _, e in ipairs(perType) do
         if not e.object then
             for _, p in ipairs(e.points) do
                 if p.id then
+                    local k = kinds[p.id] or {}
+                    kinds[p.id] = k
+                    k[#k + 1] = e
                     local cur = best[p.id]
-                    if not cur or PinRank(e.t.key) < PinRank(cur.t.key) then best[p.id] = e end
+                    if not cur or Rank(e, p.x, p.y) < Rank(cur, p.x, p.y) then best[p.id] = e end
                     local l = labels[p.id] or {}
                     labels[p.id] = l
                     if not l[e.t.label] then
@@ -750,12 +775,91 @@ function BFITownsfolkProviderMixin:Draw()
         end
         for _, g in ipairs(Merge(keep, mapID, c.mergeYards)) do Pin(g, e) end
     end
-    for _, g in ipairs(pool and Merge(pool, mapID, c.mergeYards) or {}) do
-        local e = g.members[1].kind
+    -- each group's face: of every type its members are, the best by Rank that no pin within CROWD_YARDS
+    -- shows yet (more types on the map, not two of one: the user, 2026-11-08), else its best; the most
+    -- important groups choose first. The member who is it goes first in the tooltip
+    local groups = pool and Merge(pool, mapID, c.mergeYards) or {}
+    for _, g in ipairs(groups) do
+        local seen, cands = {}, {}
         for _, p in ipairs(g.members) do
-            if p.kind ~= e then g.mixed = true break end
+            if p.kind ~= g.members[1].kind then g.mixed = true end
+            for _, e in ipairs(p.id and kinds[p.id] or { p.kind }) do
+                if not seen[e] then
+                    seen[e] = true
+                    cands[#cands + 1] = { e = e, r = Rank(e, g.x, g.y) }
+                end
+            end
         end
-        Pin(g, e)
+        table.sort(cands, function(a, b) return a.r < b.r end)
+        g.cands = cands
+    end
+    -- (those with the fewest types choose first: a lone weaponsmith can only be an anvil, so the forge's
+    -- group of repair and trade goods takes the thread, not a second anvil, the user 2026-11-08; then
+    -- the most important)
+    table.sort(groups, function(a, b)
+        if #a.cands ~= #b.cands then return #a.cands < #b.cands end
+        return a.cands[1].r < b.cands[1].r
+    end)
+    local shown = {}   -- { x, y, e } of the pins placed
+    local r2 = CROWD_YARDS * CROWD_YARDS
+    for _, g in ipairs(groups) do
+        local e = g.cands[1].e
+        if yw then
+            for _, cand in ipairs(g.cands) do
+                local near = false
+                for _, s in ipairs(shown) do
+                    local dx, dy = (s.x - g.x) * yw, (s.y - g.y) * yh
+                    if s.e == cand.e and dx * dx + dy * dy <= r2 then near = true break end
+                end
+                if not near then e = cand.e break end
+            end
+        end
+        shown[#shown + 1] = { x = g.x, y = g.y, e = e }
+        for i, p in ipairs(g.members) do
+            local isIt = p.kind == e
+            if not isIt and p.id then
+                for _, k in ipairs(kinds[p.id] or {}) do if k == e then isIt = true break end end
+            end
+            if isIt then
+                if i > 1 then table.insert(g.members, 1, table.remove(g.members, i)) end
+                break
+            end
+        end
+        g.face = e
+    end
+    -- A merged pin's member of a type no pin near shows gets a pin of its own: four pins at a spot are
+    -- fine if they're four types, it's the same type twice that's clutter (the user 2026-11-08: the
+    -- forge's repair vendors swallowed the trade goods supplier)
+    local function Shown(e, x, y)
+        for _, s in ipairs(shown) do
+            local dx, dy = (s.x - x) * (yw or 1), (s.y - y) * (yh or 1)
+            if s.e == e and dx * dx + dy * dy <= r2 then return true end
+        end
+    end
+    local solo = {}
+    for _, g in ipairs(groups) do
+        for i = #g.members, 2, -1 do
+            local p = g.members[i]
+            local k = p.kind
+            if yw and k ~= g.face and not Shown(k, p.x, p.y) then
+                table.remove(g.members, i)
+                local s = { x = p.x, y = p.y, members = { p }, face = k }
+                solo[#solo + 1] = s
+                shown[#shown + 1] = { x = p.x, y = p.y, e = k }
+            end
+        end
+    end
+    for _, s in ipairs(solo) do groups[#groups + 1] = s end
+    for _, g in ipairs(groups) do
+        if #g.members > 1 then
+            local sx, sy = 0, 0
+            for _, p in ipairs(g.members) do sx, sy = sx + p.x, sy + p.y end
+            g.x, g.y = sx / #g.members, sy / #g.members
+        end
+        g.mixed = nil
+        for _, p in ipairs(g.members) do if p.kind ~= g.face then g.mixed = true break end end
+        if #g.members < 2 then g.mixed = nil end
+        Pin(g, g.face)
     end
 end
 

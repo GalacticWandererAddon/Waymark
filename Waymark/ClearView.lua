@@ -29,7 +29,8 @@ local FADE_RATE = 5   -- alpha per second
 
 local function Cfg() return ns.db.clearView end
 
-function ns.ClearView() return ns.db and Cfg().on and true or false end
+-- (not while docked: the docked map is the minimap, with its rim, Dock.lua)
+function ns.ClearView() return ns.db and Cfg().on and not ns.Perf("effects") and not (ns.Docked and ns.Docked()) and true or false end
 
 -- In town and city view, and on a continent (or the world), the border fades back in
 -- (the user): edge, 0 to 1, gliding at FADE_RATE; the frame is hidden only while it's
@@ -52,7 +53,13 @@ end
 ns.MapOnContinent = OnContinent
 local function EdgeTarget()
     if not (ns.ClearView() and Cfg().noFrame) then return 1 end
-    return ((ns.InTownView and ns.InTownView()) or (ns.InCityView and ns.InCityView()) or OnContinent()) and 1 or 0
+    if OnContinent() then return 1 end
+    -- (town and city view: the frame back only when the map fills it. With the zone cut to its outline,
+    -- a coast town's zoom shows the cut-away sea, and the frame came back round empty space, the user
+    -- 2026-11-08: Auberdine)
+    local town = (ns.InTownView and ns.InTownView()) or (ns.InCityView and ns.InCityView())
+    if town and not (ns.ClearViewZoneCut and ns.ClearViewZoneCut()) then return 1 end
+    return 0
 end
 function ns.ClearViewBorderAlpha() return edge end
 

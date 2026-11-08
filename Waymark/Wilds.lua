@@ -303,7 +303,7 @@ function ns.SetupWilds(m)
     local ticker = ns.TimedFrame and ns.TimedFrame("Wilds tick", map) or CreateFrame("Frame", nil, map)
     ticker:SetScript("OnUpdate", function(_, e)
         t = t + e
-        if t < 0.1 then return end
+        if t < ns.Tick(0.1) then return end
         t = 0
         if not ns.db then return end
         local ok, sig = pcall(Signature)

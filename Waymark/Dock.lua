@@ -70,11 +70,62 @@ local undocking
 local canvasFixes = 0  -- times the canvas had lost its place on screen (SetupDock)
 
 function ns.Docked() return applied ~= nil end
+-- The docked shape (dock.shape; a CurseForge player's ask, 2026-11-08, mockups\minimap-shapes.html):
+-- the minimap stays square, a mask cuts its top and bottom, or its sides (it hides the minimap's blips
+-- and edge arrows past the cut too, tried on Forever), and the square is the rectangle left
+-- (shapeBox). Size is the minimap's side: the width of a wide shape, the height of a tall one.
+-- Each: the part of the side kept across, and up and down (the mask's own pixels out of 128), its
+-- mask. (The tall ones were the Lab's; all seven cleared for the next release, the user 2026-11-08.)
+local SHAPES = {
+    ["54"] = { 1, 102 / 128, "DockMask54" }, ["43"] = { 1, 0.75, "DockMask43" }, ["1610"] = { 1, 0.625, "DockMask1610" },
+    ["45"] = { 102 / 128, 1, "DockMask45" }, ["34"] = { 0.75, 1, "DockMask34" }, ["1016"] = { 0.625, 1, "DockMask1016" },
+}
+local function Shape()
+    return ns.db and ns.db.dock and SHAPES[ns.db.dock.shape or "square"]
+end
+-- the part of the minimap's side the shape keeps across, and up and down
+local function Fracs()
+    local s = Shape()
+    if s then return s[1], s[2] end
+    return 1, 1
+end
+ns.DockShapeFracs = Fracs
+local function Mask()
+    local s = Shape()
+    return s and ns.MEDIA .. s[3] or SQUARE_MASK
+end
+local shapeBox
+local function PlaceShapeBox()
+    if not shapeBox then return end
+    local fw, fh = Fracs()
+    local bx, by = Minimap:GetWidth() * (1 - fw) / 2, Minimap:GetHeight() * (1 - fh) / 2
+    shapeBox:SetFrameStrata(Minimap:GetFrameStrata())  -- (the map is raised one over it: RaiseMap)
+    shapeBox:ClearAllPoints()
+    shapeBox:SetPoint("TOPLEFT", Minimap, "TOPLEFT", bx, -by)
+    shapeBox:SetPoint("BOTTOMRIGHT", Minimap, "BOTTOMRIGHT", -bx, by)
+end
 -- what the square is measured from: the minimap, unless the Lab's patch of blips has taken it away
--- and left this in its place (ns.DockHoldSquare)
+-- and left this in its place (ns.DockHoldSquare), or the docked shape cuts it
 local box
-local function Box() return box or Minimap end
+local function Box()
+    if box then return box end
+    if Shape() then
+        if not shapeBox then
+            shapeBox = CreateFrame("Frame", nil, UIParent)
+            shapeBox:EnableMouse(false)
+            Minimap:HookScript("OnSizeChanged", PlaceShapeBox)
+            PlaceShapeBox()
+        end
+        return shapeBox
+    end
+    return Minimap
+end
 function ns.DockSquareBox() return Box() end
+-- the bands the shape cuts off the minimap's right and top, minimap units, at its docked size
+local function Bands(side)
+    local fw, fh = Fracs()
+    return side * (1 - fw) / 2, side * (1 - fh) / 2
+end
 
 local function StrataN(f)
     local s = f:GetFrameStrata()
@@ -135,7 +186,7 @@ local function CreateFrames()
     -- showed as a grey square whenever the minimap sank under it, until a
     -- click raised the minimap again)
     edge = CreateFrame("Frame", nil, UIParent)
-    edge:SetAllPoints(Minimap)
+    edge:SetAllPoints(Box())
     edge:EnableMouse(false)
     Ring(edge, 3, 2, 0, 0, 0)
     Ring(edge, 1, 1, 0.42, 0.40, 0.36)
@@ -145,7 +196,7 @@ local function CreateFrames()
 
     -- the friction's glow, over both faces
     glow = CreateFrame("Frame", nil, UIParent)
-    glow:SetAllPoints(Minimap)
+    glow:SetAllPoints(Box())
     glow:SetFrameStrata("HIGH")
     glow:EnableMouse(false)
     local size = 16
@@ -161,7 +212,7 @@ local function CreateFrames()
 
     -- the minimap's buttons, moved onto this while docked (LiftButtons)
     host = CreateFrame("Frame", nil, UIParent)
-    host:SetAllPoints(Minimap)
+    host:SetAllPoints(Box())
     host:EnableMouse(false)
     ns.debugFrames.dockEdge, ns.debugFrames.dockGlow, ns.debugFrames.dockButtons = edge, glow, host
 end
@@ -202,6 +253,7 @@ local function Redraw()
     Minimap:SetZoom(z > 0 and z - 1 or z + 1)
     C_Timer.After(0, function() Minimap:SetZoom(z) end)
 end
+ns.DockRedraw = Redraw  -- (DockPatch.lua, after giving the minimap its size back)
 
 -- where the square's top-right corner goes, in UIParent units from its
 -- top-right (negative: in from the edge); corner: our frame's outer edge
@@ -258,6 +310,7 @@ end
 -- square's edge at its own angle; undocked, LibDBIcon places it again. Those you've held and moved
 -- keep their spot. Twice: addons make theirs late. Also what else a change of shape leaves behind:
 -- the header and the X under the map after undocking, the game's quest areas (ns.ApplyGroups).
+local placedIcons = setmetatable({}, { __mode = "k" })   -- buttons put on the square
 local function PlaceIcons()
     if ns.ApplyChromeScale then ns.ApplyChromeScale() end
     if ns.ApplyGroups then ns.ApplyGroups() end
@@ -268,9 +321,18 @@ local function PlaceIcons()
     local held = Cfg().buttonPos or {}
     for _, name in ipairs(lib:GetButtonList()) do
         local b = lib:GetMinimapButton(name)
-        if b and not held["minimap:" .. (b:GetName() or "")] then
-            pcall(lib.Refresh, lib, name)
+        -- (only buttons on the minimap and showing, or ones we placed: a button another addon has
+        -- hidden or gathered up, Leatrix Plus's say, stays its business. Refreshing them all showed
+        -- them under the square after a reload, and stuck round the minimap after undocking, the user
+        -- 2026-11-08)
+        local ours = b and (placedIcons[b] or (b:GetParent() == Minimap and b:IsShown()))
+        if ours and not held["minimap:" .. (b:GetName() or "")] then
+            if not face then
+                placedIcons[b] = nil
+                pcall(lib.Refresh, lib, name)   -- (undocked: back on the ring, where LibDBIcon puts it)
+            end
             if face and face:GetWidth() > 0 then
+                placedIcons[b] = true
                 local angle = math.rad(b.db and b.db.minimapPos or b.minimapPos or 225)
                 local dx, dy = math.cos(angle), math.sin(angle)
                 local k = face:GetEffectiveScale() / b:GetEffectiveScale()
@@ -291,11 +353,13 @@ local function PlaceMinimap()
     if not applied or InCombat() then return end
     if ns.DockPatchOff then ns.DockPatchOff() end
     local mm = Minimap
+    -- (the docked shape: the visible rectangle's top goes there, the minimap's own top a band higher)
+    local bx, b = Bands(SideOnMinimap())
     local spot = Cfg().spot  -- (where you dragged it by the header: its top-right, UI units)
     if spot then
         local k = UIParent:GetEffectiveScale() / mm:GetEffectiveScale()
         mm:ClearAllPoints()
-        mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", spot[1] * k, spot[2] * k)
+        mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", spot[1] * k + bx, spot[2] * k + b)
         CarryCluster(spot)
         return
     end
@@ -304,7 +368,7 @@ local function PlaceMinimap()
         local x, y = CornerOffsets()
         local k = UIParent:GetEffectiveScale() / mm:GetEffectiveScale()
         mm:ClearAllPoints()
-        mm:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", x * k, y * k)
+        mm:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", x * k + bx, y * k + b)
     elseif ns.FOREVER and MinimapCluster and MinimapCluster:GetRight() then
         -- where the minimap sat in Edit Mode's box, so it keeps up with the box. Not flush with the
         -- box: that put the square against the screen's edge, and what stands round it (the calendar,
@@ -312,12 +376,12 @@ local function PlaceMinimap()
         local c, e = MinimapCluster, mm:GetEffectiveScale()
         local ce = c:GetEffectiveScale() / e
         mm:ClearAllPoints()
-        mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", c:GetRight() * ce + (applied.offRight or 0),
-            c:GetTop() * ce + (applied.offTop or 0))
+        mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", c:GetRight() * ce + (applied.offRight or 0) + bx,
+            c:GetTop() * ce + (applied.offTop or 0) + b)
     else
         -- where it was: its top-right corner stays, so a bigger square grows down and left
         mm:ClearAllPoints()
-        mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", applied.right, applied.top)
+        mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", applied.right + bx, applied.top + b)
     end
 end
 
@@ -336,10 +400,13 @@ local function Square()
         a.offRight, a.offTop = a.right - c:GetRight() * ce, a.top - c:GetTop() * ce
     end
     applied = a
+    -- (clear view stands aside while docked: no rim, the zone cut away and the picture faded made the
+    -- minimap a bare dark square, the user 2026-11-08; ClearView.lua asks ns.Docked)
+    if ns.ApplyClearView then C_Timer.After(0, ns.ApplyClearView) end
     if a.right then PlaceMinimap() end
     local s = SideOnMinimap()
     mm:SetSize(s, s)
-    mm:SetMaskTexture(SQUARE_MASK)
+    mm:SetMaskTexture(Mask())
     GetMinimapShape = function() return "SQUARE" end  -- (LibDBIcon places buttons by it)
     IconsToShape()
     -- (with the zone bar gone the calendar and the addon dropdown hang past the screen's edge)
@@ -383,6 +450,12 @@ local function Square()
         mm:EnableMouseWheel(true)
     end
     CreateFrames()
+    -- (on the square, or the docked shape: it may have changed since they were made)
+    PlaceShapeBox()
+    for _, f in ipairs({ edge, glow, host }) do
+        f:ClearAllPoints()
+        f:SetAllPoints(Box())
+    end
     edge:SetFrameStrata(mm:GetFrameStrata())
     edge:Show()
     lastZoom = mm:GetZoom()
@@ -394,6 +467,7 @@ local function Unsquare()
     if ns.DockPatchOff then ns.DockPatchOff() end
     local mm, a = Minimap, applied
     applied = nil
+    if ns.ApplyClearView then C_Timer.After(0, ns.ApplyClearView) end   -- (clear view back, if on)
     -- (the dungeon's minimap face ends with the dock: docked again, the square was the minimap face
     -- with the dungeon map's floor name hidden, the user)
     if dungeonMinimap then
@@ -469,8 +543,8 @@ function ns.DockedSize(map)
         local w, h = BigWH()
         return w * u + i[1] + i[2], h * u + i[3] + i[4]
     end
-    local side = Box():GetWidth() * Box():GetEffectiveScale() / map:GetEffectiveScale()
-    return side + i[1] + i[2], side + i[3] + i[4]
+    local k = Box():GetEffectiveScale() / map:GetEffectiveScale()
+    return Box():GetWidth() * k + i[1] + i[2], Box():GetHeight() * k + i[3] + i[4]
 end
 
 -- before the map first moves: its own anchors and strata, kept for undocking;
@@ -671,7 +745,8 @@ local function Yards() return IsIndoors and IsIndoors() and YARDS_IN or YARDS_OU
 local function MinimapScale(sc, z)
     local yards = sc.mapID and ns.MapYards and ns.MapYards(sc.mapID)
     local cw = sc.Child and sc.Child:GetWidth()
-    local w = Box():GetWidth() * Box():GetEffectiveScale() / sc:GetEffectiveScale()
+    -- (the minimap's whole side: a tall shape's box is narrower than what the minimap's yards span)
+    local w = Box():GetWidth() / (Fracs()) * Box():GetEffectiveScale() / sc:GetEffectiveScale()
     local list = Yards()
     local across = list[(z or 0) + 1] or list[1]
     local s = yards and cw and cw > 0 and w > 0 and w * yards / (cw * across) or nil
@@ -690,10 +765,11 @@ local boxFrame
 function ns.DockHoldSquare(on)
     if on and not box then
         boxFrame = boxFrame or CreateFrame("Frame", nil, UIParent)
-        local e = Minimap:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        local f = Box()  -- (the minimap, or the docked shape on it)
+        local e = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
         boxFrame:ClearAllPoints()
-        boxFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", Minimap:GetLeft() * e, Minimap:GetBottom() * e)
-        boxFrame:SetSize(Minimap:GetWidth() * e, Minimap:GetHeight() * e)
+        boxFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", f:GetLeft() * e, f:GetBottom() * e)
+        boxFrame:SetSize(f:GetWidth() * e, f:GetHeight() * e)
         boxFrame:SetFrameStrata(Minimap:GetFrameStrata())
         box = boxFrame
     elseif not on then
@@ -800,17 +876,17 @@ local function SquareFrame()
     local b = ns.db.border
     local style = ns.MapBorderStyle and ns.MapBorderStyle() or b.style
     if style == "game" then style = "dialog" end
-    local out = ns.DressBorder and ns.DressBorder(square, Minimap, style, b.size, b.gap, b.color)
+    local out = ns.DressBorder and ns.DressBorder(square, Box(), style, b.size, b.gap, b.color)
     if not out then
         square:SetBackdrop(nil)
         square:ClearAllPoints()
-        square:SetAllPoints(Minimap)
+        square:SetAllPoints(Box())
         out = 3
     end
     square:SetFrameStrata(Minimap:GetFrameStrata())
     square:SetFrameLevel(Minimap:GetFrameLevel() + 2)
     square.zone:ClearAllPoints()
-    square.zone:SetPoint("BOTTOM", Minimap, "TOP", 0, out + 2)
+    square.zone:SetPoint("BOTTOM", Box(), "TOP", 0, out + 2)
     square.zone:SetText(GetMinimapZoneText())
     square:Show()
 end
@@ -1207,6 +1283,9 @@ function ns.DockToggleBig()
             return
         end
     else
+        -- (the Lab's live blips lay the minimap over the square: it went off on its own next tick, so for a
+        -- few frames the minimap and its frame showed inside the big map, the user 2026-11-08. Off first)
+        if ns.DockPatchOff then ns.DockPatchOff() end
         local wasShown = map and map:IsShown()
         local wasMap = Cfg().face == "map"  -- (from the minimap face the view was following you)
         if Cfg().face ~= "map" then
@@ -1316,6 +1395,17 @@ function ns.DockQuestiePins()
     for icon in pairs(lib.minimapPins) do icon:SetParent(want and pinPark or Minimap) end
 end
 
+-- Other addons' buttons stay on the minimap for a while after login: Leatrix Plus's button bag looks
+-- through the minimap's children for about 16 s and gathers theirs up (Hunter's Field Guide), and one
+-- lifted onto the square before that wasn't found, so it stood on the minimap after undocking, the user
+-- 2026-11-08. Lifted after (ADDON_WAIT, the login's last pass below)
+local ADDON_WAIT, loginAt = 20, GetTime()
+local function AddonsWait(child)
+    if GetTime() - loginAt >= ADDON_WAIT or not child:IsObjectType("Button") then return false end
+    local name = child:GetName()
+    return name and not (issecurevariable and issecurevariable(name)) and true or false
+end
+
 function LiftButtons()
     if not (applied and host) or InCombat() then return end
     OwnDrags(true)  -- (docked: holding moves them, their own drag off)
@@ -1333,7 +1423,8 @@ function LiftButtons()
     for _, parent in ipairs({ Minimap, MinimapCluster, MinimapBackdrop }) do
         if parent then
             for _, child in ipairs({ parent:GetChildren() }) do
-                if not holds[child] and child ~= MinimapBackdrop and child ~= host and not IsMapPin(child) then
+                if not holds[child] and child ~= MinimapBackdrop and child ~= host and not IsMapPin(child)
+                   and not (parent == Minimap and AddonsWait(child)) then
                     if child:IsProtected() then
                         if not lifted[child] then lifted[child] = child:GetFrameStrata() end
                         if StrataN(child) ~= wantN then child:SetFrameStrata(STRATA[wantN]) end
@@ -1578,6 +1669,12 @@ function ns.DockSquareDragStop()
     if not squareDrag then return false end
     squareDrag = nil
     squareMover:SetScript("OnUpdate", nil)
+    -- (a spot of your own: "into the screen's top-right corner" no longer says where it is, the user
+    -- 2026-11-08)
+    if Cfg().spot and Cfg().corner then
+        Cfg().corner = false
+        if ns.RefreshControls then ns.RefreshControls() end
+    end
     Redraw()
     if ns.DockMoveBuffs then ns.Safe("Dock buffs", ns.DockMoveBuffs) end
     return true
@@ -1585,10 +1682,10 @@ end
 function ns.DockSquareDragStart()
     if not applied or InCombat() or squareDrag then return end
     if ns.DockPatchOff then ns.DockPatchOff() end
-    local e = Minimap:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    local e = Box():GetEffectiveScale() / UIParent:GetEffectiveScale()
     local s = UIParent:GetEffectiveScale()
     local x, y = GetCursorPosition()
-    squareDrag = { x / s, y / s, Minimap:GetRight() * e, Minimap:GetTop() * e }
+    squareDrag = { x / s, y / s, Box():GetRight() * e, Box():GetTop() * e }
     squareMover = squareMover or CreateFrame("Frame")
     squareMover:SetScript("OnUpdate", function()
         if not IsMouseButtonDown("LeftButton") then return ns.DockSquareDragStop() end
@@ -1601,9 +1698,48 @@ function ns.DockSquareDragStart()
 end
 function ns.DockSpotReset()
     Cfg().spot = nil
+    if ns.FOREVER then Cfg().corner = false end   -- (the setting isn't offered there: the minimap's spot means it)
     PlaceMinimap()
+    -- (the map over it too, as the drag does: it blinked at the minimap's spot and stayed till a Ctrl-drag)
+    if BattlefieldMapFrame then ns.DockPlace(BattlefieldMapFrame) end
     Redraw()
     if ns.DockMoveBuffs then ns.Safe("Dock buffs", ns.DockMoveBuffs) end
+end
+
+-- The UI scale comes in seconds after a load, and not always with a size change (the clock came back at
+-- 0.64 of its spot, the user 2026-11-08; a player's docked map crept toward the middle after a reload):
+-- docked, the square is placed again when UIParent's or the minimap's scale changes. Twice a second
+do
+    local scaleWatch, last, wait = CreateFrame("Frame"), nil, 0
+    scaleWatch:SetScript("OnUpdate", function(_, dt)
+        wait = wait - dt
+        if wait > 0 then return end
+        wait = 0.5
+        if not applied then last = nil return end
+        local now = UIParent:GetEffectiveScale() .. ":" .. Minimap:GetEffectiveScale()
+        if now == last then return end
+        if last == nil then last = now return end
+        if InCombat() or squareDrag or dragBase then return end   -- (later: tried again)
+        last = now
+        ns.Safe("Dock scale", function()
+            PlaceMinimap()
+            Redraw()
+        end)
+    end)
+end
+
+-- The shape changed (dock.shape): the mask, the minimap's place, and all that hangs on the square
+-- measured again. Out of combat only; else when the fight ends.
+function ns.DockApplyShape()
+    if not applied then return end
+    if InCombat() then pending = true return end
+    ns.ApplyDock()   -- (squared afresh: the mask, its place, the map over it)
+    if ns.UpdateClock then ns.UpdateClock() end
+end
+
+-- DockPatch.lua: the patch of blips is a plain square, never cut (full), and the shape's mask back after
+function ns.DockPatchMask(full)
+    if applied then Minimap:SetMaskTexture(full and SQUARE_MASK or Mask()) end
 end
 
 function ns.DockResize(map, w, h, dragging)
@@ -1619,7 +1755,8 @@ function ns.DockResize(map, w, h, dragging)
         -- on it change once, on release. Live, the map flickered at every pixel)
         dragBase.side2 = math.floor(Clamp(dragBase.side + grow, MIN_SIZE, MAX_SIZE) + 0.5)
         local side = dragBase.side2 * ns.AddonScale()
-        Outline(map, side, side)
+        local fw, fh = Fracs()
+        Outline(map, side * fw, side * fh)
         return
     else
         if dragBase and dragBase.side2 then c[key] = dragBase.side2 end
@@ -1631,6 +1768,7 @@ function ns.DockResize(map, w, h, dragging)
         if ns.DockPatchOff then ns.DockPatchOff() end
         local s = SideOnMinimap()
         Minimap:SetSize(s, s)
+        if Shape() then PlaceMinimap() end  -- (the docked shape: the band changed with the size)
     end
     if ns.UpdateMapShape then ns.Safe("Dock UpdateShape", ns.UpdateMapShape, true, true) end
     -- (the square's size sets the scale that matches the minimap: on you at it, step by step)
@@ -2001,7 +2139,7 @@ events:SetScript("OnEvent", function(_, event)
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- the minimap draws its new size once the world is in; buttons other
         -- addons made since; the header placed by now
-        for _, t in ipairs({ 0.5, 3 }) do
+        for _, t in ipairs({ 0.5, 3, ADDON_WAIT + 1 }) do
             C_Timer.After(t, function()
                 if not applied or InCombat() then return end
                 Redraw()
@@ -2131,14 +2269,15 @@ end
 if ns.FOREVER and EventRegistry and MinimapCluster then
     local watch = CreateFrame("Frame")
     watch:Hide()
-    local x0, y0
+    local x0, y0, enterAt
     local function Follow()
         if not applied or InCombat() then return end
         local c = MinimapCluster
         local l, t, s = c:GetLeft(), c:GetTop(), c:GetEffectiveScale()
         if not (l and t) then return end
         local x, y = l * s, t * s
-        if not x0 then x0, y0 = x, y return end
+        -- (Edit Mode puts the box at its layout as it opens: that's not you moving it)
+        if not x0 or (editing and GetTime() - (enterAt or 0) < 0.5) then x0, y0 = x, y return end
         if math.abs(x - x0) < 0.5 and math.abs(y - y0) < 0.5 then return end
         x0, y0 = x, y
         -- (the box moved by hand: it's in charge now, not the spot from the header's drag)
@@ -2153,15 +2292,18 @@ if ns.FOREVER and EventRegistry and MinimapCluster then
     watch:SetScript("OnUpdate", function() ns.Safe("Dock Edit Mode", Follow) end)
     EventRegistry:RegisterCallback("EditMode.Enter", function()
         editing = true  -- (a square moved by its header keeps the cluster: the box shows where it is)
-        x0, y0 = nil, nil
+        x0, y0, enterAt = nil, nil, GetTime()
         watch:Show()
     end, watch)
     EventRegistry:RegisterCallback("EditMode.Exit", function()
         watch:Hide()
         editing = nil
         -- (leaving without saving puts the box back: a frame later, it's there)
+        -- Your own spot (the header's drag) stays unless you moved the box while in Edit Mode: the game
+        -- putting the box back at its layout as Edit Mode closes isn't a move of yours (it dropped the
+        -- spot and the square jumped down to the box, the user 2026-11-08)
         C_Timer.After(0, function()
-            ns.Safe("Dock Edit Mode", Follow)
+            if not Cfg().spot then ns.Safe("Dock Edit Mode", Follow) end
             ns.Safe("Dock Edit Mode", PlaceMinimap)  -- (the cluster back with the square)
         end)
     end, watch)

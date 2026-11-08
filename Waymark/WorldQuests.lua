@@ -19,6 +19,11 @@ if D and ns.FOREVER and ns.ForeverQuestData then
             if not D[kind][id] then D[kind][id] = row end
         end
     end
+    -- (a classic quest Forever gives otherwise: those fields of its row replaced)
+    for id, fields in pairs(ns.ForeverQuestData.fix or {}) do
+        local row = D.quests[id]
+        if row then for i, v in pairs(fields) do row[i] = v end end
+    end
     -- (new drops on a classic boss, after the ones with chances: a row's chances stay in step)
     for instance, bosses in pairs(ns.ForeverQuestData.lootAdded or {}) do
         D.bossloot[instance] = D.bossloot[instance] or {}

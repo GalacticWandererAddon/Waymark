@@ -133,7 +133,7 @@ local function Mask(map)
 end
 
 local function Wanted(map)
-    if not Cfg().on then return false end
+    if not Cfg().on or ns.Perf("effects") then return false end
     if ns.Docked and ns.Docked() then return false end
     if ns.CutEditing and ns.CutEditing() then return false end
     if ns.ClearViewFloorCut and ns.ClearViewFloorCut() then return false end

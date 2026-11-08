@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.2.6 (2026-11-08)
+
+**Boats on the map, a docked minimap in the shape you like, a performance mode, and the map stays where you put it.**
+
+New
+- Boats and zeppelins on Forever: their piers on the map and dotted routes on the continent map, Forever's own crossings included (Stormwind Harbor to Auberdine, Steamwheedle Port to Powderfuse Port, the skyships from Valanaar).
+- Docked over the minimap, pick its shape: square, wide (5:4, 4:3, 16:10) or tall (4:5, 3:4, 10:16). Minimap replacement > Shape.
+- Performance mode: one switch for handhelds and older PCs that lightens the map. Each part it lightens can be kept as it was. The welcome page links to it.
+- Walk within 60 yards of an objective at a single spot and its X shows in place of the quest's dot.
+- A quest giver's pin stands where you met them, and who you've met giving a quest wins over the built-in data.
+- In a capital, givers and hand-ins filed under its zone show on the city map.
+
+Changed
+- Quest objective dots: a quest spread over a zone shows up to four dots, not one; a quest's own dots close together are drawn as one.
+- Hovering a quest's dot lights that quest, the one under the cursor; the other quests fade without a blink.
+- Vendors: nearby pins show different types before repeating one, so a forge full of repairers still shows its trade goods. Town view shows every vendor type in all presets.
+- Close-up detail fades in by how close you are to the closest zoom, the same at any map size. Resizing the map keeps your zoom.
+- On Forever the "top-right corner" setting for the docked map is gone: move the minimap in Edit Mode, or the map with Ctrl-drag. "Back to the minimap's spot" in the map's menu puts it back.
+- Town and city view: one size slider for quest givers and turn-ins.
+- Clear view steps aside while the map is docked, and in town view the frame stays away while the zone is cut to its outline.
+- Boats and their words shrink on a small map.
+- The tracker shows a finished quest's hand-in place at the right.
+- The Creator's preset is now the creator's own setup. All presets cleaned of settings that did nothing.
+
+Fixed
+- The map no longer creeps toward the middle of the screen after a reload, undocked or docked.
+- A detached clock comes back to its own spot after a reload.
+- Gamepad on Forever: A (jump) works again after opening and closing the map.
+- Docked: other addons' minimap buttons you keep hidden (Leatrix Plus's button bag) stay hidden, before and after undocking.
+- Docked: opening and closing Edit Mode no longer moves the map off the spot you dragged it to.
+- Quest dots and X marks keep their size at the closest zoom, and only catch the mouse close to them.
+- Quest dots keep their own colours after you hover another quest.
+- A quest you've handed in no longer comes back as a quest pin.
+- How Big a Threat? shows all three furbolg camps that complete it, not only the southern one.
+- Quests Forever doesn't offer are off the map ("Your Reward has Arrived!"); Teldrassil on Forever comes after The Oracle Tree.
+- Long font names in the font menus stay on one line.
+
+Known
+- Forever's new dungeons have no map pictures yet.
+
 ## 1.2.5 (2026-11-07)
 
 **The dungeon map is back on Forever, quest objectives redone, and the book opens up to the Sunken Temple.**

@@ -59,7 +59,8 @@ local DEFAULTS = {
     -- screen's top-right corner; big / bigSize: the map face grown (UI units)
     -- splitQuests: objective spots on the minimap face, quest ground on the map's (ns.SplitHides)
     dock       = { on = false, size = 160, wheel = true, friction = 2, face = "map", ourGround = true, splitQuests = false,
-                   corner = true, big = false, bigSize = 360, mapOnly = true, hideSun = false, hideTitle = true },
+                   corner = true, big = false, bigSize = 360, mapOnly = true, hideSun = false, hideTitle = true,
+                   shape = "square" },  -- (shape: "square", "54", "43", "1610": Dock.lua SHAPES)
     -- the map lets clicks through unless this modifier (ALT, CTRL, SHIFT) is held (ClickThrough.lua)
     clickThrough = { on = false, modifier = "ALT", combat = false },
     clearView  = { on = false, noFrame = true, header = "hover", buttons = "hover", opacity = 0.7, zoneOnly = true,
@@ -92,7 +93,7 @@ local DEFAULTS = {
                    cursorWhere = "beside", cursorSide = "same", cursorX = 0, cursorY = 0,
                    color = { 1, 1, 1 } },
     waypoints  = { shown = false, alpha = 1, scale = 1, clickToAdd = true },  -- TomTom
-    transports = { shown = false, alpha = 1, scale = 1, boats = true, zeppelins = true, trams = true, continent = true, boat = "cog" },  -- Transports.lua
+    transports = { shown = true, alpha = 1, scale = 1, boats = true, zeppelins = true, trams = true, continent = true, routes = true, boat = "cog" },  -- Transports.lua
     rares      = { shown = false, alpha = 1, scale = 1, rsIcons = false },  -- RareScanner
     -- quest givers learned as you play (Learn.lua): mode "gaps" = only quests
     -- QuestieDB doesn't know (all of them without QuestieDB), "all" = every one;
@@ -220,6 +221,9 @@ local DEFAULTS = {
     -- fromZoom / fullZoom: times closer than fully zoomed out (fromX / fullX:
     -- an earlier version's, art on screen, no longer read)
     detail     = { shown = false, strength = 1, fromZoom = 3.5, fullZoom = 5.5, blend = false, always = false, sharpArt = true, bigMap = true },
+    -- Performance mode (ns.Perf), for handhelds and older PCs: on, and items[k] false for the
+    -- things the player wants kept as they are. Not part of a setup or preset (Setups.lua EXCLUDE)
+    perf       = { on = false, items = {} },
     -- line from you to: a pin you Alt-click, your target if in your group, or the
     -- nearest objective spot
     line       = { shown = false, alpha = 0.9, thickness = 3, groupTarget = true, nearestSpot = false },
@@ -652,6 +656,20 @@ function ns.IsShown(group)
     return cfg.shown and true or false
 end
 
+-- Performance mode (Options' Performance mode page): for handhelds and older PCs. While it's on,
+-- each item the player left ticked runs lighter; their own settings stay as they are, so turning
+-- it off brings everything back. Items: art (painted continents), warm (map art loaded ahead),
+-- detail (close-up tiles), ground (quest areas: objective spots instead), effects (time of day,
+-- soft edges, clear view), ticks (the map's checks 4 a second, not 10). ns.IsShown stays the
+-- player's choice (the settings and toggle buttons show and switch that): it's applied where drawn
+ns.PERF_ITEMS = { "art", "warm", "detail", "ground", "effects", "ticks" }
+function ns.Perf(item)
+    local p = ns.db and ns.db.perf
+    return p and p.on and p.items[item] ~= false or false
+end
+-- a ticker's seconds between looks, slower in performance mode
+function ns.Tick(s) return ns.Perf("ticks") and math.max(s, 0.25) or s end
+
 -- whether the active profile decides this layer right now (its label, or nil)
 function ns.ProfileOverrides(group)
     local profile = ns.ActiveProfile and ns.ActiveProfile()
@@ -950,7 +968,7 @@ end
 -- quest ground's "pins" look: the objective spot pins stand in for the ground
 function ns.SpotsAsGround()
     local g = ns.db and ns.db.ground
-    return g and g.look == "pins" and ns.IsShown("ground") or false
+    return g and (g.look == "pins" or ns.Perf("ground")) and ns.IsShown("ground") or false
 end
 -- Docked with dock.splitQuests: one of the two faces each, spots on the minimap, ground on the
 -- map (the big map counts as the map). Only with both to choose from; "pins" ground is the spots.
@@ -1056,12 +1074,23 @@ end
 -- (view: "townView" or "cityView", the same for a capital in city view)
 function ns.TownPinSize(group, view)
     local t = ns.db[view or "townView"]
+    -- (in town and city view the turn-ins are the givers' size: one slider for both, the user 2026-11-08)
+    if group == "turnins" then
+        return t.sizes.questie or (ns.db.turnins and ns.db.turnins.scale or 1) * (t.pinScale or 1)
+    end
     return t.sizes[group] or (ns.db[group] and ns.db[group].scale or 1) * (t.pinScale or 1)
 end
 
+-- (objective pins and dots: one size everywhere, the Quests page's; town view's own row for them didn't move
+-- the dots and read as broken, the user 2026-11-08 by the Relay: decoupled)
+local NOT_IN_TOWN = { spots = true, ground = true }
+ns.PIN_NOT_IN_TOWN = NOT_IN_TOWN
+
 function ns.PinScale(group, own)
     local s = own or 1
-    if ns.InCityView and ns.InCityView() then
+    if NOT_IN_TOWN[group] then
+        -- (as on the map)
+    elseif ns.InCityView and ns.InCityView() then
         s = ns.TownPinSize(group, "cityView")
     elseif ns.InTownView and ns.InTownView() then
         s = ns.TownPinSize(group)
@@ -1355,6 +1384,16 @@ end
 function ns.OnSettingChanged(group, key)
     -- the toggle strip on the map follows changes made in the options window
     if ns.RefreshToggles then ns.RefreshToggles() end
+    if group == "perf" then  -- (performance mode: everything it touches, again)
+        ns.OnSettingChanged("detail", "shown")
+        ns.OnSettingChanged("ground", "shown")
+        ns.OnSettingChanged("clearView", "on")
+        ns.OnSettingChanged("browse", "zoneArt")
+        if ns.UpdateMapHour then ns.UpdateMapHour() end
+        if ns.ZoneArtUnwarm then ns.ZoneArtUnwarm() end
+        if not (ns.Perf("art") or ns.Perf("warm")) and ns.ZoneArtWarm then ns.ZoneArtWarm() end
+        return
+    end
     if group == "notebook" and ns.NotebookRefresh then ns.NotebookRefresh() end
     if group == "questie" and SHARED_WITH_TURNINS[key] then
         ns.ShareQuestLook()
@@ -1415,6 +1454,8 @@ function ns.OnSettingChanged(group, key)
     elseif group == "clearView" then
         if ns.ApplyClearView then ns.ApplyClearView() end
     elseif group == "dock" then
+        -- (the corner ticked again: your own spot from a Ctrl-drag goes, or it would still win)
+        if key == "corner" and ns.db.dock.corner and ns.DockSpotReset then ns.DockSpotReset() end
         if ns.ApplyDock then ns.ApplyDock() end
     elseif group == "zoneName" then
         if ns.UpdateZoneName then ns.UpdateZoneName() end
@@ -1851,6 +1892,30 @@ local function Setup()
     local sc = map.ScrollContainer
     if sc and sc.CheckForEdgePan and sc.edgePanDistance == nil then
         sc.edgePanDistance = (GetCVarNumberOrDefault and GetCVarNumberOrDefault("GamepadMapEdgePanDistance")) or 0
+    end
+    -- Gamepad UI: A stopped jumping and SetPreferredGamepadInteractTarget was blocked (Caetras and
+    -- another CurseForge player, the user 2026-11-08). The map canvas's gamepad code runs on our
+    -- map too: UnregisterPin calls every released pin's OnMouseLeave, hovered or not, and
+    -- UpdateGamepadCursor enters and leaves pins under the world map's soft cursor. A game quest
+    -- pin's leave/enter fires MapCanvas.QuestPin.OnLeave/OnEnter, and the world map's quest list
+    -- answers with QuestLogQuests_Update: run from our refreshes, it wrote QuestMapFrame.layoutIndex
+    -- under our taint, and the gamepad focus of the quest panel read it and ran tainted from then on.
+    -- Our map never has gamepad focus (only the world map is a panel), so: no soft-cursor hover here,
+    -- and a released pin is only "left" if it was entered.
+    if map.UpdateGamepadCursor and map.UnregisterPin and map.currentPoIPins then
+        map.UpdateGamepadCursor = function() end
+        map.UnregisterPin = function(self, pin)
+            if pin:IsPinSuppressor() then
+                tDeleteItem(self.pinSuppressors, pin)
+                self:SetPinSuppressionDirty()
+            end
+            if tContains(self.currentPoIPins, pin) then
+                tDeleteItem(self.currentPoIPins, pin)
+                if pin.OnExit then pin:OnExit() end
+                pin:SetHighlightLocked(false)
+                pin:OnMouseLeave()
+            end
+        end
     end
     if ns.SetupTransports then ns.SetupTransports(map) end
     if ns.SetupMapHour then ns.SetupMapHour(map) end

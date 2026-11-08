@@ -375,7 +375,8 @@ local function OpenList(box, choices, current, pick)
         list:SetScript("OnHide", function() pcall(list.UnregisterEvent, list, "GLOBAL_MOUSE_DOWN") end)
     end
     local perCol = math.ceil(#choices / math.ceil(#choices / LIST_ROWS))
-    local colW = math.max(box:GetWidth(), 120) - 2 * LIST_PAD
+    -- (a font list a little wider: other addons' font names run long)
+    local colW = math.max(box:GetWidth(), choices[1] and choices[1][3] and 170 or 120) - 2 * LIST_PAD
     for i, ch in ipairs(choices) do
         local r = listRows[i]
         if not r then
@@ -385,6 +386,9 @@ local function OpenList(box, choices, current, pick)
             r.text:SetPoint("LEFT", 22, 0)
             r.text:SetPoint("RIGHT", -6, 0)
             r.text:SetJustifyH("LEFT")
+            -- (one line, cut short: "AR ZhongkaiGBK Medium" wrapped onto the row under it, the user 2026-11-08)
+            r.text:SetWordWrap(false)
+            r.text:SetMaxLines(1)
             r.font = { r.text:GetFont() }  -- (back to this after a font list)
             r.check = r:CreateTexture(nil, "OVERLAY")
             ns.SetArt(r.check, "common-dropdown-icon-checkmark-yellow", "Interface\\Buttons\\UI-CheckBox-Check")
@@ -886,7 +890,7 @@ local function Column(parent, x, y, width, side)
         local get, set = Setting(group, key)
         -- (a layer's size: in town or city view with a size of its own there, it's that one the slider
         -- shows and moves. A slider that did nothing in Darnassus read as broken, the user)
-        if key == "scale" and ns.TownPinSize then
+        if key == "scale" and ns.TownPinSize and not (ns.PIN_NOT_IN_TOWN and ns.PIN_NOT_IN_TOWN[group]) then
             local get0, set0 = get, set
             local function View()
                 local v = (ns.InCityView and ns.InCityView() and "cityView") or (ns.InTownView and ns.InTownView() and "townView")
@@ -2024,6 +2028,45 @@ end }
 
 local function Percent(v) return string.format("%d%%", v * 100 + 0.5) end
 
+-- Performance mode (ns.Perf, BattlefieldInfo.lua): one switch, then each thing it lightens, ticked
+-- unless the player wants that one kept as it is. Their own settings elsewhere stay untouched
+local PERF_ROWS = {
+    { "art", "Continents: the game's own map",
+      "Waymark's painted continents are hundreds of pictures. The game's own continent map is a few." },
+    { "warm", "Don't load map pictures ahead",
+      "Waymark loads the continents' pictures after you log in, so the map opens at once. Not loaded ahead, the map's first open may blink." },
+    { "detail", "No close-up detail",
+      "The trees, rocks and buildings that fade in as you zoom in stay off." },
+    { "ground", "Quest areas as spots",
+      "Quest areas on the ground, if you have them on, show as objective spots instead." },
+    { "effects", "No map effects",
+      "The time of day tint, soft edges and clear view rest." },
+    { "ticks", "Fewer map updates",
+      "The map looks for changes 4 times a second instead of 10. A pin can come a moment later." },
+}
+
+PAGES[#PAGES + 1] = { key = "performance", label = "Performance mode", build = function(p)
+    local a = Column(p, 0, 0, HALF)
+    a:Header("Performance mode")
+    a:Note("For handhelds and older PCs. The map runs lighter, so the game keeps its framerate. Turn it off and everything is as you had it.")
+    a:CheckWith("On", function() return ns.db.perf.on end, function(v)
+        ns.db.perf.on = v and true or false
+        ns.OnSettingChanged("perf", "on")
+    end)
+    a:Note("What it makes lighter. Untick what you'd rather keep:")
+    a:Requires(function() return ns.db.perf.on end)  -- (greyed while it's off)
+    for _, row in ipairs(PERF_ROWS) do
+        local item = row[1]
+        a:CheckWith(row[2], function() return ns.db.perf.items[item] ~= false end, function(v)
+            -- (false: kept as it is; nil: lightened. "(not v) and false or nil" was always nil)
+            if v then ns.db.perf.items[item] = nil else ns.db.perf.items[item] = false end
+            ns.OnSettingChanged("perf", item)
+        end)
+        a:Tip(row[3])
+    end
+    a:Requires()
+end }
+
 PAGES[#PAGES + 1] = { key = "window", label = "Size, shape & fade", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Size and shape")
@@ -2160,9 +2203,17 @@ PAGES[#PAGES + 1] = { key = "minimap", label = "Minimap replacement", build = fu
     b:Advanced()
     b:Slider("Size", 100, 400, 10, "dock", "size", "%d")
     b:Tip("The square's size; on the big map, the big map's.", "Or drag its corner grip (bottom left); right-click the grip for 160.")
+    local shapes = { { "square", "Square" }, { "54", "5:4" }, { "43", "4:3" }, { "1610", "16:10" },
+                     { "45", "4:5" }, { "34", "3:4" }, { "1016", "10:16" } }
+    b:Choice("Shape", "dock", "shape", shapes)
+    b:Tip("Wider than tall: the top and bottom are cut off, so you see as far east and west as before and less north and south. Size sets the width. Taller than wide: the sides are cut, and Size sets the height.")
     b:Advanced(true)
-    b:Check("Into the screen's top-right corner", "dock", "corner")
-    b:Tip(ns.FOREVER and "Off: where the minimap is. Moving the minimap in Edit Mode turns this off." or "Off: where the minimap was.")
+    -- (not on Forever: the minimap goes where you like with Edit Mode, the square by a Ctrl-drag, and the
+    -- header's "back to the minimap's spot"; the corner was one more say in it, the user 2026-11-08)
+    if not ns.FOREVER then
+        b:Check("Into the screen's top-right corner", "dock", "corner")
+        b:Tip("Off: where the minimap was.")
+    end
     if ns.FOREVER then
         b:Check("Hide the game's title bar", "dock", "hideTitle")
         b:Tip("The minimap's zone name bar. Its tracking button stays. Takes effect the next time you dock.")
@@ -2349,8 +2400,8 @@ local function ViewPinSizes(a, view, where)
     a:Tip("Every layer's map size times this, for the layers you haven't set below.")
     a:Advanced(true)
     local LAYERS = {
-        { "questie", "Quest givers" }, { "turnins", "Turn-ins" },
-        { "spots", "Objective spots" }, { "objectives", "Objective markers (the game's)" },
+        { "questie", "Quest givers & turn-ins" },   -- (one size: turn-ins follow the givers here, ns.TownPinSize)
+        { "objectives", "Objective markers (the game's)" },   -- (objective pins and dots: their own size everywhere)
         { "learned", "Learned quest givers" }, { "townsfolk", "Townsfolk" },
         { "rares", "Rares & treasures" }, { "gather", "Gathering nodes" },
         { "dungeons", "Dungeon entrances" },
@@ -3279,15 +3330,16 @@ PAGES[#PAGES + 1] = { key = "people", label = "Townsfolk", build = function(p)
         { "stone", "Headstone" }, { "game", "The game's icon" },
     })
     a:Requires()
-    if ns.SetupTransports then   -- (left out of releases for now: toolsuild_era_release.py)
+    if ns.SetupTransports then   -- (Forever releases only: tools/build_era_release.py)
         a:Header("Boats, zeppelins & the tram")
         a:Check("Show", "transports", "shown")
         a:Tip("Inked at each pier, tower and tram stop. Hover one to see where it goes.")
         a:Requires("transports", "shown")
         a:Check("Boats", "transports", "boats")
-        a:Check("Zeppelins", "transports", "zeppelins")
+        a:Check("Zeppelins & skyships", "transports", "zeppelins")
         a:Check("The tram", "transports", "trams")
         a:Check("On the continent map too", "transports", "continent")
+        a:Check("Dotted routes on the continent map", "transports", "routes")
         a:Choice("Boat", "transports", "boat", { { "cog", "Cog" }, { "woodcut", "Woodcut" } })
         a:Slider("Opacity", 0, 1, 0.05, "transports", "alpha")
         a:Slider("Size", 0.2, 2, 0.05, "transports", "scale")
@@ -4626,7 +4678,7 @@ local function BuildPanel()
     -- it moves with you and where you are; what's drawn on it; and your own setup.
     -- "#Heading>key": the heading opens that page (the group's own summary)
     local NAV = {
-        "overview",
+        "overview", "performance",
         "#The window", "window", "clearview", "minimap", "header", "controls",
         "#Getting around", "behaviour", "browse", "town", "city", "dungeon",
         "#What's shown>shownhome", "quests", "people", "group", "rares", "explore",

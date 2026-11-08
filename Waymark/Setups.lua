@@ -18,6 +18,7 @@ local LibDeflate = LibStub("LibDeflate")
 -- not part of a setup: per-run and learned data, and the setups themselves
 local EXCLUDE = { addonScale = true,  -- (Waymark size: follows your screen, not a setup or character)
                   welcome = true,  -- (seen once, whatever setup or character: Welcome.lua)
+                  perf = true,  -- (performance mode: this PC's, whatever setup is loaded)
                   puristWas = true,  -- (the quest layers Purist switched off: SetRows)
                   setups = true, characters = true, dungeonRun = true, blockedLog = true, towns = true,
                   diag = true, lastErrors = true,  -- (/bfi check's results)
@@ -157,7 +158,7 @@ ns.PRESETS = {
     { id = "simple", name = "Simple", icon = "Interface\\Icons\\INV_Misc_Book_09",
       who = "How Waymark ships: a framed map that follows you. The game's own UI left alone, its quest tracker too." },
     { id = "creator", name = "Creator's", icon = "Interface\\Icons\\INV_Shield_06",
-      who = "As Simple, with Waymark's quest tracker, quest log and clock on, in the old font." },
+      who = "The creator's own: Waymark's quest tracker, quest log and clock on, no map header." },
     { id = "purist", name = "Purist", icon = "Interface\\Icons\\INV_Misc_Map_01",
       who = "Classic vanilla: the plain Battlefield Map with no quest help." },
     { id = "navigator", name = "Minimap Replacement", icon = "Interface\\Icons\\Spell_Nature_FarSight",

@@ -167,7 +167,7 @@ local function UpdateAlpha(map)
     local mapAlpha = map.GetGlobalAlpha and map:GetGlobalAlpha() or map.globalAlpha or 1
     -- (bigMap off: the small map only)
     local here = not (c.bigMap == false and ns.MapIsBig and ns.MapIsBig())
-    local a = ns.IsShown("detail") and here and c.strength * fade * mapAlpha or 0
+    local a = ns.IsShown("detail") and not ns.Perf("detail") and here and c.strength * fade * mapAlpha or 0
     host:SetAlpha(a)
     host:SetShown(a > 0.01)
     return a
@@ -304,7 +304,7 @@ function ns.SetupDetail(map)
     local ticker = ns.TimedFrame("Detail tick")
     ticker:SetScript("OnUpdate", function(_, dt)
         elapsed = elapsed + dt
-        if elapsed < 0.1 or not map:IsVisible() then return end
+        if elapsed < ns.Tick(0.1) or not map:IsVisible() then return end
         elapsed = 0
         ns.UpdateDetail()
         -- (art tiles can be swapped while zooming: a cheap look every second)

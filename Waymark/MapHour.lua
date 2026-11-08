@@ -96,7 +96,7 @@ local function Lamp(map, dark)
 end
 
 local function Update(map)
-    if not Cfg().on or (ns.MapOnContinent and ns.MapOnContinent()) or not map:IsShown() then return Clear(map) end
+    if not Cfg().on or ns.Perf("effects") or (ns.MapOnContinent and ns.MapOnContinent()) or not map:IsShown() then return Clear(map) end
     local r, g, b, dark = Tint(ns.MapHourNow())
     if r == 1 and g == 1 and b == 1 then return Clear(map) end
     Paint(map, r, g, b)

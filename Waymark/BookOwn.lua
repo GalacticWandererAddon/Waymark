@@ -367,7 +367,7 @@ local PLAIN = {
     ["Bazzalan's blades are poisoned. Ewen cleans that too"] = "Bazzalan's blades are poisoned. Cure it",
     ["Fenrus' bite festers. Ewen keeps the poison off me"] = "Fenrus' bite festers. Keep the poison off the tank",
     ["Jargba tampers a mind. Keep the taken one away from Ewen"] = "Jargba tampers a mind. Keep the taken one away from your healer",
-    ["A blind hunter and his bats. Knew he was there before Brakk did. Can't say how"] = "A blind hunter and his bats",
+    ["A blind hunter and his bats. Knew he was there before the old man did. Can't say how"] = "A blind hunter and his bats",
     ["Three dwarves, as lost as we were"] = "Three dwarves, lost down here",
 }
 ns.BookPlainNotes = PLAIN
@@ -431,7 +431,7 @@ local TOOL_MARKS = { route = true, wander = true, stairs = true, jump = true, lo
 local TIP_MARKS = {
     ["runners!"] = true, ["the key's in here"] = true, ["make them climb to you"] = true,
     ["Dont let her touch you"] = true, ["two more when he bleeds"] = true,
-    ["he will run for the gate"] = true, ["when she rises the middle burns"] = true,
+    ["when she rises the middle burns"] = true,   -- ("he will run for the gate": struck in the book, 2026-11-08)
 }
 ns.BookTipMarks = TIP_MARKS
 function ns.BookMapMarks(list, kind)

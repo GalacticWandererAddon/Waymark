@@ -681,14 +681,16 @@ local function PlaceOf(e)
     return info and info.name
 end
 
--- a finished quest's line: who takes it in, and where (turninName)
-local function TurninText(q)
+-- a finished quest's line: who takes it in, and where (turninName). where: for the count column at the right,
+-- when the tracker has one (the place lines up there, readable at a glance, the user 2026-11-08 by the Relay)
+local function TurninText(q, column)
     local c = Cfg()
     local to = c.turninName ~= false and Ends(q)
     to = to and to.to
     if not (to and to.name) then return "Ready for turn-in" end
     if c.turninStyle == "prefix" then return "Turn in: " .. to.name end
     local where = PlaceOf(to)
+    if column then return to.name, where end
     return where and (to.name .. ", " .. where) or to.name
 end
 
@@ -881,6 +883,7 @@ local function Row(i)
         -- a route line (the Lab's): what's to do at that stop, on a click, not on hover
         if self.routeStop then
             if button == "LeftButton" and ns.RouteStepTip then ns.RouteStepTip(self, self.routeStop) end
+            if button == "RightButton" and ns.RouteStepMenu then ns.RouteStepMenu(self.routeStop) end
             return
         end
         -- a sub-zone heading: its quests folded away under it, or shown again
@@ -1276,10 +1279,15 @@ local function WantGameHidden()
     return h and frame and frame:IsShown() and true or false
 end
 
--- Controller mode: Hide from addon code runs the tracker's own scripts under our
--- taint, on every quest update (see the OnShow hook below). The gamepad UI then
--- gets blocked closing the map (SetPreferredGamepadInteractTarget, a player's
--- report). See-through and tiny instead: no scripts run, and it can't catch a click.
+-- ObjectiveTrackerFrame is never hidden from our code: Hide runs the tracker's own
+-- scripts under our taint, on every quest update (an OnShow hook did it again each
+-- time). With the gamepad UI, closing the map then runs tainted: blocked
+-- SetPreferredGamepadInteractTarget (a player's report), and the game's
+-- SmartNavigation refuses to give the face buttons back (EnsureIsSecure), so A no
+-- longer jumps (Caetras, 2026-11-08). See-through and tiny instead, for mouse
+-- players too: Forever switches between mouse and controller mode while playing,
+-- so checking the mode once at login left the hook on for anyone who began on the
+-- mouse. No scripts run from us, and it can't catch a click.
 local faded = {}
 local function Fade(f, on)
     if on and not faded[f] then
@@ -1291,9 +1299,6 @@ local function Fade(f, on)
         f:SetAlpha(1)
         faded[f] = nil
     end
-end
-local function ControllerUI()
-    return InputUtil and InputUtil.IsGamepadUIEnabled and InputUtil.IsGamepadUIEnabled()
 end
 
 local function ApplyGameTracker()
@@ -1309,7 +1314,7 @@ local function ApplyGameTracker()
     gameHidden = want
     for _, name in ipairs(GAME_TRACKERS) do
         local f = _G[name]
-        if f and name == "ObjectiveTrackerFrame" and (faded[f] or ControllerUI()) then
+        if f and name == "ObjectiveTrackerFrame" then
             Fade(f, want)
         elseif f then
             if not hooked[name] then
@@ -1450,7 +1455,7 @@ local function Draw()
             n = n + 1
             y = Line(n, y, width, l.kind, l.text, l.color, nil, nil, l.indent or 0, { route = l.stop })
         end
-        if n > 0 then y = y + (c.questGap or 6) end
+        if n > 0 then y = y + (c.questGap or 6) + 8 end   -- (a clear gap under the route, the user 2026-11-08)
         if hereCount == 0 then
             n = n + 1
             y = Line(n, y, width, "none", "No tracked quests here", GREY, nil, nil, 0)
@@ -1492,8 +1497,9 @@ local function Draw()
                 if not c.folded[q.id] then
                     if q.complete then
                         n = n + 1
-                        y = Line(n, y, width, "objective", TurninText(q), GREEN, q, nil, gutter + 4,
-                            { flashKey = q.id .. ":done" })
+                        local who, where = TurninText(q, c.countColumn ~= false)
+                        y = Line(n, y, width, "objective", who, GREEN, q, nil, gutter + 4,
+                            { flashKey = q.id .. ":done", count = where, countColor = GREEN })
                     elseif q.failed then
                         n = n + 1
                         y = Line(n, y, width, "objective", "Failed", { 1, 0.2, 0.2 }, q, nil, gutter + 4)

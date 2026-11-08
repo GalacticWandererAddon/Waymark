@@ -67,6 +67,14 @@ local function Spots()
 end
 ns.PlayerSpots = Spots  -- (Townsfolk.lua learns its NPCs' spots the same way)
 
+-- where you met this giver on this map ("c" .. npc or "o" .. object): x, y (0..1), or nil
+function ns.LearnedSpot(key, mapID)
+    local db = WaymarkQuestDB and WaymarkQuestDB.givers
+    local g = db and db[key]
+    local s = g and g.spots and g.spots[mapID]
+    if s then return s[1], s[2] end
+end
+
 local function Remember(key, name, kind)
     local g = DB().givers[key]
     if not g then
@@ -101,6 +109,7 @@ local function NoteQuest(id, title, level, repeatable)
 end
 
 local changed = false
+ns.learnedVersion = 0   -- (up by one whenever a giver is seen offering something: QuestData.lua's pins follow)
 
 local function Offers(list)
     if not Cfg().record or #list == 0 then return end
@@ -110,6 +119,10 @@ local function Offers(list)
     for _, q in ipairs(list) do
         if q.id and q.id > 0 then
             NoteQuest(q.id, q.title, q.level, q.repeatable)
+            if not g.offers[q.id] then
+                ns.learnedVersion = ns.learnedVersion + 1
+                if ns.BumpQuests then ns.BumpQuests() end   -- (the data's pins redraw without that giver's quest)
+            end
             g.offers[q.id] = true
         end
     end
@@ -355,12 +368,16 @@ local function Trivial(level)
     return UnitLevel("player") - level > green
 end
 
-local function Show(id, q)
+local function Show(id, q, key)
     local c = Cfg()
     if not q then return false end
     local faction = UnitFactionGroup("player")
     if faction and next(q.factions or {}) and not q.factions[faction] then return false end
-    if c.mode == "gaps" and QuestieKnows(id) then return false end
+    -- (a quest the data knows shows here too when the data names another giver for it: this one is the
+    -- real one, and the data's goes, QuestData.lua QuestIcons. The Oracle Tree Bark's Teldrassil, 2026-11-08)
+    if c.mode == "gaps" and QuestieKnows(id) and not (key and ns.DataGiverDiffers and ns.DataGiverDiffers(id, key)) then
+        return false
+    end
     -- (grey ones by the givers' own Low-level box: a second box here went unseen, the user, 2026-11-07)
     if not (ns.GetTrivialQuests and ns.GetTrivialQuests()) and Trivial(q.level) then return false end
     return true
@@ -376,7 +393,7 @@ local function PinsFor(mapID)
             local available, turnins = {}, {}
             for id in pairs(g.offers) do
                 local q = db.quests[id]
-                if Show(id, q) and not Completed(id) and InLog(id) == nil then   -- (repeatables too, as other givers)
+                if Show(id, q, key) and not Completed(id) and InLog(id) == nil then   -- (repeatables too, as other givers)
                     available[#available + 1] = id
                 end
             end
