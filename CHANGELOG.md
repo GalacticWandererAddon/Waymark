@@ -17,7 +17,7 @@ Changed
 - The game's quest objective markers and blue quest areas are now drawn by Waymark. They look the same. Clicking a marker opens the quest's page in Waymark's quest window.
 - Cities: profession trainers show, and "Only my professions" is off in every preset.
 - "Find on map" for Forever quests our data doesn't know: it goes to the givers you've met, then the game's own marker. A quest with no giver lights who takes it in.
-- The book: new lines and fixes in the found notes.
+- The book: every page is open now, Blackrock Depths, Blackrock Spire, Dire Maul, Scholomance and Stratholme included, with new lines and fixes.
 
 Fixed
 - Controller (gamepad UI): opening and closing the world map, its quest log or a quest's details no longer gives "Waymark tried to call SetPreferredGamepadInteractTarget()", and A (jump) keeps working. The cause was the game's own quest markers on Waymark's map. Waymark draws them itself now.

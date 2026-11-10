@@ -75,7 +75,7 @@ ns.FoundNotes = {
         zulfarrak = { even = 1, wobble = 0.2 },
     },
     letter = { "Ewen,", "The old man's asleep. The dog isn't.", "Brown ink. The last of it. You said you'd read it to me. Then, read it slow.", cut = "south, past the sand.", gap = "Don't follow me in." },
-    locked = { "depths", "spire", "diremaul", "scholomance", "stratholme" },
+    locked = {},
     wayback = {
         { "deadmines", "Moonbrook, the Hill, east to Lakeshire. Three days." },
         { "wailing", "Out of the caves by the twine. Ratchet, the boat." },
