@@ -73,6 +73,7 @@ local function ShapeFile(id)
     local list = ns.ZoneShapes and ns.ZoneShapes[edition]
     return list and list[id] and (SHAPES .. edition .. "\\" .. id) or nil
 end
+ns.ZoneShapeFile = ShapeFile  -- (Fisherman's mode washes each zone's water through it: FishingMap.lua)
 -- The fills, where the zone maps don't reach: plain paper on the land (land no
 -- zone map covers, Quel'Thalas, the land between zone maps) and water on the
 -- sea, each through its continent mask (land<continent>.tga, sea<continent>.tga:

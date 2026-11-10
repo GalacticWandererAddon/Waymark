@@ -125,4 +125,42 @@
       <OnMouseUp method="OnMouseUp"/>
     </Scripts>
   </Frame>
+
+  <!-- The game's quest objectives and areas, drawn by Waymark (QuestPOI.lua): the game's own
+       quest pins on our map tainted the gamepad UI -->
+  <Button name="BFIQuestPOIPinTemplate" mixin="BFIQuestPOIPinMixin" enableMouse="true" virtual="true">
+    <Size x="20" y="20"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Normal">
+          <Anchors>
+            <Anchor point="CENTER"/>
+          </Anchors>
+        </Texture>
+      </Layer>
+      <Layer level="OVERLAY">
+        <Texture parentKey="Display">
+          <Anchors>
+            <Anchor point="CENTER"/>
+          </Anchors>
+        </Texture>
+      </Layer>
+    </Layers>
+    <HighlightTexture parentKey="Highlight" alphaMode="ADD">
+      <Anchors>
+        <Anchor point="CENTER"/>
+      </Anchors>
+    </HighlightTexture>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+      <OnMouseUp method="OnMouseUp"/>
+    </Scripts>
+  </Button>
+
+  <QuestPOIFrame name="BFIQuestBlobPinTemplate" mixin="BFIQuestBlobPinMixin" virtual="true">
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+      <OnUpdate method="OnUpdate"/>
+    </Scripts>
+  </QuestPOIFrame>
 </Ui>

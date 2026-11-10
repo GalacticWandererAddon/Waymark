@@ -47,7 +47,7 @@ ns.PRESET_SETTINGS["simple"] = {
 	},
 	cityButton = false,
 	cityView = {
-		myProfessionsOnly = true,
+		myProfessionsOnly = false,
 		ownTypes = true,
 		pinScale = 1,
 		sizes = {},

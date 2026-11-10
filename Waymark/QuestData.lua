@@ -1048,7 +1048,17 @@ function ns.QuestPeople(id)
         end
         for _, npc in ipairs(by and by[1] or {}) do Add(N().name(npc), NpcSpawns(npc)) end
         for _, obj in ipairs(by and by[2] or {}) do Add(O().name(obj), O().spawns(obj)) end
-        for _, item in ipairs(by and by[3] or {}) do Add(I().name(item)) end
+        -- (an item says so, and where it's found when we know: the user 2026-11-09, the Treaty of
+        -- Understanding read like a person)
+        for _, item in ipairs(by and by[3] or {}) do
+            local name = I().name(item)
+            if name and #out < 3 then
+                local inst = ns.FOREVER and ns.ForeverQuestData and ns.ForeverQuestData.itemIn
+                    and ns.ForeverQuestData.itemIn[item]
+                local where = inst and GetRealZoneText and GetRealZoneText(inst)
+                out[#out + 1] = "Item: " .. name .. ((where and where ~= "") and (" (in " .. where .. ")") or "")
+            end
+        end
         return out
     end
     return { from = List(Q().startedBy(id)), to = List(Q().finishedBy(id)) }
@@ -1616,6 +1626,10 @@ function ns.QuestFindMap(id)
     if not e then
         local ok, ends = pcall(ns.QuestEnds, id)
         if ok and ends and ends.from and ends.from.map then return ends.from.map end
+        -- (an item found in a dungeon starts it: the dungeon's entrance, where you've walked in)
+        local inst = ns.QuestItemDungeon and ns.QuestItemDungeon(id)
+        local em = inst and ns.LearnedEntrance and ns.LearnedEntrance(inst)
+        if em then return em end
     end
     if e and not e.complete then
         local game = GameObjectives(id)
@@ -1636,7 +1650,44 @@ function ns.QuestFindMap(id)
     end
     if best then return best end
     local ok, ends = pcall(ns.QuestEnds, id)
-    return ok and ends and ends.from and ends.from.map or nil
+    if ok and ends and ends.from and ends.from.map then return ends.from.map end
+    return ns.QuestFindMapLearned(id, e, here)
+end
+
+-- A quest our data doesn't know (Forever's own): who you've met offering it or taking it in
+-- (Learn.lua's givers: their offers and takes, and where you stood), the game's own quest marker
+-- on your map, else nil. In your log and done: who takes it first; else who gives it. (The user,
+-- 2026-11-09: "find on map" did nothing for Forever quests)
+function ns.QuestFindMapLearned(id, e, here)
+    local db = WaymarkQuestDB and WaymarkQuestDB.givers
+    local function From(field)
+        local best, bestN
+        for _, g in pairs(db or {}) do
+            if g[field] and g[field][id] then
+                for m, s in pairs(g.spots or {}) do
+                    -- (where you are first, then the spot you stood at most)
+                    local n = (m == here and 1e6 or 0) + (s[3] or 1)
+                    if not bestN or n > bestN then best, bestN = m, n end
+                end
+            end
+        end
+        return best
+    end
+    local m
+    if e and e.complete then m = From("takes") or From("offers") else m = From("offers") or From("takes") end
+    if m then return m end
+    -- (the game's own marker: the quest on the map you're on)
+    if here and C_QuestLog and C_QuestLog.GetQuestsOnMap then
+        local ok, list = pcall(C_QuestLog.GetQuestsOnMap, here)
+        for _, q in ipairs(ok and list or {}) do
+            if q.questID == id then return here end
+        end
+    end
+    if C_QuestLog and C_QuestLog.GetNextWaypoint then
+        local ok, wm = pcall(C_QuestLog.GetNextWaypoint, id)
+        if ok and wm then return wm end
+    end
+    return nil
 end
 
 -- For the quest ground (QuestGround.lua): where the monsters, drops and things

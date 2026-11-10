@@ -24,7 +24,7 @@ local FONTS = ns.MEDIA .. "Fonts\\"
 local HAND = FONTS .. "Felipa-Regular.ttf"              -- titles, the where line, numbers
 local HAND_BODY = FONTS .. "NothingYouCouldDo.ttf"      -- the wanderer's notes
 local HAND_YOURS = FONTS .. "ReenieBeanie.ttf"          -- what you write in the book
-local HAND_WHISPER = FONTS .. "HomemadeApple-Regular.ttf" -- the other hand: words the wanderer didn't write
+local HAND_WHISPER = FONTS .. "HomemadeApple-Waymark.ttf" -- the other hand: words the wanderer didn't write
 local HAND_EWEN = FONTS .. "Kalam-Regular.ttf"            -- Ewen's: the only other one who wrote in the book
 local INK = { 0.17, 0.12, 0.07 }
 local INK_SOFT = { 0.35, 0.23, 0.11 }
@@ -122,7 +122,8 @@ end
 -- pieces -------------------------------------------------------------------------
 
 local function SetHand(fs, size, font)
-    if not (pcall(fs.SetFont, fs, font or HAND, size, "") and fs:GetFont()) then
+    -- (the whispers' font is scaled to 0.6 of its em, tools/whisper_font.py: set 1 / 0.6 bigger, it looks the same)
+    if not (pcall(fs.SetFont, fs, font or HAND, font == HAND_WHISPER and size / 0.6 or size, "") and fs:GetFont()) then
         fs:SetFont("Fonts\\FRIZQT__.TTF", math.floor(size * 0.85), "")
     end
 end
@@ -249,11 +250,16 @@ local function Place(p, words, x0, y0, size, color, font, seed, parent, over)
         ink = ink - Between(r, 0.015, 0.04)
         if ink < 0.68 or r() < 0.07 then ink = Between(r, 0.9, 1) end  -- (the pen dipped)
         local c = (over.turnAt and wi >= over.turnAt) and DEEP_INK or over.ink or color
+        if over.fadeAt and wi >= over.fadeAt then  -- (the ink going over to another, word by word: fadeTo by fadeFull)
+            local t, f = math.min(1, (wi - over.fadeAt + 1) / ((over.fadeFull or over.fadeAt) - over.fadeAt + 1)), over.fadeTo
+            c = { c[1] + (f[1] - c[1]) * t, c[2] + (f[2] - c[2]) * t, c[3] + (f[3] - c[3]) * t }
+        end
         local fs = Text(p, size, c, parent, font)
         fs:SetText(wd.w)
         -- (their long tails aren't cut off: Homemade Apple's line box is ascent 1327 + descent 880 on a 1024 em,
-        -- 2.16 x the size, so the box has to be taller than that; 2 cut the loops of y, p, g)
-        if font == HAND_WHISPER then fs:SetHeight(size * 2.6) end
+        -- 2.16 x the size, so the box has to be taller than that; 2 cut the loops of y, p, g, 2.6 still the
+        -- f's and j's, the deepest; the box hangs from its top, so taller moves nothing)
+        if font == HAND_WHISPER then fs:SetHeight(size * 3.4) end
         lineDrift[wd.line] = lineDrift[wd.line] or drift * Between(r, 0.2, 1.4)
         local dx, dy = Between(r, -0.7, 0.7) * wob, Between(r, -1.3, 1.3) * wob
         local x, y = x0 + wd.x + dx, y0 - wd.line * lh + dy + lineDrift[wd.line] * wd.x / 100
@@ -271,6 +277,7 @@ local function Place(p, words, x0, y0, size, color, font, seed, parent, over)
             for _, o in ipairs(offs) do
                 local f2 = Text(p, size, c, parent, font)
                 f2:SetText(wd.w)
+                if font == HAND_WHISPER then f2:SetHeight(size * 3.4) end
                 f2:SetPoint("TOPLEFT", to, "TOPLEFT", x + o[1], y + o[2])
                 f2:SetAlpha(math.min(1, a))
                 put[#put + 1] = f2
@@ -440,7 +447,8 @@ local function NoteViews(dg)
     return out
 end
 
-local function Spreads() return #Data() end
+-- (and the way back after the last dungeon, in the story)
+local function Spreads() return #Data() + ((Data().wayback and ns.BookKindNow() == "story") and 1 or 0) end
 
 local function Turn(to)
     to = math.max(0, math.min(Spreads(), to))
@@ -449,6 +457,31 @@ local function Turn(to)
     if to > Spreads() then return end
     if to == spread and not beforeOf then return end
     beforeOf = nil
+    placing = nil
+    Sound("IG_ABILITY_PAGE_TURN")
+    Show(to)
+end
+
+-- one page on (dir 1) or back (-1), with the "before we go" pages in their place: each dungeon's comes before
+-- its own page, so turning the pages walks through them (the user, 2026-11-10: the ribbon alone gets missed).
+-- The wheel and the corners; a tab or the contents still opens the dungeon's own page.
+function ns.NotebookStep(dir)
+    local d, to, before = Data(), spread, nil
+    if dir > 0 then
+        if beforeOf ~= spread then
+            to = spread + 1
+            while to <= #d and ns.NotebookLocked(to) do to = to + 1 end  -- (locked pages passed over)
+            if to > Spreads() then return end
+            before = d[to] and d[to].before and to or nil
+        end
+    elseif beforeOf ~= spread and d[spread] and d[spread].before then
+        before = spread
+    else
+        to = spread - 1
+        while to > 0 and ns.NotebookLocked(to) do to = to - 1 end
+        if to < 0 then return end
+    end
+    beforeOf = before
     placing = nil
     Sound("IG_ABILITY_PAGE_TURN")
     Show(to)
@@ -521,7 +554,7 @@ local function Corner(page, mirror, step)
     b:SetAlpha(0.85)
     b:SetScript("OnEnter", function(self) self:SetAlpha(1) end)
     b:SetScript("OnLeave", function(self) self:SetAlpha(0.85) end)
-    b:SetScript("OnClick", function() Turn(spread + step) end)
+    b:SetScript("OnClick", function() ns.NotebookStep(step) end)
     return b
 end
 
@@ -1155,7 +1188,7 @@ local function EditAt(p, x, y, w, size, font, color, text, done, old, breaks)
     edit:SetPoint("TOPLEFT", p, "TOPLEFT", x, y)
     edit:SetWidth(w)
     edit:SetHeight(size * 3.6)
-    if not pcall(edit.SetFont, edit, font, size, "") then edit:SetFont(HAND, size, "") end
+    if not pcall(edit.SetFont, edit, font, font == HAND_WHISPER and size / 0.6 or size, "") then edit:SetFont(HAND, size, "") end
     edit:SetTextColor(color[1], color[2], color[3])
     edit:SetText(text or "")
     for _, o in ipairs(edit.old or {}) do o:Show() end
@@ -1175,6 +1208,26 @@ local menu, submenu
 -- items: { label, fn, mark = an ink mark to show instead of words ({ t, v }), font, color, on = chosen,
 -- sub = items: a row that opens a second list beside it (hover or click) }
 local MARK_ROW = 30
+-- (Waymark's dark window look, as the ask box has, the user 2026-11-10; the quill's tool
+-- looks keep the parchment, their marks drawn in ink: Menu(items, true))
+local WORDS = { 0.91, 0.84, 0.66 }
+-- the frame and its rows in one look or the other (set on every fill: one frame serves both)
+local function Look(f, light)
+    local dark = not light
+    f.dark = dark
+    if dark then
+        f:SetBackdropColor(0.08, 0.067, 0.05, 0.96)
+        f:SetBackdropBorderColor(0.48, 0.42, 0.30)
+    else
+        f:SetBackdropColor(0.88, 0.8, 0.6, 0.97)
+        f:SetBackdropBorderColor(0.4, 0.27, 0.12)
+    end
+    for _, r in ipairs(f.rows or {}) do
+        if dark then r.hl:SetColorTexture(1, 0.82, 0, 0.12) else r.hl:SetColorTexture(0.55, 0.35, 0.12, 0.18) end
+        if dark then r.on:SetColorTexture(1, 0.82, 0, 0.09) else r.on:SetColorTexture(0.55, 0.35, 0.12, 0.14) end
+        if dark then r.arrow:SetVertexColor(WORDS[1], WORDS[2], WORDS[3]) else r.arrow:SetVertexColor(0.4, 0.27, 0.12) end
+    end
+end
 local function MenuFrame()
     local f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
     ns.AddonWindow(f)
@@ -1182,8 +1235,6 @@ local function MenuFrame()
     f:SetClampedToScreen(true)  -- (right-clicked near the screen's edge, as the docked map is)
     f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
                     edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
-    f:SetBackdropColor(0.88, 0.8, 0.6, 0.97)
-    f:SetBackdropBorderColor(0.4, 0.27, 0.12)
     f:EnableMouse(true)
     f.rows = {}
     return f
@@ -1194,7 +1245,7 @@ local function OpenSub(row, items)
         submenu = MenuFrame()
         submenu:SetFrameLevel(menu:GetFrameLevel() + 10)
     end
-    FillMenu(submenu, items)
+    FillMenu(submenu, items, not menu.dark)
     submenu:ClearAllPoints()
     -- (no room on the right, docked in the screen's corner say: on the left)
     local past = row:GetRight() * row:GetEffectiveScale() + submenu:GetWidth() * submenu:GetEffectiveScale()
@@ -1205,31 +1256,36 @@ local function OpenSub(row, items)
     end
     submenu:Show()
 end
-function FillMenu(f, items)
-    local wMax, y = 0, -4
+-- (a little room round the rows: 7 above and below, the words 17 in (were 14), the user 2026-11-10)
+local PAD_Y, ROW_X = 7, 5
+function FillMenu(f, items, light)
+    local wMax, y = 0, -PAD_Y
     for i, it in ipairs(items) do
         local r = f.rows[i]
         if not r then
             r = CreateFrame("Button", nil, f)
             r.label = r:CreateFontString(nil, "OVERLAY")
-            r.label:SetPoint("LEFT", 10, 0)
-            local hl = r:CreateTexture(nil, "HIGHLIGHT")
-            hl:SetAllPoints()
-            hl:SetColorTexture(0.55, 0.35, 0.12, 0.18)
+            r.label:SetPoint("LEFT", 12, 0)
+            r.hl = r:CreateTexture(nil, "HIGHLIGHT")
+            r.hl:SetAllPoints()
             r.on = r:CreateTexture(nil, "BACKGROUND")
             r.on:SetAllPoints()
-            r.on:SetColorTexture(0.55, 0.35, 0.12, 0.14)
             r.arrow = r:CreateTexture(nil, "OVERLAY")
             r.arrow:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
             r.arrow:SetSize(12, 12)
             r.arrow:SetPoint("RIGHT", -4, 0)
-            r.arrow:SetVertexColor(0.4, 0.27, 0.12)
             f.rows[i] = r
         end
         r.arrow:SetShown(it.sub ~= nil)
         local h = it.mark and MARK_ROW or 20
-        SetHand(r.label, 15, it.font)
-        local c = it.color or INK
+        -- (a row in a hand of its own, or the quill's parchment list: the book's hands; the rest
+        -- in the menus' font, Header & border > Menus & questions; Friz a size smaller)
+        local mf = ns.db and ns.db.menus and ns.db.menus.font or "friz"
+        if it.font or light or not ns.SetFontSafe then SetHand(r.label, 15, it.font)
+        else ns.SetFontSafe(r.label, mf, mf == "felipa" and 15 or 13, "") end
+        local c = it.color or (not light and WORDS) or INK
+        -- (an ink colour of its own, dark on the dark menu: lifted halfway to white)
+        if not light and it.color then c = { (c[1] + 1) / 2, (c[2] + 1) / 2, (c[3] + 1) / 2 } end
         r.label:SetTextColor(c[1], c[2], c[3])
         r.on:SetShown(it.on or false)
         -- (a mark: drawn in ink on the row, as the tool will draw it)
@@ -1264,16 +1320,17 @@ function FillMenu(f, items)
         end or nil)
         r:SetHeight(h)
         r:ClearAllPoints()
-        r:SetPoint("TOPLEFT", 4, y)
-        r:SetPoint("RIGHT", -4, 0)
+        r:SetPoint("TOPLEFT", ROW_X, y)
+        r:SetPoint("RIGHT", -ROW_X, 0)
         r:Show()
         y = y - h
     end
     for i = #items + 1, #f.rows do f.rows[i]:Hide() end
-    f:SetSize(wMax + 28, -y + 4)
+    Look(f, light)
+    f:SetSize(wMax + 36, -y + PAD_Y)
 end
 
-function Menu(items)
+function Menu(items, light)
     if not menu then
         menu = MenuFrame()
         if pcall(menu.RegisterEvent, menu, "GLOBAL_MOUSE_DOWN") then
@@ -1285,7 +1342,7 @@ function Menu(items)
         menu:SetScript("OnHide", function() if submenu then submenu:Hide() end end)
     end
     if submenu then submenu:Hide() end
-    FillMenu(menu, items)
+    FillMenu(menu, items, light)
     local x, y = GetCursorPosition()
     local s = menu:GetEffectiveScale()
     menu:ClearAllPoints()
@@ -1606,6 +1663,15 @@ local ping, pingToken = nil, 0
 function ns.NotebookPingGiver(id)
     local ok, e = pcall(ns.QuestEnds or function() end, id)
     local f = ok and e and e.from
+    -- (no one gives it, an item starts it: who takes it in glows, the user 2026-11-09: the Treaty of
+    -- Understanding, King Magni)
+    if not (f and f.map and f.x) then
+        -- (an item found in a dungeon: its entrance, where you've walked in; else who takes it in)
+        local inst = ns.QuestItemDungeon and ns.QuestItemDungeon(id)
+        local m, x, y
+        if inst and ns.LearnedEntrance then m, x, y = ns.LearnedEntrance(inst) end
+        f = m and { map = m, x = x, y = y } or (ok and e and e.to)
+    end
     if not (f and f.map and f.x and BattlefieldMapFrame) then return end
     if not ping then
         ping = CreateFrame("Frame")
@@ -1946,6 +2012,11 @@ local function Before(dg)
         row:SetScript("OnLeave", function() GameTooltip:Hide() end)
         y = y - h - 9
     end
+    -- (b.aside: a diary line that didn't fit on the left, under the asked list in the diary's hand. Deadmines'
+    -- Ewen line, 2026-11-10)
+    if b.aside then
+        y = Put(right, b.aside, 44, y - 2, PW - 44 - 34, BODY, b.asideYours and HAND_YOURS or HAND_BODY, b.asideYours and PENCIL or hand, "aside", Edit("aside")) - 8
+    end
     if b.bring then
         local h5 = Text(right, 18, INK)
         h5:SetPoint("TOPLEFT", 44, y - 6)
@@ -1963,6 +2034,24 @@ local function Before(dg)
         y = Put(right, l.s, 44, y, PW - 44 - 34, BODY, HAND_YOURS, PENCIL, "added" .. l.k, Edit("added", l.k)) - 7
     end
     if not room then AddButtons(right, 44, y, PW - 44 - 34) end
+    -- (something pressed between these pages and taken out again: only the ghost it left, on both pages,
+    -- mirrored across the gutter. Ewen's peacebloom at Shadowfang: he kept it with him. book.pressed =
+    -- { x, y (its centre on the right page), rot, size }; Media\Notes\Pressed.tga, tools\pressed_art.py)
+    local pr = story and book.pressed
+    if pr then
+        right.stain:Hide()  -- (no cup ring or smudge on these two: nothing to compete with it)
+        left.stain:Hide()
+        for _, side in ipairs({ { right, pr.x, 1, 0.5 }, { left, PW - pr.x, -1, 0.3 } }) do
+            local t = Tex(side[1], "BACKGROUND", 3)
+            t:SetTexture(NOTES .. "Pressed")
+            if side[3] < 0 then t:SetTexCoord(1, 0, 0, 1) end
+            t:SetRotation((pr.rot or 0) * side[3])
+            t:SetSize(pr.size or 160, pr.size or 160)
+            t:SetVertexColor(0.42, 0.28, 0.14)
+            t:SetAlpha(side[4])
+            t:SetPoint("CENTER", side[1], "TOPLEFT", side[2], pr.y)
+        end
+    end
 end
 
 -- The hand's prints on a page: not put there, left there. Where a hand holds a book (the outer
@@ -2046,6 +2135,126 @@ local function DrawPrints(dg, i, last)
             p.prints.pairs[k].m:Hide()
             p.prints.pairs[k].b:Hide()
         end
+    end
+end
+
+-- the last spread: the way back --------------------------------------------------------
+-- The wanderer's road home (FoundNotes.wayback): one line after each dungeon, never finished, each in
+-- that page's own ink and hand. A line shows once its dungeon's page is open. With the last one (the
+-- line that stops): Ewen's green -W. right under where it breaks off, her print by it, the letter in
+-- the back cover's pocket, and the old man's half of Sparks's compass hanging off the book on its cord,
+-- the needle pointing south at the half sewn into W's pack. (On ns: the chunk is at Lua's 200 locals.)
+function ns.NotebookWayBack()
+    local d = Data()
+    local at = {}
+    for i, dg in ipairs(d) do at[dg.id] = i end
+    local head = Text(left, 24, INK, nil, HAND_BODY)
+    head:SetPoint("TOPLEFT", 44, -30)
+    head:SetText("the way back")
+    local rows = {}
+    for _, row in ipairs(d.wayback or {}) do
+        local i = at[row[1]]
+        if i and not ns.NotebookLocked(i) then rows[#rows + 1] = row end
+    end
+    local all = d.wayback and #rows == #d.wayback
+    local x0, y, width = 40, -72, PW - 74
+    local step = math.min(21, (PH - 72 - 52) / math.max(1, #(d.wayback or {})))
+    local inks = { deep = DEEP_INK, warm = INK_SOFT }
+    local hands, last = d.hands or {}, nil
+    for k, row in ipairs(rows) do
+        local size = 15
+        local words = Layout(row[2], 9999, size, HAND_BODY)
+        local wide = words[#words].x + words[#words].width
+        if wide > width then size = math.floor(size * width / wide) words = Layout(row[2], 9999, size, HAND_BODY) end
+        pageHand = hands[row[1]]  -- (each line in its own page's hand: the Temple's shakes, Maraudon's too neat)
+        -- (fade = { from word, full by word }: his hand, their violet. The last directions are theirs)
+        local over = row.fade and { fadeAt = row.fade[1], fadeFull = row.fade[2], fadeTo = WHISPER } or nil
+        Place(left, words, x0 + ((k * 37) % 7) - 3, y, size, inks[row.ink] or INK, HAND_BODY, "wayback:" .. row[1], nil, over)
+        pageHand = nil
+        local lw = words[#words]
+        last = { x0 + lw.x + lw.width, y }
+        y = y - step
+    end
+    -- the inside of the back cover: the paper pocket pasted in (empty until the end), the letter, the compass
+    -- (Media\Notes\Pocket, Letter: tools\pocket_art.py, from the book's own paper; Compass: tools\compass_render.py)
+    right.stain:Hide()  -- (no cup ring inside the cover)
+    local pw, ph = 336, 210
+    local pocket = ns.notebookPocket  -- (a frame of its own, over the page's words: the letter's lower lines go in it)
+    if not pocket then
+        pocket = CreateFrame("Frame", nil, right)
+        pocket.t = pocket:CreateTexture(nil, "ARTWORK")
+        pocket.t:SetAllPoints()
+        pocket.t:SetTexture(NOTES .. "Pocket")
+        pocket.t:SetTexCoord(0, 1, 0, 160 / 256)  -- (drawn in the top 256 x 160)
+        ns.notebookPocket = pocket
+    end
+    pocket:SetFrameLevel(right:GetFrameLevel() + 4)
+    pocket:ClearAllPoints()
+    pocket:SetSize(pw, ph)
+    local lift = 118  -- (how far up the cover the pocket's pasted)
+    pocket:SetPoint("BOTTOM", right, "BOTTOM", 4, lift)
+    pocket:Show()
+    if not all then return end
+    -- her -W.: a promise, big and pressed hard (the same word laid down again a hair off, as a pressed hand),
+    -- in the last page's corner: the book's own sign-off
+    for _, o in ipairs({ { 0, 0, 0.9 }, { 0.7, -0.4, 0.75 }, { -0.4, -0.7, 0.6 } }) do
+        local sig = Text(right, 44, EWEN, nil, HAND_EWEN)
+        sig:SetText("-W.")
+        sig:SetAlpha(o[3])
+        sig:SetPoint("TOPLEFT", right, "TOPLEFT", PW - 236 + o[1], -(PH - 96) + o[2])
+    end
+    DrawPrints({ id = "wayback", prints = { { cell = 1, ink = 4, alpha = 0.5, rot = 0.5, size = 62, side = "left",
+                                               x = 26, y = last[2] - 4 } } }, 0)
+    -- the letter (FoundNotes.letter), standing in the pocket, opened out: only its top panel stands up out of
+    -- it, the first fold at the pocket's mouth. What can be read ends with "Read it slow."; the rest of it
+    -- (FoundNotes.letter.gap, .cut) stays down in the pocket, unread. His old brown ink, no name signed.
+    local lt = d.letter or {}
+    local edge = -(PH - lift - ph) - 24     -- (the pocket's mouth, on the page)
+    local x0, y0, lw = (PW - 340) / 2 + 4, edge + 114, 290
+    local sheet = Tex(right, "ARTWORK", 2)
+    sheet:SetTexture(NOTES .. "LetterOpen")
+    sheet:SetTexCoord(0, 1, 0, 211 / 256)
+    sheet:SetSize(340, 280)
+    sheet:SetPoint("TOPLEFT", right, "TOPLEFT", x0, y0)
+    local function Line(text, y, size, key)
+        local words, h = Layout(text, lw, size, HAND_BODY)
+        Place(right, words, x0 + 26, y0 + y, size, INK, HAND_BODY, "letter:" .. key)
+        return h
+    end
+    Line(lt[1] or "Ewen,", -14, 20, "to")
+    local y = -48
+    for k = 2, #lt do y = y - Line(lt[k], y, 15, k) - 2 end
+    -- the compass: through a hole in the pocket's corner on its cord, lying in the cover's corner
+    local size = 74
+    local case = Tex(right, "OVERLAY", 6)
+    case:SetTexture(NOTES .. "Compass")
+    case:SetTexCoord(0, 0.5, 0, 1)
+    case:SetSize(size, size)
+    case:SetPoint("CENTER", right, "BOTTOMRIGHT", -64, 62)  -- (lying on the cover, in its corner)
+    local needle = Tex(right, "OVERLAY", 7)
+    needle:SetTexture(NOTES .. "Compass")
+    needle:SetTexCoord(0.5, 1, 0, 1)
+    needle:SetSize(size, size)
+    needle:SetRotation(math.pi + 0.06)  -- (south, near enough: at the half in his pack, far off)
+    needle:SetPoint("CENTER", case, "CENTER", 0, -size * 0.033)  -- (the face sits a little low in its picture)
+    -- (a twisted cord: dark, a lighter twist along it; from the pocket's corner to the ring, hanging slack in a
+    -- curve: short straight pieces along it)
+    local hx, hy = (PW - pw) / 2 + 4 + pw - 22, -(PH - lift) + ph - 30
+    local rx, ry = PW - 64, -(PH - 62) + size * 0.46
+    local cx, cy = (hx + rx) / 2 + 26, (hy + ry) / 2 - 10
+    local px, py = hx, hy
+    for k = 1, 14 do
+        local t = k / 14
+        local nx = (1 - t) ^ 2 * hx + 2 * (1 - t) * t * cx + t * t * rx
+        local ny = (1 - t) ^ 2 * hy + 2 * (1 - t) * t * cy + t * t * ry
+        for _, look in ipairs({ { 0.2, 0.13, 0.07, 0.95, 2.4, 0 }, { 0.5, 0.38, 0.24, 0.7, 0.9, 0.6 } }) do
+            local l = Take(right, "line", function() return right:CreateLine(nil, "OVERLAY", nil, 2) end)
+            l:SetColorTexture(look[1], look[2], look[3], look[4])
+            l:SetThickness(look[5])
+            l:SetStartPoint("TOPLEFT", right, px + look[6], py + look[6])
+            l:SetEndPoint("TOPLEFT", right, nx + look[6], ny + look[6])
+        end
+        px, py = nx, ny
     end
 end
 
@@ -2468,7 +2677,7 @@ local quill, wbar, catcher
 
 local function SpreadId()
     local dg = Data()[spread]
-    return dg and dg.id or "flyleaf"
+    return dg and dg.id or (spread > 0 and "wayback" or "flyleaf")
 end
 
 -- the wanderer's marks on this spread (make: on the copy to change)
@@ -2482,15 +2691,16 @@ local function BookMarks(make)
         local b = Entry(spread).before
         return b and b.marks or {}
     end
-    if spread == 0 then
+    if spread == 0 or not Data()[spread] then  -- (the flyleaf, or the way back)
+        local key = spread == 0 and "flyleafMarks" or "waybackMarks"
         local a = Cfg().author
         if make then
             Cfg().author = a or {}
             a = Cfg().author
-            a.flyleafMarks = a.flyleafMarks or Copy(Data().flyleafMarks or {})
-            return a.flyleafMarks
+            a[key] = a[key] or Copy(Data()[key] or {})
+            return a[key]
         end
-        return a and a.flyleafMarks or Data().flyleafMarks or {}
+        return a and a[key] or Data()[key] or {}
     end
     if make then
         local c = AuthorCopy(spread)
@@ -3286,7 +3496,7 @@ BuildBar = function()
                 -- (right-click, or the little arrow: how it looks)
                 if button == "RightButton" or (self.arrow and self.arrow:IsShown() and self.arrow:IsMouseOver(4, -4, -2, 2)) then
                     local items = ToolChoices(kind)
-                    if items then Menu(items) end
+                    if items then Menu(items, true) end  -- (the tool's looks: parchment, its marks in ink)
                 end
             end, t[3])
             b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -3306,7 +3516,7 @@ BuildBar = function()
     Gap()
     -- the inks: blots
     for i, c in ipairs(ns.INK_COLORS or {}) do
-        local b = BarButton("", function() inkIdx = i UpdateBar() end, ({ "Sepia", "Red", "Blue-black", "Ewen's grey-green", "Tam's charcoal" })[i])
+        local b = BarButton("", function() inkIdx = i UpdateBar() end, ({ "Sepia", "Red", "Blue-black", "Ewen's grey-green", "Tam's charcoal", "Their violet (the wanderer's only)" })[i])
         b:SetSize(24, 24)
         b.on:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
         b.on:SetVertexColor(0.24, 0.14, 0.06, 0.85)
@@ -3401,7 +3611,11 @@ UpdateBar = function()
         wbar.tools.lock.label:SetText(ns.InkVersionLabel("lock", "lock"))
         wbar.tools.text.label:SetText(who == "wanderer" and whisperHand and "whisper" or "jot")
     end
-    for i, b in ipairs(wbar.inks) do b.on:SetShown(i == inkIdx) end
+    if inkIdx == 6 and who ~= "wanderer" then inkIdx = 3 end
+    for i, b in ipairs(wbar.inks) do
+        b.on:SetShown(i == inkIdx)
+        b:SetShown(i < 6 or who == "wanderer")  -- (their violet: the wanderer's book only, never a player's pen)
+    end
     PlaceBar()
 end
 
@@ -3457,7 +3671,7 @@ local function BuildQuill()
         local m = right.map
         if m:IsShown() and m.dg and m:IsMouseOver() then PageMapWheel(m, d) return end
         if IsControlKeyDown() and SizeUnderCursor(d) then return end
-        Turn(spread - d)
+        ns.NotebookStep(-d)
     end)
     catcher:Hide()
 end
@@ -3511,11 +3725,12 @@ Show = function(to)
     if left.ribbon then left.ribbon:Hide() left.ribbon.label:Hide() end
     DrawPrints(nil)
     if left.scene then left.scene:Hide() end
+    if ns.notebookPocket then ns.notebookPocket:Hide() end  -- (the back cover's pocket: the way back's own)
     if beforeOf ~= to then beforeOf = nil end
     local dg = Entry(to)
     local hands = Data().hands or {}
     pageHand = ns.BookKindNow() == "story" and dg and (beforeOf and dg.before and (hands[dg.id .. ":before"] or hands[dg.id]) or hands[dg.id]) or nil
-    if dg and beforeOf and dg.before then Before(dg) elseif dg then Dungeon(dg) else
+    if dg and beforeOf and dg.before then Before(dg) elseif dg then Dungeon(dg) elseif to > 0 then ns.NotebookWayBack() else
         Flyleaf()
         if ns.BookKindNow() == "story" then
             DrawPrints({ id = "flyleaf", prints = Data().flyleafPrints or {} }, 0)  -- (a print over a name not struck)
@@ -3523,10 +3738,10 @@ Show = function(to)
     end
     DrawInk()  -- (a "before" page has its own: BookMarks, MyMarks)
     left.number:SetText(2 * to + 1)
-    right.number:SetText(2 * to + 2)
+    right.number:SetText((dg or to == 0) and 2 * to + 2 or "")  -- (the back cover has no number)
     if writing and UpdateBar then UpdateBar() end  -- (the quill's catcher: the scene on a "before" page, else the spread)
     prevCorner:SetShown(to > 0)
-    nextCorner:SetShown(to < Spreads())
+    nextCorner:SetShown(to < Spreads() or beforeOf == to)  -- (a "before" page: its own page next)
     local step = math.min(30, (H - 40 - 72) / math.max(1, #tabs))  -- (closer together in a long book; above the quill)
     for i, tab in ipairs(tabs) do
         Bits(tab.bg, 40, i == to and 44 or 0, 216, i == to and 80 or 36)
@@ -3575,6 +3790,14 @@ local function Open()
     local at = math.max(0, math.min(Spreads(), Cfg().spread or 0))
     Show(ns.NotebookLocked(at) and 0 or at)
     if writing then UpdateBar() end  -- (the bar under the book now)
+    -- (the first open after a reload: the hand fonts are still loading, the words are measured too
+    -- narrow and pile on top of each other until a page turn; laid out again once they're in)
+    if not ns.notebookRelaid then
+        ns.notebookRelaid = true
+        C_Timer.After(0.25, function()
+            if open:IsShown() then Show(math.max(0, math.min(Spreads(), Cfg().spread or 0))) end
+        end)
+    end
 end
 
 -- the book's shadow on whatever's behind it (Board.tga's 0-480 x 690-1010, a soft blurred block)
@@ -3648,8 +3871,8 @@ local function DropShipped()
         end
     end
     for id, c in pairs(a) do
-        if id == "flyleafMarks" then
-            if Same(c, Data().flyleafMarks or {}) then a[id] = nil end
+        if id == "flyleafMarks" or id == "waybackMarks" then
+            if Same(c, Data()[id] or {}) then a[id] = nil end
         else
             for _, dg in ipairs(Data()) do
                 if dg.id == id then
@@ -3756,7 +3979,7 @@ local function Create()
     Draggable(open)
     open:SetScript("OnMouseWheel", function(_, d)
         if IsControlKeyDown() and SizeUnderCursor(d) then return end
-        Turn(spread - d)
+        ns.NotebookStep(-d)
     end)
     DropShadow(open, 1)
     local board = open:CreateTexture(nil, "BACKGROUND")
@@ -3904,11 +4127,12 @@ function ns.NotebookShots()
     book:Show()
     if not open:IsShown() then Open() end
     local steps = { { 0 } }
-    for i, dg in ipairs(Data()) do
+    for i, dg in ipairs(Data()) do  -- (in reading order: each "before we go" page, then its dungeon's)
         local e = Entry(i)
-        steps[#steps + 1] = { i }
         if e and e.before then steps[#steps + 1] = { i, true } end
+        steps[#steps + 1] = { i }
     end
+    if Spreads() > #Data() then steps[#steps + 1] = { Spreads() } end  -- (the way back)
     local k = 0
     local function Next()
         k = k + 1
@@ -4313,4 +4537,29 @@ function ns.FoundSpotOpen()
     if not (layer and layer:IsVisible() and SpotUnder(layer) and layer.dg) then return false end
     ns.OpenNotebook(layer.dg.instance, layer.floor)
     return true
+end
+
+-- the book's own fonts, warmed at login: a font the game hasn't drawn yet measures wrong the first time, and the
+-- first page opened after a restart laid its words on top of each other (2026-11-10, the whispers' new font).
+-- Drawn once, unseen, on the screen; gone a few seconds later.
+function ns.NotebookWarmFonts()
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:SetSize(1, 1)
+    f:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", -50, -50)
+    f:SetAlpha(0.01)
+    for _, font in ipairs({ HAND, HAND_BODY, HAND_YOURS, HAND_WHISPER, HAND_EWEN }) do
+        local fs = f:CreateFontString(nil, "OVERLAY")
+        SetHand(fs, 17, font)
+        fs:SetPoint("BOTTOMLEFT")
+        fs:SetText("abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,'-")
+        fs:GetStringWidth()
+    end
+    -- (a book already open by then is laid out again, with the widths right this time)
+    C_Timer.After(0.5, function() if book and open:IsShown() then Show(spread) end end)
+    C_Timer.After(5, function() f:Hide() end)
+end
+do
+    local w = CreateFrame("Frame")
+    w:RegisterEvent("PLAYER_LOGIN")
+    w:SetScript("OnEvent", function() ns.NotebookWarmFonts() end)
 end

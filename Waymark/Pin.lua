@@ -878,12 +878,6 @@ BFIQuestiePinMixin.OnMouseLeave = BFIQuestiePinMixin.OnLeave
 -- (again: off); Shift-click with chat open: a link to the quest. Right-click: its menu (the
 -- quest's page, the arrow, the glow, hiding a giver's quests: asks first, /bfi unhide brings
 -- them back)
-StaticPopupDialogs["BFI_HIDE_QUESTS"] = {
-    text = "Hide %s from the map?\n(/waymark unhide shows them again)",
-    button1 = YES or "Yes", button2 = NO or "No",
-    OnAccept = function(_, data) if ns.HideQuests then ns.HideQuests(data) end end,
-    timeout = 0, whileDead = true, hideOnEscape = true,
-}
 
 local function QuestArrow(self)
     local icon = self.icon or {}
@@ -914,7 +908,9 @@ function BFIQuestiePinMixin:OnMouseUp(button)
         if self.bfiGroup == "questie" then
             local what = #quests == 1 and ("\"" .. (self.questName or "") .. "\"") or (#quests .. " quests")
             items[#items + 1] = { #quests == 1 and "hide this quest" or "hide these quests", function()
-                StaticPopup_Show("BFI_HIDE_QUESTS", what, nil, quests)
+                ns.Ask({ text = "Hide " .. what .. " from the map?", sub = "/waymark unhide shows them again",
+                         ok = "Hide", cancel = "Keep them",
+                         onAccept = function() if ns.HideQuests then ns.HideQuests(quests) end end })
             end }
         end
         if TomTom and TomTom.AddWaypoint and icon.x then

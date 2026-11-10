@@ -135,7 +135,7 @@ local function PlanPage(c, base)
         function() end,
         function(s) plan.beforeAdded[#plan.beforeAdded + 1] = { s = s } end,
         function(j) plan.text["diary:" .. j] = { gone = true, was = bb.diary[j] } end)
-    for _, f in ipairs({ "margin", "bring" }) do
+    for _, f in ipairs({ "margin", "bring", "aside" }) do
         if cb[f] and cb[f] ~= bb[f] then plan.text[f] = { s = cb[f], was = bb[f] } end
     end
     if cb.whisper and cb.whisper ~= bb.whisper then plan.beforeAdded[#plan.beforeAdded + 1] = { s = cb.whisper } end
@@ -411,7 +411,7 @@ function ns.BookBeforeView(b, kind, mb)
             v.lines[#v.lines + 1] = { s = s, k = k }
         end
     end
-    for _, f in ipairs({ "margin", "bring" }) do
+    for _, f in ipairs({ "margin", "bring", "aside" }) do
         local t = text[f]
         if t and t.s then
             v[f], v[f .. "Yours"] = t.s, true
@@ -430,7 +430,7 @@ local TOOL_MARKS = { route = true, wander = true, stairs = true, jump = true, lo
 -- gameplay notes in the deep's blue-black, kept by their words (that ink holds the story too)
 local TIP_MARKS = {
     ["runners!"] = true, ["the key's in here"] = true, ["make them climb to you"] = true,
-    ["Dont let her touch you"] = true, ["two more when he bleeds"] = true,
+    ["two more when he bleeds"] = true,   -- ("Dont let her touch you": rewritten in red ink, kept as red, 2026-11-10)
     ["when she rises the middle burns"] = true,   -- ("he will run for the gate": struck in the book, 2026-11-08)
 }
 ns.BookTipMarks = TIP_MARKS
@@ -445,12 +445,9 @@ function ns.BookMapMarks(list, kind)
     return out
 end
 
--- the reset's question, for Options.lua's button
-if StaticPopupDialogs then
-    StaticPopupDialogs["WAYMARK_BOOK_RESET"] = {
-        text = "Reset the whole book? Your words and ink are set aside, and \"Bring back what was reset\" returns them.",
-        button1 = "Reset", button2 = "Keep them",
-        OnAccept = function() if ns.BookReset then ns.BookReset(true) end end,
-        timeout = 0, whileDead = true, hideOnEscape = true,
-    }
+-- the reset's question, for Options.lua's button (Waymark's own ask box, Ask.lua)
+function ns.AskBookReset()
+    ns.Ask({ text = "Reset the whole book?", sub = "Your words and ink are set aside, and \"Bring back what was reset\" returns them.",
+             ok = "Reset", cancel = "Keep them",
+             onAccept = function() if ns.BookReset then ns.BookReset(true) end end })
 end

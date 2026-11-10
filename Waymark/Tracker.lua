@@ -690,6 +690,8 @@ local function TurninText(q, column)
     if not (to and to.name) then return "Ready for turn-in" end
     if c.turninStyle == "prefix" then return "Turn in: " .. to.name end
     local where = PlaceOf(to)
+    -- (only the place, to try: the user, 2026-11-09; without a place, the name)
+    if c.turninStyle == "where" then return where or to.name end
     if column then return to.name, where end
     return where and (to.name .. ", " .. where) or to.name
 end
@@ -762,7 +764,7 @@ local function GlowPins(questID)
     end
     if not (questID or held or pointed or paged or next(focus)) then return end
     ns.EachPin(map, function(pin, template)
-        local id = (template == "QuestPinTemplate" and pin.questID)
+        local id = ((template == "QuestPinTemplate" or template == "BFIQuestPOIPinTemplate") and pin.questID)
             or (template == "BFIQuestiePinTemplate" and (pin.bfiGroup == "spots" or pin.bfiGroup == "turnins")
                 and pin.questId)
         if id and (id == questID or id == held or id == pointed or id == paged or focus[id]) then
@@ -3261,9 +3263,15 @@ local function BuildQuestWindow()
     qw.abandon = Btn(ABANDON_QUEST_ABBREV or "Abandon", 77, function()
         local id = qwQuest
         if not (id and SelectQuest(id)) then return end
-        if C_QuestLog and C_QuestLog.SetAbandonQuest then C_QuestLog.SetAbandonQuest() elseif SetAbandonQuest then SetAbandonQuest() end
-        local name = (GetAbandonQuestName and GetAbandonQuestName()) or qw.title:GetText()
-        StaticPopup_Show("ABANDON_QUEST", name)
+        local name = (C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(id)) or qw.title:GetText() or ""
+        -- (Waymark's own ask box, Ask.lua: the game's ABANDON_QUEST popup opened from here broke a
+        -- controller's buttons. The quest is chosen again on Yes, in case the log moved meanwhile.)
+        ns.Ask({ text = "Abandon " .. name .. "?", ok = ABANDON_QUEST_ABBREV or "Abandon", cancel = "Keep it",
+                 onAccept = function()
+                     if not SelectQuest(id) then return end
+                     if C_QuestLog and C_QuestLog.SetAbandonQuest then C_QuestLog.SetAbandonQuest() elseif SetAbandonQuest then SetAbandonQuest() end
+                     if C_QuestLog and C_QuestLog.AbandonQuest then C_QuestLog.AbandonQuest() elseif AbandonQuest then AbandonQuest() end
+                 end })
     end)
     qw.abandon:SetPoint("BOTTOMLEFT", 3, 2)  -- (inside the frame, not over its edge)
     qw.share = Btn(SHARE_QUEST_ABBREV or "Share", 72, function()

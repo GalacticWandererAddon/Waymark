@@ -68,7 +68,7 @@ Over(ns.DEFAULTS, {
 	},
 	cityButton = false,
 	cityView = {
-		myProfessionsOnly = true,
+		myProfessionsOnly = false,
 		ownTypes = true,
 		pinScale = 1,
 		sizes = {},

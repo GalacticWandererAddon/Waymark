@@ -2617,6 +2617,9 @@ PAGES[#PAGES + 1] = { key = "header", label = "Header & border", build = functio
     b:Slider("Distance from the header", -12, 20, 1, "zoneName", "borderGap", "%d px")
     b:Advanced()
     b:Requires()
+    b:Header("Menus & questions")
+    b:Choice("Font", "menus", "font", ns.FontChoices)
+    b:Tip("Waymark's right-click menus and the box where it asks you something. Friz Quadrata, the game's own, reads best.", FONT_TIP)
 end }
 
 PAGES[#PAGES + 1] = { key = "controls", label = "Buttons & coordinates", build = function(p)
@@ -3034,6 +3037,7 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     a:Indent(true)
     a:Choice("As", "tracker", "turninStyle", {
         { "place", "Gryan Stoutmantle, Sentinel Hill" }, { "prefix", "Turn in: Gryan Stoutmantle" },
+        { "where", "Sentinel Hill" },
     })
     a:Indent()
     a:Requires("tracker", "shown")
@@ -3345,6 +3349,14 @@ PAGES[#PAGES + 1] = { key = "people", label = "Townsfolk", build = function(p)
         a:Slider("Size", 0.2, 2, 0.05, "transports", "scale")
         a:Requires()
     end
+    if ns.SetupFishing then
+        a:Header("Fisherman's mode")
+        a:Check("Show", "fishing", "shown")
+        a:Tip("The water washed by how your fishing does there. Sage: every fish stays on. Ochre: some get away. Red: most do. While it's on, the header shows the zone's fishing level.")
+        a:Requires("fishing", "shown")
+        a:Slider("Strength", 0.2, 1, 0.05, "fishing", "alpha")
+        a:Requires()
+    end
     -- which ones: trainers, services and vendors side by side (a checklist)
     a:Header("Which townsfolk")
     a:Requires(function() return ns.db.townsfolk.shown end)
@@ -3555,7 +3567,7 @@ PAGES[#PAGES + 1] = { key = "ink", label = "The book & map ink", build = functio
         end, true, ns.MEDIA .. "BookIcon")
     a:Tip("Click it to open the book, right-click for more. There's also a key: Esc > Options > Keybindings > AddOns > Waymark.")
     a:Button("Open the book", function() if ns.ToggleNotebook then ns.ToggleNotebook() end end)
-    a:Button("Reset the whole book", function() StaticPopup_Show("WAYMARK_BOOK_RESET") end)
+    a:Button("Reset the whole book", function() if ns.AskBookReset then ns.AskBookReset() end end)
     a:Button("Bring back what was reset", function() if ns.BookBack then ns.BookBack(true) end end)
     a:Tip("A reset sets your words and ink aside. Nothing is deleted. To reset one page, use the quill's bar.")
     a:Tip("Pages someone left about the dungeons. Their numbered rings show on the dungeon maps.", "Click the stamp in a dungeon map's corner for its page. /waymark notes opens the book too.")
@@ -4947,6 +4959,9 @@ function ns.ToggleTownsfolkOptions() ns.ToggleOptions("people") end
 
 -- for the Overview page's > buttons
 function ns.OpenOptionsPage(key)
+    -- (from outside the window, Waymark: Combat's settings say: the window built and opened first.
+    -- Before it was ever opened its page frame didn't exist yet, an error, the user 2026-11-09)
+    if not (panel and panel:IsShown()) then return ns.ToggleOptions(key) end
     ns.GlowNavPage(key, false)  -- (the mouse is still on the button as the page changes)
     SelectPage(key)
 end
@@ -5321,6 +5336,10 @@ local function BuildQuickPanel(map)
     Layer(a, "Unexplored areas", "explore")
     Context(a.last.text, { "explore" })
     Layer(a, "Close-up detail", "detail")
+    if ns.SetupFishing then
+        Layer(a, "Fisherman's mode", "fishing")
+        a:Tip("The water washed by your fishing there: sage, every fish stays on; ochre, some get away; red, most do.")
+    end
 
     -- what moves, switches or hides the map on its own: quick to turn off when
     -- it acts up or doesn't suit the moment
@@ -5455,6 +5474,7 @@ end
 -- (t[7]: a button that switches several settings together, { { group, key }, ... }:
 -- on while any of them is, and a click sets them all the same way)
 local function ToggleOn(b)
+    if b.def and b.def.lit then return b.def.lit() end  -- (a button another file added: its own state)
     if b.id == "book" then return true end
     if b.id == "quill" then return ns.QuillOut() end
     if b.id == "objview" then return ns.ObjectivesOn() end
@@ -5466,6 +5486,10 @@ local function ToggleOn(b)
 end
 
 local function ToggleClick(b)
+    if b.def and b.def.click then
+        b.def.click()
+        return
+    end
     if b.id == "book" then
         if ns.ToggleNotebook then ns.ToggleNotebook() end
         return
@@ -5898,6 +5922,9 @@ local function BuildToggleStrip(map)
         -- (t[5]: the settings group, when it isn't the id)
         b.id, b.group, b.key, b.iconPath = t[1], t[5] or t[1], t[2], t[3]
         b.pairs = t[7]
+        -- (t.click / t.right / t.lit / t.tip: a button another file adds to ns.TOGGLES, such as the Lab's
+        -- waybook, Lab\Road.lua; it says itself what a click does and what the tooltip shows)
+        b.def = t
         b.icon = b:CreateTexture(nil, "ARTWORK")
         -- (an atlas: keep its cut, StyleButton sets the coords again)
         b.iconCoords = ns.SetIconArt(b, b.icon, t[3])
@@ -5907,6 +5934,10 @@ local function BuildToggleStrip(map)
             if button == "RightButton" then
                 -- its settings: the page it lives on, the option marked
                 GameTooltip:Hide()
+                if t.right then
+                    t.right(b)
+                    return
+                end
                 if b.id == "book" then
                     ns.BookMenu()
                     return
@@ -5936,6 +5967,12 @@ local function BuildToggleStrip(map)
         b:SetScript("OnEnter", function()
             GameTooltip:SetOwner(b, "ANCHOR_TOP")
             GameTooltip:AddLine(t[4])
+            if t.tip then
+                t.tip(b)
+                ns.Hints({ { "Click", "open it" }, unpack(ns.ToggleMoveHints(b)) })
+                GameTooltip:Show()
+                return
+            end
             local key = ns.ActiveProfileKey and ns.ActiveProfileKey()
             local label = key and ns.PROFILE_LABELS and ns.PROFILE_LABELS[key]
             if b.id == "book" then

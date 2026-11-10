@@ -23,6 +23,8 @@ local GAME = {
     { "pagetext", "Page text", "Fonts\\K_Pagetext.TTF" },
     { "damage", "Damage numbers", "Fonts\\K_Damage.TTF" },
     { "nimrod", "Nimrod", "Fonts\\NIM_____.ttf" },
+    -- (Waymark's own: the book's title hand, the menus' font until 2026-11-10)
+    { "felipa", "Felipa (the book's hand)", ns.MEDIA .. "Fonts\\Felipa-Regular.ttf" },
 }
 ns.FONTS = {}
 for _, f in ipairs(GAME) do ns.FONTS[f[1]] = f[3] end

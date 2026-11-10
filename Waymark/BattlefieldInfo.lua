@@ -13,6 +13,9 @@ local DEFAULTS = {
     quickToggles = true,  -- the small feature toggle buttons on the map
     mapButtons = true,    -- all of the map's buttons at once (toggles, gear, town view, dock)
     minimap    = { hide = false, angle = 225 },
+    -- the font of Waymark's right-click menus and its ask box (Notebook.lua, Ask.lua); Friz
+    -- Quadrata, the game's own, reads best; Felipa was the first look (the user, 2026-11-10)
+    menus      = { font = "friz" },
     -- quest givers, turn-ins and objective spots come from QuestieDB (QuestData.lua)
     -- iconSet: "questie" (Questie's icons, where Questie is installed) or
     -- "modern" (the map atlases)
@@ -95,6 +98,7 @@ local DEFAULTS = {
     waypoints  = { shown = false, alpha = 1, scale = 1, clickToAdd = true },  -- TomTom
     transports = { shown = true, alpha = 1, scale = 1, boats = true, zeppelins = true, trams = true, continent = true, routes = true, boat = "cog" },  -- Transports.lua
     rares      = { shown = false, alpha = 1, scale = 1, rsIcons = false },  -- RareScanner
+    fishing    = { shown = false, alpha = 0.55 },  -- Fisherman's mode (FishingMap.lua)
     -- quest givers learned as you play (Learn.lua): mode "gaps" = only quests
     -- QuestieDB doesn't know (all of them without QuestieDB), "all" = every one;
     -- record = keep learning; turnins = "?" where a finished quest is handed in
@@ -123,7 +127,7 @@ local DEFAULTS = {
                    lineGap = 1, questGap = 6, bgAlpha = 0, fadeOut = false, fadeAlpha = 30,
                    -- otherZones: tracked quests from other zones too, "always" /
                    -- "continent" (while the map shows a continent) / "off".
-                   -- turninName (turninStyle "place" / "prefix"), countColumn
+                   -- turninName (turninStyle "place" / "prefix" / "where": the place alone), countColumn
                    -- (doneCount "count" / "tick"), levelColumn (goldTitles),
                    -- quietHeadings, flashProgress
                    otherZones = "always", turninName = true, turninStyle = "place",
@@ -815,7 +819,7 @@ end
 -- entrances. A profile starting or ending, or a setup loaded, calls this.)
 function ns.RedrawAll()
     for _, fn in ipairs({ "RedrawQuestie", "RedrawRares", "RedrawTownsfolk", "RedrawWaypoints",
-                          "RedrawGather", "RedrawTransports", "UpdateCoords", "UpdateClock", "UpdateMapHour", "UpdateLine", "RedrawLearned",
+                          "RedrawGather", "RedrawTransports", "RedrawFishing", "UpdateCoords", "UpdateClock", "UpdateMapHour", "UpdateLine", "RedrawLearned",
                           "RedrawDungeonEntrances", "UpdateDetail", "UpdateZoneName" }) do
         if ns[fn] then pcall(ns[fn]) end
     end
@@ -894,6 +898,8 @@ local TEMPLATE_GROUPS = {
     BFIQuestiePinTemplate   = "questie",
     QuestPinTemplate        = "objectives",
     QuestBlobPinTemplate    = "areas",
+    BFIQuestPOIPinTemplate  = "objectives",  -- (ours since 2026-11-10: QuestPOI.lua)
+    BFIQuestBlobPinTemplate = "areas",
     GroupMembersPinTemplate = "party",
     BFIWaypointPinTemplate  = "waypoints",
     BFITransportPinTemplate = "transports",
@@ -1232,7 +1238,9 @@ local function AddProvider(map, mixin, label, group)
         -- half set up (Classic Era's quest provider): it would error on every map change
         if not ns.FOREVER then pcall(map.RemoveDataProvider, map, provider) end
         Log(label, "failed:", err)
+        return nil
     end
+    return provider
 end
 
 -- Resize ----------------------------------------------------------------
@@ -1409,6 +1417,8 @@ function ns.OnSettingChanged(group, key)
         if ns.RedrawQuestie then ns.RedrawQuestie() end
     elseif group == "waypoints" and key == "shown" then
         if ns.RedrawWaypoints then ns.RedrawWaypoints() end
+    elseif group == "fishing" then
+        if ns.RedrawFishing then ns.RedrawFishing() end
     elseif group == "rares" and (key == "shown" or key == "rsIcons") then
         if ns.RedrawRares then ns.RedrawRares() end
     elseif group == "townsfolk" and key ~= "alpha" and key ~= "scale" then
@@ -1453,6 +1463,7 @@ function ns.OnSettingChanged(group, key)
         if ns.ApplyClickThrough then ns.ApplyClickThrough() end
     elseif group == "clearView" then
         if ns.ApplyClearView then ns.ApplyClearView() end
+        if ns.RedrawFishing then ns.RedrawFishing() end  -- (no wash on a zone's map in clear view)
     elseif group == "dock" then
         -- (the corner ticked again: your own spot from a Ctrl-drag goes, or it would still win)
         if key == "corner" and ns.db.dock.corner and ns.DockSpotReset then ns.DockSpotReset() end
@@ -1836,27 +1847,12 @@ local function Setup()
     SetupFrameLevels(map)
     if ns.GuardMapWheel then ns.GuardMapWheel(map) end  -- (first: before the wheel hooks)
     SetupResize(map)
-    -- Blizzard's quest tracker providers are Forever-only: on Era they fail
-    -- half set up and taint (chat spam every login), so skip them there
+    -- (Forever only: the game's other providers wait out fights, and quest objectives and areas
+    -- are drawn; on Era the game's quest providers failed half set up, chat spam every login)
     if ns.FOREVER then
         GamePinsWait(map)
-        AddProvider(map, QuestDataProviderMixin, "Quest objectives", "objectives")
-        AddProvider(map, QuestBlobDataProviderMixin, "Quest areas", "areas")
-        -- (the game draws an area only for the quest in focus, so with none the toggle looked
-        -- dead: every quest on this map gets its area, after the game's own draw)
-        local blob = ns.questAreas and ns.questAreas.pin
-        if blob and blob.DrawBlob and blob.Refresh then
-            hooksecurefunc(blob, "Refresh", function(self)
-                ns.Safe("Quest areas", function()
-                    local mapID = map:GetMapID()
-                    if not (self.mapAllowsBlobs and mapID and GetCVarBool("questPOI")) then return end
-                    for _, q in ipairs(C_QuestLog.GetQuestsOnMap(mapID) or {}) do
-                        if q.questID then self:DrawBlob(q.questID, true) end
-                    end
-                end)
-            end)
-            blob:Refresh()
-        end
+        -- (the game's quest objectives and areas, drawn by Waymark: QuestPOI.lua says why)
+        if ns.SetupQuestPOI then ns.SetupQuestPOI(map, AddProvider) end
     end
     CorpseFollows(map)
     SetupQuestie(map)
@@ -1918,6 +1914,7 @@ local function Setup()
         end
     end
     if ns.SetupTransports then ns.SetupTransports(map) end
+    if ns.SetupFishing then ns.SetupFishing(map) end
     if ns.SetupMapHour then ns.SetupMapHour(map) end
     if ns.SetupMapLife then ns.SetupMapLife(map) end  -- (dev only)
     if ns.SetupCollapse then ns.SetupCollapse(map) end
@@ -1933,6 +1930,15 @@ end
 -- popup doesn't). Shown in chat and kept, so one during a /reload is shown again
 -- after it (the chat from before a reload is gone).
 local function ReportBlocked(event, addon, func)
+    -- (every addon's, kept across reloads, the last 20: the game's chat line "Interface action
+    -- failed because of an AddOn" doesn't say whose; /waymark check and Claude read it)
+    WaymarkDB = WaymarkDB or {}
+    local all = WaymarkDB.blockedHistory or {}
+    all[#all + 1] = { addon = tostring(addon), func = tostring(func), event = event, when = date("%m-%d %H:%M:%S"),
+                      where = InCombatLockdown() and "in combat" or "out of combat",
+                      map = BattlefieldMapFrame and BattlefieldMapFrame:IsShown() and "map open" or "map closed" }
+    while #all > 20 do table.remove(all, 1) end
+    WaymarkDB.blockedHistory = all
     if addon ~= addonName then return end
     local when = date("%H:%M:%S")
     local where = InCombatLockdown() and "in combat" or "out of combat"
@@ -1942,6 +1948,8 @@ local function ReportBlocked(event, addon, func)
     list[#list + 1] = { func = tostring(func), event = event, where = where, when = when }
     while #list > 10 do table.remove(list, 1) end
     WaymarkDB.blockedLog = list
+    -- (dev: DevGamepad.lua saves what Waymark tainted; not in releases, so nil there)
+    if ns.GamepadTaintProbe and tostring(func):find("Gamepad", 1, true) then pcall(ns.GamepadTaintProbe) end
 end
 
 local blockWatch = CreateFrame("Frame")

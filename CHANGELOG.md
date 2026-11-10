@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.2.7 (2026-11-10)
+
+**Controller players: the blocked-action error and the broken jump button are fixed, and there's a new Fisherman's mode.**
+
+New
+- Fisherman's mode: the map's water is tinted by how your fishing does there. Sage: no fish gets away. Ochre: some do. Red: most do. While it's on, the zone header shows the zone's fishing level. Turn it on in the quick panel, or Settings > Townsfolk > Fisherman's mode.
+- Entrance pins for Forever's own dungeons: the Hall of Thanes (Ironforge), the Ruins of Lordaeron (Undercity), the Excavation Site (Wetlands) and the City of Dalaran (Alterac Mountains).
+- Quests started by an item say so in their details, and where the item drops. "Find on map" lights the dungeon's entrance.
+- Menus & questions font: Settings > Header & border. The game's Friz Quadrata by default, for easy reading.
+- The quest tracker can show just the place for a finished quest ("Sentinel Hill").
+
+Changed
+- Waymark asks its questions in its own box: hiding a giver's quests, a boss note, your words in the book, abandoning from the quest window, resetting the book. Enter or A to confirm, Esc or B to cancel.
+- Right-click menus are dark, like Waymark's other windows, with a little more room. The book's quill tools keep their parchment list.
+- The game's quest objective markers and blue quest areas are now drawn by Waymark. They look the same. Clicking a marker opens the quest's page in Waymark's quest window.
+- Cities: profession trainers show, and "Only my professions" is off in every preset.
+- "Find on map" for Forever quests our data doesn't know: it goes to the givers you've met, then the game's own marker. A quest with no giver lights who takes it in.
+- The book: new lines and fixes in the found notes.
+
+Fixed
+- Controller (gamepad UI): opening and closing the world map, its quest log or a quest's details no longer gives "Waymark tried to call SetPreferredGamepadInteractTarget()", and A (jump) keeps working. The cause was the game's own quest markers on Waymark's map. Waymark draws them itself now.
+- Controller: Waymark's questions no longer leave the pad's buttons broken.
+- Opening a settings page from outside the settings window no longer errors.
+
+Known
+- Forever's new dungeons have no map pictures yet.
+
 ## 1.2.6 (2026-11-08)
 
 **Boats on the map, a docked minimap in the shape you like, a performance mode, and the map stays where you put it.**

@@ -26,7 +26,8 @@
 --              { where, scene = { { piece, x, y, scale }, ... } (Data\InkScenes.lua's pieces in a 360 x 170 box),
 --              diary = { "...", ... }, margin, whisper, asked = { { "Who", ", where. What.", quest = id,
 --              side = "H" }, ... } (QuestieDB quest ids: tooltip, quest window, the giver on the map), bring,
---              rule = { "who said it", "what" }, ink = the scene as ink marks, once the wanderer has moved,
+--              rule = { "who said it", "what" }, pressed = { x, y, rot, size }: the ghost of something pressed
+--              between its pages and taken out (on the right page, mirrored on the left), ink = the scene as ink marks, once the wanderer has moved,
 --              sized, rubbed out or drawn on it (t = "sketch": a whole piece; plus pen strokes) }
 --   mapFloor = the floor the facing page opens on (default: the first with a note on it)
 --   marks    = the wanderer's ink on the spread (Ink.lua's marks, 0-1 across the open book);
@@ -34,6 +35,11 @@
 --   mapMarks = { [floor] = { marks } }: the wanderer's ink on the dungeon's map (0-1 across its picture)
 --   rev      = the page's revision: raise it when the file changes a page after tools\export_notes.py has
 --              taken in the game's copies, so older copies made "as the wanderer" are dropped (Notebook.lua)
+-- letter: W's letter in the back cover's pocket: { the lines of its top panel, the only part standing up out of the
+--   pocket; gap, cut = what's further down, in the pocket: kept, never shown } (Notebook.lua's WayBack)
+-- wayback: the book's last page, the road home: { id, line, ink = "deep" | "warm" (brown when none), fade = { word,
+--   full by word }: the ink going over to the whispers' violet, still his hand }, one line per
+--   dungeon, shown once that dungeon's page is open (Notebook.lua's WayBack)
 -- Easiest written in game: the quill, "as the wanderer", then tools\export_notes.py writes it here.
 
 local _, ns = ...
@@ -68,7 +74,33 @@ ns.FoundNotes = {
         uldaman = { even = 0.95, wobble = 0.25 },
         zulfarrak = { even = 1, wobble = 0.2 },
     },
+    letter = { "Ewen,", "The old man's asleep. The dog isn't.", "Brown ink. The last of it. You said you'd read it to me. Then, read it slow.", cut = "south, past the sand.", gap = "Don't follow me in." },
     locked = { "depths", "spire", "diremaul", "scholomance", "stratholme" },
+    wayback = {
+        { "deadmines", "Moonbrook, the Hill, east to Lakeshire. Three days." },
+        { "wailing", "Out of the caves by the twine. Ratchet, the boat." },
+        { "ragefire", "Out through the Cleft, hoods up. Theramore." },
+        { "thanes", "Up the old stair. Ironforge, then the tram." },
+        { "ruins", "Back down the Brill road. Ewen knows it." },
+        { "shadowfang", "Off the roof in the rain. The Sepulcher road." },
+        { "blackfathom", "Strand to Auberdine. Boat south.", ink = "deep" },
+        { "stockade", "Canals, the gate, Goldshire road. Easy.", ink = "deep" },
+        { "excavation", "Down out of the mist. Menethil, the ship.", ink = "deep" },
+        { "gnomeregan", "Kharanos. The tunnel. Stormwind.", ink = "deep" },
+        { "dalaran", "Round the lake. Southshore, then the ship.", ink = "deep" },
+        { "kraul", "Out of the thorns. Ratchet. Boat.", ink = "deep" },
+        { "monastery", "Back over the bridge. Don't stop in Brill.", ink = "deep" },
+        { "downs", "North up the Barrens. Home after this one.", ink = "deep" },
+        { "uldaman", "Thelsamar, the Loch, Ironforge.", ink = "deep" },
+        { "zulfarrak", "Gadgetzan. South is shorter.", ink = "deep" },
+        { "maraudon", "Left.", ink = "deep" },
+        { "temple", "Back through the swamp. Two of us.", ink = "deep" },
+        { "depths", "Out of the mountain. Thorium Point. Pay the hired." },
+        { "spire", "Down is the way out.", ink = "deep" },
+        { "diremaul", "Feathermoon. Three of us, and the dog.", ink = "warm" },
+        { "scholomance", "Across the water. Leave the books.", ink = "deep" },
+        { "stratholme", "Light's Hope, then south along th", fade = { 3, 4 }, ink = "deep" },
+    },
     flyleafMarks = {
         { f = "nothing", ink = 1, p = { 0.11, 0.63 }, r = 0, s = "the company", sc = 1.2, t = "text" },
         { f = "nothing", ink = 1, p = { 0.13, 0.685 }, r = 0, s = "Ewen", t = "text" },
@@ -81,6 +113,10 @@ ns.FoundNotes = {
         { ink = 3, p = { 0.1237, 0.7655 }, r = 1808363765, t = "blot" },
         { ink = 3, p = { 0.1193, 0.722, 0.123, 0.722, 0.1267, 0.7198, 0.1319, 0.7198, 0.1363, 0.7186, 0.143, 0.7186, 0.1474, 0.7186, 0.1519, 0.7186, 0.1556, 0.7186, 0.1593, 0.7186, 0.163, 0.7186, 0.1674, 0.7186, 0.1711, 0.7186, 0.1748, 0.7186, 0.1785, 0.7186, 0.1837, 0.7198, 0.1881, 0.7209, 0.1926, 0.7209, 0.197, 0.7209, 0.2015, 0.7209, 0.2052, 0.7209, 0.2096, 0.7209, 0.2133, 0.7209, 0.2178, 0.7209, 0.2215, 0.7209, 0.2252, 0.7209, 0.2289, 0.7209, 0.2326, 0.7209, 0.2363, 0.7209, 0.24, 0.7209, 0.2437, 0.7209, 0.2481, 0.7209, 0.2519, 0.7198, 0.2556, 0.7198, 0.2593, 0.7198, 0.263, 0.7186, 0.2674, 0.7186, 0.2711, 0.7186, 0.2748, 0.7186, 0.2785, 0.7186, 0.2822, 0.7153, 0.2859, 0.7141 }, r = 749606420, t = "pen" },
         { ink = 3, p = { 0.12, 0.7876, 0.1237, 0.7864, 0.1274, 0.7864, 0.1311, 0.7853, 0.137, 0.7853, 0.143, 0.7853, 0.1467, 0.7842, 0.1526, 0.7842, 0.157, 0.7842, 0.1607, 0.7842, 0.1644, 0.7842, 0.1681, 0.7842, 0.1748, 0.7842, 0.1807, 0.7842, 0.1859, 0.7831, 0.1911, 0.7831, 0.1948, 0.7831, 0.1985, 0.7831 }, r = 138696143, t = "pen" },
+    },
+    waybackMarks = {
+        { ink = 6, p = { 0.3037, 0.8717, 0.3059, 0.874, 0.3089, 0.8751, 0.3118, 0.8762, 0.3148, 0.8785, 0.3185, 0.8785, 0.3214, 0.8796, 0.3244, 0.8796, 0.3274, 0.8796, 0.3303, 0.8796, 0.3333, 0.8796, 0.3363, 0.8796, 0.34, 0.8796, 0.3429, 0.8796, 0.3459, 0.8785, 0.3489, 0.8774, 0.3533, 0.8774, 0.36, 0.8762, 0.3637, 0.8751, 0.3681, 0.8729, 0.3718, 0.8729, 0.3763, 0.8717, 0.3807, 0.8695, 0.3859, 0.8683 }, q = 2, r = 1178370861, sc = 0.79, t = "pen" },
+        { ink = 6, p = { 0.3126, 0.8718 }, r = 1847084610, t = "blot" },
     },
     {
         id = "deadmines",
@@ -97,7 +133,7 @@ ns.FoundNotes = {
             { "Van Cleef holed up at top, with two of his men", floor = 2, na = 29, rs = 0.8, x = 0.604, y = 0.4543 },
         },
         asides = {
-            { "Took on with the old man at Sentinel Hill. He looked at my shield a long while and said it would do.", after = 6 },
+            { "Took on with the old man in Lakeshire. He looked at my shield a long while and said it would do.", after = 6 },
             { "His grandson walks behind him like a second shadow. Named his first hawk after the old man.", after = 6 },
         },
         margin = "Cookie's in the cove,\nif you've the stomach.",
@@ -174,9 +210,8 @@ ns.FoundNotes = {
             },
             diary = {
                 "Three days on the road from Lakeshire. Westfall is all dust and empty farms. Stoutmantle's people sleep in the old tower on Sentinel Hill with their boots on.",
-                "The old man knows him. They talked a long while by the fire, and then the old man said we'd go. Tam fed the hawk and said nothing. Ewen counted bandages twice.",
+                "The old man knows him. Stoutmantle called him Brakk, like they'd been young together. They talked a long while by the fire, and then the old man said we'd go. Tam fed the hawk and said nothing. Ewen counted bandages twice.",
                 "The children here have no fathers. Moonbrook is where it starts, they say. Under it.",
-                "Ewen asked why I write in this. So I don't get lost, I told her. She said she'd read it to me, then, if I ever did.",
             },
             margin = "She says we go for the farmers. The old man says for the pay. Both, I think.",
             asked = {
@@ -185,6 +220,7 @@ ns.FoundNotes = {
                 { "Wilder Thistlenettle", ", in Stormwind. His brother went into the mine. He wants the badge back.", quest = 167 },
                 { "Shoni the Shilent", ", in Stormwind. Her drill, taken by the goblins.", quest = 2040 },
             },
+            aside = "Ewen asked why I write in this. So I don't get lost, I told her. She said she'd read it to me, then, if I ever did.",
             bring = "rope (old man checked twice) \194\183 torches \194\183 something for the hawk",
         },
         mapMarks = {
@@ -286,7 +322,7 @@ ns.FoundNotes = {
                 { ink = 1, p = { 0.0502, 0.0365 }, r = 804522108, t = "x", v = 1 },
             },
         },
-        rev = 10,
+        rev = 13,
     },
     {
         id = "wailing",
@@ -364,10 +400,10 @@ ns.FoundNotes = {
             },
             diary = {
                 "The Barrens are wider than anything in Redridge. The old man walks it like a room he's lived in all his life.",
-                "A night elf on the boat to Ratchet told us of her teacher, a druid who went into the caves to dream the land green again. That was years ago. Still looks brown to me",
+                "A night elf on the boat to Ratchet told us of her teacher, a druid who went into the caves to dream the land back to life. That was years ago. Still looks brown to me",
                 "Tam caught a raptor chick by the road. The old man said put it back. Tam didn't.",
             },
-            margin = "Ewen asked her what the druid dreamed of. She didn't answer.",
+            margin = "Ewen asked her what the druid dreamed of. She said it used to be green.",
             asked = {
                 { "Nalpak", ", above the cave's mouth. Hides off the deviate beasts.", quest = 1486 },
                 { "Ebru", ", beside him. Fewer of those beasts, any way we can.", quest = 1487 },
@@ -411,7 +447,7 @@ ns.FoundNotes = {
                 { ink = 1, p = { 0.2028, 0.423 }, r = 456788976, sc = 0.63, t = "chest", v = 1 },
             },
         },
-        rev = 22,
+        rev = 24,
     },
     {
         id = "ragefire",
@@ -512,7 +548,7 @@ ns.FoundNotes = {
                 { "dog", 150, 164, 0.9 },
             },
             diary = {
-                "Ironforge. The old man went quiet at the gate and stayed quiet the whole way down.",
+                "Ironforge. At the gate the old man bought candles. One for every name he knew down there.",
                 "Dark Irons dug up through the old kings floor. The dead woke. One of them asked us to put his thane to rest. Asked nicely.",
                 "A gnome was down there before us, on her own. Wouldnt say what for. Called herself Sparks. The old man liked her right away.",
             },
@@ -528,7 +564,7 @@ ns.FoundNotes = {
         },
         draft = true,
         forever = true,
-        rev = 5,
+        rev = 6,
     },
     {
         id = "ruins",
@@ -624,8 +660,9 @@ ns.FoundNotes = {
             },
             diary = {
                 "Silverpine drips. Everything here drips. The Forsaken watch us from their towers and do nothing, which I suppose is a kindness.",
+                "Ewen gave me a peacebloom on the road. Keeping it with me.",
                 "The keep above Pyrewood was a baron's. Now it's the wolves', and a wizard's who let them in. The villagers bar their doors when the moon's up.",
-                "Nobody of ours asks after the keep. The old man checked every strap on my shield tonight. He doesn't usually.",
+                "Nobody of ours asks after the keep. The old man checked every strap on my shield twice tonight.",
             },
             margin = "Tam's wolf pup howled at the keep all evening.",
             asked = {
@@ -634,6 +671,7 @@ ns.FoundNotes = {
                 { "Keeper Bel'dugur", ", in the Undercity. The Book of Ur.", quest = 1013, side = "H" },
             },
             bring = "something for wolf bites \194\183 dry socks, if there are any left in Lordaeron",
+            pressed = { rot = 0.35, size = 210, x = 120, y = -400 },
         },
         mapMarks = {
             [1] = {
@@ -791,7 +829,7 @@ ns.FoundNotes = {
                 { ink = 1, p = { 0.4232, 0.3278, 0.4206, 0.3262, 0.4185, 0.3239, 0.4163, 0.3215, 0.4142, 0.3191, 0.4116, 0.3168, 0.41, 0.3136, 0.4084, 0.3089, 0.4084, 0.3049, 0.41, 0.301, 0.4116, 0.2978 }, r = 1146222661, t = "route" },
             },
         },
-        rev = 24,
+        rev = 27,
     },
     {
         id = "blackfathom",
@@ -811,7 +849,7 @@ ns.FoundNotes = {
             { "Aku'mai's breath is foul, and he rages when hurt", floor = 3, turn = true, x = 0.5878, y = 0.3056 },
         },
         asides = {
-            { "Tam sat at the tide line all evening, waiting for his naga. The dog sat with him." },
+            { "Tam sat at the tide line all evening, waiting for his naga. The dog sat with him anyway." },
         },
         margin = "Wrote late tonight.\nThe words came easy.",
         marginAt = { 0.0592, 0.8496 },
@@ -891,7 +929,7 @@ ns.FoundNotes = {
                 { f = "apple", ink = 3, p = { 0.4097, 0.7363 }, r = 0, s = "four fires, four mouths of the sea", sc = 1.06, t = "text" },
             },
         },
-        rev = 20,
+        rev = 21,
     },
     {
         id = "stockade",
@@ -920,7 +958,7 @@ ns.FoundNotes = {
                 { "smoke", 250, 46, 0.6 },
             },
             diary = {
-                "Stormwind. Proper beds, proper ale, bells every hour. Tam had never seen so many people in one place and stood still in the square until the old man led him off.",
+                "Stormwind. Proper beds, proper ale, bells every hour. Tam came back from the canals with a cat following him.",
                 "The prisoners took the Stockade this morning. The guards stand at the door and wait for someone else to go in. Someone else is us.",
                 "Up late writing again. The pen gets there before I do now. I don't mind it.",
             },
@@ -950,7 +988,7 @@ ns.FoundNotes = {
                 { ink = 3, p = { 0.2589, 0.2357 }, r = 671024014, t = "blot", v = 1 },
             },
         },
-        rev = 19,
+        rev = 20,
     },
     {
         id = "excavation",
@@ -1031,6 +1069,8 @@ ns.FoundNotes = {
             { f = "nothing", ink = 3, p = { 0.6399, 0.8966 }, r = 0, s = "Tam has stopped naming things", sc = 0.89, t = "text" },
             { f = "nothing", ink = 3, p = { 0.1155, 0.9112 }, r = 0, s = "she only wanted to see home", t = "text" },
             { f = "nothing", ink = 3, p = { 0.0503, 0.8339 }, r = 0, s = "Folded everything twice.", t = "text" },
+            { f = "nothing", ink = 3, p = { 0.0503, 0.8605 }, r = 0, s = "Laid it all down with her. All but the compass.", t = "text" },
+            { f = "nothing", ink = 3, p = { 0.0503, 0.8871 }, r = 0, s = "He carries her half too.", t = "text" },
             { f = "nothing", ink = 3, p = { 0.0533, 0.8068 }, r = 0, s = "He packed her things himself", t = "text" },
         },
         before = {
@@ -1118,7 +1158,7 @@ ns.FoundNotes = {
                 { f = "apple", ink = 3, p = { 0.044, 0.1284 }, r = 0, s = "the walls are full of fire", sc = 1.12, t = "text" },
             },
         },
-        rev = 19,
+        rev = 21,
     },
     {
         id = "dalaran",
@@ -1188,6 +1228,7 @@ ns.FoundNotes = {
         },
         asides = {
             { "The old man walked every pull with us. Never raised his voice once", after = 0 },
+            { "\226\128\156Ready when you are.\226\128\157 Tam, at the first pull.", after = 1 },
         },
         signAt = { 0.4015, 0.8414 },
         mapCaption = "bramble walls on every side",
@@ -1400,7 +1441,7 @@ ns.FoundNotes = {
                 { f = "apple", ink = 3, p = { 0.1047, 0.2079 }, r = 0, s = "the blind one hears what it cannot see", struck = true, t = "text" },
             },
         },
-        rev = 31,
+        rev = 32,
     },
     {
         id = "monastery",
@@ -1443,7 +1484,7 @@ ns.FoundNotes = {
             diary = {
                 "The Scarlet Crusade still prays as if the war is going their way. They stopped us on the road and asked if we were pure. Ewen said yes before anyone else could answer.",
                 "They're not wrong about the dead. Tirisfal is thick with them. They're wrong about everything else.",
-                "Three times tonight I heard my name when nobody had said it. Tam heard nothing. The old man looked at me and said nothing.",
+                "Three times tonight I heard my name when nobody had said it. Tam heard nothing. The old man moved his bedroll next to mine.",
             },
             margin = "Ewen knew the hymn they were singing at the gate. She didn't sing it.",
             asked = {
@@ -1486,7 +1527,7 @@ ns.FoundNotes = {
                 { f = "apple", ink = 3, p = { 0.3727, 0.1083 }, r = 0, s = "the mother wakes the son", struck = true, t = "text" },
             },
         },
-        rev = 19,
+        rev = 20,
     },
     {
         id = "downs",
@@ -1523,7 +1564,7 @@ ns.FoundNotes = {
             diary = {
                 "The Scourge has reached even here. Belnistrasz, at the gate, wants the thing in the Downs put out as badly as we do.",
                 "I went to write down the old man's way in this morning. The side passage was already there, in my hand.",
-                "Tam asked if we could go home after this one. Not to stay. Just to see it.",
+                "Tam asked if we could go home after this one. Not to stay. Just to see it. I said I'd like that. But we didn't.",
             },
             margin = "The ink smells of the sea. We're a long way from the sea.",
             asked = {
@@ -1553,7 +1594,7 @@ ns.FoundNotes = {
                 { ink = 3, p = { 0.4963, 0.653 }, r = 9750653, t = "blot", v = 1 },
             },
         },
-        rev = 19,
+        rev = 21,
     },
     {
         id = "uldaman",
@@ -1747,13 +1788,14 @@ ns.FoundNotes = {
         },
         asides = {
             { "Old man's rule: if you can't see the way out, you don't go in. I went in." },
-            { "left", hand = "whisper" },
             { "they would be lost without you", after = 0, hand = "whisper" },
         },
-        margin = "It knew the way before I did. The old man watched me a long while.",
+        margin = "The old man watched me a long while.",
         marginAt = { 0.0422, 0.81 },
         signAt = { 0.38, 0.86 },
         mapCaption = "the very earth fights back",
+        marks = {
+        },
         before = {
             where = "the Valley of Spears, Desolace \194\183 centaur country",
             scene = {
@@ -1766,7 +1808,7 @@ ns.FoundNotes = {
             diary = {
                 "Desolace is well named. The centaur drums go all night. The caves were holy once: Cenarius' son is buried in there, and it was his own children, the centaur, who killed him.",
                 "I know these tunnels. The left turns, the drops. I've never been here. The old man asked me how. I told him I'd read it somewhere, then couldn't think where.",
-                "Tam asked to rest a season. I said after Maraudon. He said that's what I said last time.",
+                "Tam didn't ask again. I saw the question in his face all the way across Desolace.",
             },
             whisper = "you already know the way",
             asked = {
@@ -1795,7 +1837,7 @@ ns.FoundNotes = {
                 { ink = 3, p = { 0.3177, 0.566, 0.3207, 0.5709, 0.3236, 0.5759, 0.3266, 0.5808, 0.3296, 0.5858, 0.3296, 0.5858, 0.3296, 0.5858, 0.3326, 0.5907, 0.3356, 0.5956, 0.3386, 0.6006, 0.3386, 0.6006, 0.3386, 0.6006, 0.3416, 0.6055, 0.3446, 0.6104, 0.3475, 0.6154 }, r = 451864992, sc = 0.8, t = "tracks" },
                 { ink = 3, p = { 0.3625, 0.64, 0.3655, 0.645, 0.3655, 0.645, 0.3655, 0.645, 0.3655, 0.645, 0.3655, 0.645, 0.3655, 0.645, 0.3655, 0.645, 0.3655, 0.645, 0.3685, 0.6499, 0.3715, 0.6548, 0.3744, 0.6598 }, r = 451865032, sc = 0.8, t = "tracks" },
                 { ink = 3, p = { 0.4103, 0.719, 0.4103, 0.719, 0.4103, 0.719, 0.4103, 0.719, 0.4131, 0.7236 }, r = 451865007, sc = 0.8, t = "tracks" },
-                { f = "apple", ink = 3, p = { 0.4051, 0.7796 }, r = 0, s = "left left left", t = "text" },
+                { f = "apple", ink = 3, p = { 0.424, 0.8216 }, r = 0, s = "go left", t = "text" },
                 { ink = 3, p = { 0.4201, 0.1413 }, r = 85431237, sc = 0.8, t = "blot", v = 1 },
                 { ink = 1, p = { 0.3992, 0.3545 }, r = 1837809596, t = "chest", v = 3 },
                 { ink = 1, p = { 0.646, 0.5833 }, r = 744529416, t = "chest", v = 2 },
@@ -1808,13 +1850,11 @@ ns.FoundNotes = {
                 { ink = 3, p = { 0.5182, 0.6612, 0.5133, 0.6671, 0.5084, 0.6729, 0.499, 0.6705, 0.4924, 0.6705, 0.487, 0.6673, 0.4844, 0.6601, 0.4819, 0.6529, 0.4737, 0.6506, 0.4683, 0.6557, 0.4654, 0.665, 0.4567, 0.6727, 0.4476, 0.6738, 0.4403, 0.6774, 0.435, 0.6757, 0.4275, 0.6684, 0.4202, 0.6718, 0.4174, 0.6782, 0.4146, 0.6846, 0.4118, 0.691, 0.41, 0.6968, 0.4082, 0.7026, 0.4064, 0.7084, 0.4046, 0.7142, 0.4042, 0.7208, 0.4037, 0.7275, 0.4055, 0.7343, 0.4074, 0.7412, 0.4072, 0.7479, 0.407, 0.7546, 0.4124, 0.76, 0.4179, 0.7654, 0.4254, 0.7702, 0.4329, 0.7751, 0.4398, 0.7838, 0.4402, 0.79, 0.4405, 0.7961, 0.4409, 0.8023, 0.443, 0.8082, 0.4452, 0.8141, 0.4458, 0.8208, 0.4464, 0.8275, 0.4485, 0.8337, 0.4506, 0.8399, 0.4527, 0.8461, 0.4518, 0.8528, 0.4509, 0.8596, 0.45, 0.8664, 0.4491, 0.8731, 0.4511, 0.8804, 0.453, 0.8876, 0.455, 0.8949, 0.459, 0.9017, 0.463, 0.9084, 0.4699, 0.911, 0.4765, 0.9156, 0.4814, 0.9258, 0.4859, 0.9317, 0.4905, 0.9315, 0.4933, 0.9287, 0.4957, 0.923, 0.4982, 0.9173, 0.5006, 0.9117, 0.5031, 0.906, 0.5056, 0.9003, 0.5076, 0.8935, 0.5097, 0.8867, 0.5118, 0.8799, 0.5139, 0.8731, 0.5179, 0.8652, 0.5206, 0.8638, 0.5261, 0.864, 0.5295, 0.8698, 0.5373, 0.8706, 0.5424, 0.8729, 0.5472, 0.8664, 0.5521, 0.86, 0.5568, 0.8506, 0.5582, 0.8418, 0.5574, 0.8346, 0.5565, 0.8274, 0.5537, 0.819, 0.5483, 0.8163, 0.5429, 0.8136, 0.5345, 0.8119, 0.526, 0.8102, 0.5214, 0.8061, 0.5167, 0.8019, 0.5097, 0.7989, 0.5026, 0.7959, 0.4945, 0.7954, 0.4864, 0.7949, 0.4803, 0.7952, 0.4742, 0.7955, 0.4681, 0.7958, 0.462, 0.7961, 0.4545, 0.7976, 0.4471, 0.7991, 0.4396, 0.8005, 0.4326, 0.8035, 0.4256, 0.8065, 0.4202, 0.8121, 0.4149, 0.8177, 0.4095, 0.8233 }, r = 201958343, t = "route" },
                 { ink = 3, p = { 0.4074, 0.638, 0.4122, 0.6458, 0.4189, 0.6463, 0.4213, 0.6526, 0.4237, 0.659, 0.4283, 0.6634, 0.4329, 0.6679, 0.4375, 0.6724, 0.4409, 0.6733, 0.4467, 0.671, 0.4524, 0.6687, 0.4576, 0.673, 0.4622, 0.6802, 0.4621, 0.6867, 0.462, 0.6933, 0.4619, 0.6998, 0.4579, 0.7051, 0.454, 0.7105, 0.4535, 0.718, 0.4529, 0.7255, 0.4505, 0.7319, 0.448, 0.7383, 0.4455, 0.7448, 0.443, 0.7512, 0.4362, 0.7518, 0.4295, 0.7524, 0.4227, 0.753, 0.4154, 0.7612, 0.4094, 0.7644, 0.4035, 0.7677, 0.3987, 0.7723, 0.3939, 0.7769, 0.3892, 0.7814, 0.3844, 0.786, 0.3811, 0.7876, 0.374, 0.7884, 0.3669, 0.7892, 0.3598, 0.79, 0.3524, 0.7894, 0.3451, 0.7889, 0.3378, 0.7883, 0.3317, 0.7888, 0.3256, 0.7893, 0.3183, 0.7885, 0.3111, 0.7876, 0.3038, 0.7868, 0.2984, 0.7836, 0.2931, 0.7803, 0.2868, 0.7733, 0.2789, 0.769, 0.2689, 0.7713, 0.2663, 0.7799 }, r = 492544614, t = "route" },
                 { ink = 3, p = { 0.4154, 0.5943 }, r = 1463241264, sc = 1.1, t = "jump", v = 1 },
-                { f = "nothing", ink = 3, p = { 0.2772, 0.1884 }, r = 0, s = "knew the way", t = "text" },
-                { f = "apple", ink = 3, p = { 0.1872, 0.0884 }, r = 0, s = "deeper", t = "text" },
                 { ink = 3, p = { 0.463, 0.5422 }, r = 134146243, t = "blot", v = 1 },
                 { ink = 3, p = { 0.2114, 0.8449 }, r = 1912577953, sc = 1.2, t = "blot", v = 1 },
             },
         },
-        rev = 15,
+        rev = 17,
     },
     {
         id = "temple",
@@ -1825,14 +1865,14 @@ ns.FoundNotes = {
         notes = {
             { "Six statues in the pit, in the right order", floor = 1, x = 0.5012, y = 0.3516 },
             { "Six trolls on the balconies guard Jammal'an", floor = 1, mark = "off", x = 0.3774, y = 0.6741 },
+            { "His hex sleeps in you a while. When it wakes, you\226\128\153re his" },
             { "Ogom suffers with him", floor = 1, x = 0.7721, y = 0.38 },
             { "Their wings sweep, watch footing", floor = 1, x = 0.5708, y = 0.4827 },
-            { "His hex sleeps in you a while. When it wakes, you\226\128\153re his" },
             { "Eranikus sends the bravest to sleep", floor = 1, x = 0.6679, y = 0.8787 },
             { "The blood of four serpents. Slay the god. Bring the egg.", floor = 1, turn = true, x = 0.2407, y = 0.4581 },
         },
         asides = {
-            { "you were made for this", after = 2, hand = "whisper" },
+            { "you were made for this", after = 3, hand = "whisper" },
             { "Eranikus dreams below. Something dreams with him.", after = 6, down = 11 },
         },
         margin = "The deeper we dove, the louder it beckoned",
@@ -1840,9 +1880,10 @@ ns.FoundNotes = {
         signAt = { 0.4341, 0.8721 },
         mapCaption = "sunken, but not hidden enough",
         marks = {
-            { f = "nothing", ink = 1, p = { 0.62, 0.7904 }, r = 0, s = "The voices linger", t = "text" },
-            { f = "nothing", ink = 1, p = { 0.5718, 0.7542 }, r = 0, s = "Madness overtook me", t = "text" },
-            { f = "nothing", ink = 1, p = { 0.6429, 0.8446 }, r = 0, s = "I failed you", sc = 1.4, t = "text" },
+            { f = "nothing", ink = 1, p = { 0.5919, 0.8389 }, r = 0, s = "The voices linger", t = "text" },
+            { f = "nothing", ink = 1, p = { 0.5585, 0.8084 }, r = 0, s = "Madness overtook me", t = "text" },
+            { f = "nothing", ink = 1, p = { 0.5548, 0.7451 }, r = 0, s = "Woke up to Ewen's light.", t = "text" },
+            { f = "nothing", ink = 1, p = { 0.6281, 0.8864 }, r = 0, s = "I failed you", sc = 1.4, t = "text" },
             { ink = 2, p = { 0.1548, 0.309, 0.1511, 0.309, 0.1474, 0.309, 0.1437, 0.3113, 0.1437, 0.317, 0.1467, 0.3215, 0.1496, 0.3249, 0.1474, 0.3294, 0.1437, 0.3294, 0.14, 0.3283, 0.1363, 0.326, 0.1333, 0.3226 }, r = 732576771, t = "pen" },
             { ink = 2, p = { 0.1615, 0.3203, 0.1652, 0.3203 }, r = 136824548, t = "pen" },
             { f = "nothing", ink = 2, p = { 0.2082, 0.3204 }, r = 0, s = "SW - SE - NW - NE", t = "text" },
@@ -1853,11 +1894,7 @@ ns.FoundNotes = {
             { ink = 2, p = { 0.2407, 0.3203, 0.2444, 0.3203, 0.2481, 0.3192, 0.2444, 0.317, 0.2407, 0.317 }, r = 1640388344, t = "pen" },
             { ink = 2, p = { 0.2896, 0.3203, 0.2933, 0.317, 0.297, 0.3147 }, r = 1833044244, t = "pen" },
             { ink = 2, p = { 0.3393, 0.3181, 0.343, 0.3192, 0.3474, 0.3203, 0.3511, 0.3215 }, r = 918494211, t = "pen" },
-            { f = "nothing", ink = 1, p = { 0.6452, 0.8966 }, r = 0, s = "It should have been me", t = "text" },
-            { ink = 1, p = { 0.6415, 0.8887, 0.6452, 0.8887, 0.6489, 0.8887, 0.6541, 0.8887, 0.6578, 0.8887, 0.6622, 0.8887, 0.6674, 0.8887, 0.6741, 0.8887, 0.6778, 0.8887, 0.6822, 0.8887, 0.6896, 0.8887, 0.6948, 0.8887, 0.6993, 0.8898, 0.7044, 0.8898, 0.7096, 0.8898, 0.7133, 0.8898, 0.7178, 0.891, 0.723, 0.8921, 0.7281, 0.8921, 0.7333, 0.8932, 0.7385, 0.8932, 0.7422, 0.8944, 0.7467, 0.8944, 0.7511, 0.8944, 0.7563, 0.8944, 0.763, 0.8944, 0.7667, 0.8944, 0.7704, 0.8944, 0.7741, 0.8944, 0.7793, 0.8944 }, r = 326926346, t = "pen" },
-            { ink = 1, p = { 0.8067, 0.9, 0.803, 0.8989, 0.7993, 0.8989, 0.7926, 0.8989, 0.7881, 0.8989, 0.7837, 0.8989, 0.78, 0.8989, 0.7756, 0.8989, 0.7696, 0.8989, 0.7652, 0.8977, 0.7696, 0.8966, 0.7763, 0.8966, 0.78, 0.8966, 0.7859, 0.8966, 0.7904, 0.8966, 0.7956, 0.8966, 0.8007, 0.8966, 0.8052, 0.8966, 0.8096, 0.8966, 0.8133, 0.8966, 0.817, 0.8966, 0.8119, 0.8966, 0.8044, 0.8966, 0.7993, 0.8966, 0.7919, 0.8955, 0.7859, 0.8955, 0.78, 0.8955, 0.7719, 0.8955, 0.7644, 0.8955, 0.7585, 0.8955, 0.7541, 0.8955, 0.7504, 0.8955, 0.757, 0.8955, 0.7622, 0.8955, 0.7681, 0.8955, 0.7756, 0.8944, 0.783, 0.8944, 0.7881, 0.8932, 0.7963, 0.8932, 0.803, 0.8921, 0.8104, 0.8921, 0.8178, 0.8921, 0.8237, 0.8921, 0.8281, 0.8921, 0.8319, 0.8921, 0.8363, 0.8921, 0.8326, 0.8921, 0.8289, 0.8921, 0.8244, 0.8921, 0.8185, 0.8921, 0.8141, 0.8921, 0.8059, 0.8921, 0.7993, 0.8921, 0.7919, 0.8921, 0.7837, 0.8921, 0.7778, 0.8921, 0.7726, 0.8921, 0.7681, 0.8921, 0.7644, 0.8921, 0.7607, 0.8921, 0.7659, 0.8921, 0.7741, 0.8921, 0.7778, 0.8921, 0.7844, 0.8921, 0.7904, 0.8921, 0.7978, 0.8921, 0.8037, 0.8921, 0.8104, 0.8921, 0.8156, 0.8921, 0.8215, 0.8921, 0.8259, 0.8921, 0.8304, 0.8932, 0.8356, 0.8932, 0.8296, 0.8944, 0.8259, 0.8944, 0.8215, 0.8944, 0.8148, 0.8944, 0.8081, 0.8955, 0.8, 0.8955, 0.7881, 0.8955, 0.7822, 0.8955, 0.7711, 0.8955, 0.7622, 0.8955, 0.7556, 0.8955, 0.7474, 0.8955, 0.7437, 0.8955, 0.74, 0.8955, 0.7452, 0.8955, 0.7489, 0.8955, 0.7533, 0.8955, 0.7578, 0.8955, 0.7644, 0.8955, 0.7711, 0.8955, 0.777, 0.8955, 0.7837, 0.8955, 0.7904, 0.8955, 0.7956, 0.8955, 0.803, 0.8955, 0.8081, 0.8955, 0.8133, 0.8955, 0.8178, 0.8955, 0.8215, 0.8955, 0.8252, 0.8955, 0.8207, 0.8955, 0.817, 0.8955, 0.8133, 0.8955, 0.8089, 0.8955, 0.8044, 0.8955, 0.7978, 0.8955, 0.7911, 0.8966, 0.7844, 0.8966, 0.7763, 0.8966, 0.7696, 0.8966, 0.763, 0.8966, 0.757, 0.8966, 0.7526, 0.8966, 0.7467, 0.8966, 0.7511, 0.8966 }, r = 1554041377, t = "pen" },
-            { ink = 1, p = { 0.6385, 0.8955, 0.6422, 0.8955, 0.6459, 0.8955, 0.6504, 0.8955, 0.6541, 0.8955, 0.6578, 0.8955, 0.6622, 0.8955, 0.6667, 0.8955, 0.6719, 0.8955, 0.6778, 0.8955, 0.6859, 0.8955, 0.6933, 0.8955, 0.7007, 0.8955, 0.7096, 0.8966, 0.7178, 0.8966, 0.7237, 0.8966, 0.7304, 0.8966, 0.737, 0.8977, 0.7422, 0.8977, 0.7481, 0.8977, 0.7533, 0.8977, 0.757, 0.8989, 0.7615, 0.8989, 0.7659, 0.8989, 0.7711, 0.9, 0.7756, 0.9, 0.7807, 0.9011, 0.7844, 0.9011, 0.7889, 0.9011, 0.7933, 0.9011, 0.8007, 0.9011, 0.8059, 0.9011, 0.8096, 0.9011 }, r = 123165161, t = "pen" },
-            { ink = 1, p = { 0.7563, 0.8966, 0.76, 0.8955, 0.7637, 0.8955, 0.7704, 0.8955, 0.7741, 0.8955, 0.7778, 0.8955, 0.7822, 0.8955, 0.7881, 0.8955, 0.7941, 0.8955, 0.7978, 0.8955, 0.8037, 0.8955, 0.8081, 0.8955, 0.8126, 0.8966, 0.8163, 0.8966, 0.82, 0.8966, 0.8259, 0.8989, 0.8311, 0.9, 0.8348, 0.9, 0.8304, 0.9, 0.8222, 0.9, 0.8178, 0.9, 0.8126, 0.9, 0.8074, 0.9, 0.8022, 0.9, 0.7978, 0.9, 0.7926, 0.9, 0.797, 0.9, 0.8037, 0.9, 0.8074, 0.9, 0.8119, 0.9, 0.817, 0.9, 0.8237, 0.9, 0.8289, 0.9, 0.8363, 0.9, 0.8407, 0.9, 0.8467, 0.9, 0.8504, 0.9, 0.8548, 0.9011, 0.8593, 0.9011, 0.8548, 0.9023, 0.8467, 0.9034, 0.8415, 0.9034, 0.8333, 0.9034, 0.8259, 0.9034, 0.817, 0.9034, 0.8059, 0.9034, 0.7956, 0.9034, 0.7822, 0.9034, 0.7696, 0.9034, 0.7593, 0.9034, 0.7511, 0.9034, 0.743, 0.9034, 0.7363, 0.9034, 0.7319, 0.9034, 0.7274, 0.9023, 0.7319, 0.9011, 0.7385, 0.9 }, r = 1677727536, t = "pen" },
+            { f = "nothing", ink = 1, p = { 0.5482, 0.7779 }, r = 0, s = "Then Tam, felled on the stairs. Then, my hands.", t = "text" },
         },
         before = {
             title = "Before the Temple",
@@ -1878,7 +1915,7 @@ ns.FoundNotes = {
             },
             diary = {
                 "The swamp is warm and stinks of rot. In the middle of the lake the old temple sank, and the trolls inside still pray to the blood god as if he'll come back. They mean to bring him.",
-                "Tam didn't want to come. He said it plainly, which he never does. I said one more. The old man said nothing for an hour, then said we'd go. Later, by the fire, Tam told me he was ready.",
+                "Tam didn't want to come. He said it plainly. I said one more. The old man looked from Tam to me a long while, weighing it, then said we'd go. Later, by the fire, Tam told me he was ready.",
                 "I slept well. I don't remember dreaming. The page for tomorrow is already half written.",
             },
             whisper = "he is waiting for you",
@@ -1912,12 +1949,6 @@ ns.FoundNotes = {
                 { gen = 2, ink = 3, p = { 0.3982, 0.458 }, r = 1649487422, sc = 0.8, t = "q", v = 1 },
                 { gen = 2, ink = 3, p = { 0.5007, 0.3576 }, r = 1083151240, sc = 0.8, t = "q", v = 1 },
                 { gen = 2, ink = 3, p = { 0.7117, 0.8184 }, r = 931701522, sc = 0.8, t = "q", v = 1 },
-                { ink = 3, p = { 0.7823, 0.5321 }, r = 1454109988, t = "x", v = 3 },
-                { ink = 3, p = { 0.7839, 0.5346, 0.7881, 0.5407, 0.7914, 0.5444, 0.7996, 0.5519, 0.8045, 0.558, 0.8095, 0.5642, 0.8144, 0.5691, 0.8193, 0.5765, 0.8251, 0.5827, 0.83, 0.5889, 0.835, 0.5938 }, r = 503694352, t = "pen" },
-                { f = "nothing", ink = 3, p = { 0.835, 0.5877 }, r = 0, s = "Panic could kill", t = "text" },
-                { f = "nothing", ink = 3, p = { 0.7912, 0.6532 }, r = 0, s = "Dont let her touch you", t = "text" },
-                { ink = 3, p = { 0.7885, 0.6661, 0.7927, 0.6661, 0.7993, 0.6661, 0.8034, 0.6661, 0.8092, 0.6661, 0.8149, 0.6661, 0.8191, 0.6661, 0.824, 0.6674, 0.8281, 0.6674, 0.8347, 0.6686, 0.8388, 0.6686, 0.8438, 0.6686, 0.8479, 0.6686, 0.852, 0.6686, 0.857, 0.6686, 0.8636, 0.6686, 0.8677, 0.6699, 0.8726, 0.6699, 0.8776, 0.6699, 0.8834, 0.6699, 0.8875, 0.6711, 0.8924, 0.6711, 0.8966, 0.6711, 0.9015, 0.6711, 0.9056, 0.6711, 0.9122, 0.6723, 0.918, 0.6736, 0.9221, 0.6736, 0.9262, 0.6736, 0.9312, 0.6736, 0.9361, 0.6748, 0.9403, 0.6748, 0.9452, 0.6748, 0.9493, 0.6748, 0.9535, 0.6748 }, r = 295297122, t = "pen" },
-                { ink = 3, p = { 0.8339, 0.5994, 0.8397, 0.5981, 0.8463, 0.5969, 0.8504, 0.5969, 0.8545, 0.5969, 0.8595, 0.5969, 0.8644, 0.5969, 0.871, 0.5969, 0.8752, 0.5969, 0.8793, 0.5969 }, r = 812232672, t = "pen" },
                 { ink = 3, p = { 0.5092, 0.3816, 0.5117, 0.3871, 0.5142, 0.3926 }, r = 529023189, sc = 0.8, t = "tracks" },
                 { ink = 3, p = { 0.5544, 0.4806, 0.5569, 0.4861, 0.5594, 0.4916 }, r = 529023219, sc = 0.8, t = "tracks" },
                 { ink = 3, p = { 0.5745, 0.5246, 0.5765, 0.529, 0.5806, 0.5266, 0.5848, 0.5242, 0.5848, 0.5242 }, r = 529023202, sc = 0.8, t = "tracks" },
@@ -1928,9 +1959,13 @@ ns.FoundNotes = {
                 { ink = 3, p = { 0.8221, 0.46 }, r = 1462749352, t = "blot", v = 1 },
                 { f = "apple", ink = 3, p = { 0.6985, 0.32 }, r = 0, s = "on stairs", t = "text" },
                 { f = "apple", ink = 3, p = { 0.7985, 0.49 }, r = 0, s = "stay close", t = "text" },
+                { f = "nothing", ink = 2, p = { 0.7205, 0.7148 }, r = 0, s = "Banshee's touch withers", sc = 1.25, t = "text" },
+                { ink = 2, p = { 0.8284, 0.6753, 0.8251, 0.6741, 0.8218, 0.6716, 0.8185, 0.6691, 0.816, 0.6654, 0.8136, 0.663, 0.8111, 0.6593, 0.8078, 0.658, 0.8037, 0.6556, 0.8004, 0.6543, 0.7971, 0.6519, 0.7938, 0.6519, 0.7905, 0.6506, 0.7872, 0.6506, 0.784, 0.6481 }, r = 1903047063, t = "pen" },
+                { f = "nothing", ink = 2, p = { 0.8069, 0.6074 }, r = 0, s = "Panic could kill", sc = 1.25, t = "text" },
+                { ink = 2, p = { 0.8095, 0.5914, 0.807, 0.5889, 0.8037, 0.5852, 0.8004, 0.5827, 0.7979, 0.579, 0.7947, 0.5778, 0.7922, 0.5753, 0.7889, 0.5728, 0.7864, 0.5704, 0.784, 0.5679, 0.7815, 0.5654, 0.7798, 0.5617 }, r = 248007588, t = "pen" },
             },
         },
-        rev = 17,
+        rev = 23,
     },
     {
         id = "depths",
@@ -1973,7 +2008,7 @@ ns.FoundNotes = {
                 { "candle", 100, 160, 0.9 },
             },
             diary = {
-                "Brakk took the dog and went home. Ewen stayed. I don't know why she stayed.",
+                "Brakk took Tam and the dog and went home. Tam's beasts with him. Ewen stayed. I don't know why she stayed.",
                 "Two hired swords from Thorium Point, paid in coin they'll spend tonight. I didn't learn their names. I can't.",
                 "I wrote this page in the old brown ink. It's harder to write in. The black is in my pack and I can hear it, if that makes sense. It doesn't.",
             },
@@ -2036,7 +2071,6 @@ ns.FoundNotes = {
                 { ink = 3, p = { 0.5281, 0.6303, 0.5323, 0.6247, 0.5326, 0.6184, 0.5329, 0.612, 0.5331, 0.6056, 0.5334, 0.5993, 0.5336, 0.5929, 0.5339, 0.5866, 0.5341, 0.5802, 0.5344, 0.5739, 0.5346, 0.5675, 0.5349, 0.5612, 0.5317, 0.5558, 0.5286, 0.5504, 0.5254, 0.5451, 0.5223, 0.5397, 0.5191, 0.5344, 0.5183, 0.5276, 0.5216, 0.5202, 0.5249, 0.5128, 0.5313, 0.5079, 0.5308, 0.499, 0.5356, 0.4937, 0.5403, 0.4884, 0.5366, 0.4835, 0.5329, 0.4787, 0.5292, 0.4738, 0.5254, 0.4689, 0.5217, 0.4641, 0.518, 0.4592, 0.5143, 0.4543, 0.5106, 0.4495, 0.5076, 0.4436, 0.5046, 0.4378, 0.5016, 0.4319, 0.4986, 0.4261, 0.4956, 0.4202, 0.4926, 0.4143, 0.4896, 0.4085, 0.4859, 0.4036, 0.4821, 0.3987, 0.4783, 0.3938, 0.4759, 0.3867, 0.4734, 0.3796, 0.4751, 0.3736, 0.4768, 0.3677, 0.4785, 0.3618, 0.4801, 0.3558, 0.4818, 0.3499, 0.4835, 0.3439, 0.4852, 0.338, 0.4869, 0.332, 0.4885, 0.3261, 0.4902, 0.3201, 0.4919, 0.3142, 0.4936, 0.3082, 0.4953, 0.3023, 0.4988, 0.2971, 0.5022, 0.292, 0.5057, 0.2868, 0.5092, 0.2816, 0.5127, 0.2764, 0.5162, 0.2713, 0.5197, 0.2661, 0.5232, 0.2609, 0.5266, 0.2558, 0.5301, 0.2506, 0.5344, 0.2462, 0.5426, 0.2459, 0.5508, 0.2456, 0.5564, 0.2432, 0.5619, 0.2407, 0.5675, 0.2382, 0.573, 0.2358, 0.5786, 0.2333, 0.5823, 0.2276, 0.586, 0.2218, 0.5897, 0.2161, 0.5935, 0.2103, 0.5972, 0.2046, 0.6023, 0.2, 0.6073, 0.1954, 0.6124, 0.1907, 0.619, 0.1889, 0.6255, 0.187, 0.632, 0.1851, 0.6386, 0.1832, 0.6451, 0.1813, 0.6508, 0.1783, 0.6564, 0.1753, 0.662, 0.1723, 0.6677, 0.1693, 0.6733, 0.1663, 0.679, 0.1633, 0.6846, 0.1604, 0.6903, 0.1574, 0.6972, 0.1559, 0.7042, 0.1545, 0.7111, 0.153, 0.7181, 0.1516, 0.7234, 0.1476, 0.7286, 0.1436, 0.7339, 0.1397, 0.7392, 0.1357, 0.7463, 0.1341, 0.7534, 0.1325, 0.7604, 0.1309, 0.7675, 0.1293, 0.774, 0.1267, 0.7805, 0.1242, 0.787, 0.1216, 0.7935, 0.1191, 0.8, 0.1165, 0.8067, 0.1167, 0.8134, 0.1169, 0.8201, 0.117, 0.8267, 0.1172, 0.8334, 0.1174, 0.8401, 0.1175, 0.8467, 0.1177, 0.8534, 0.1179, 0.8595, 0.1172, 0.8655, 0.1166, 0.8716, 0.116, 0.8776, 0.1153, 0.8837, 0.1147, 0.8897, 0.1141, 0.8958, 0.1134, 0.9018, 0.1128, 0.9079, 0.1122, 0.9139, 0.1115, 0.9193, 0.1125, 0.92, 0.1196, 0.9207, 0.1266, 0.9215, 0.1336 }, r = 702119270, t = "route" },
                 { f = "nothing", ink = 2, p = { 0.6388, 0.6422 }, r = 0, s = "don't touch the kegs", sc = 1.25, t = "text" },
                 { f = "nothing", ink = 3, p = { 0.7349, 0.1831 }, r = 0, s = "bewitched, they say", t = "text" },
-                { f = "apple", ink = 3, p = { 0.6456, 0.4593 }, r = 0, s = "you know the way", sc = 1.4, t = "text" },
                 { ink = 1, p = { 0.6575, 0.4572, 0.7375, 0.4532, 0.8175, 0.4582 }, r = 1909824356, t = "pen" },
                 { ink = 3, p = { 0.6317, 0.1802, 0.6309, 0.1741, 0.6292, 0.1679, 0.6292, 0.1617, 0.6292, 0.1556, 0.6292, 0.1494, 0.6292, 0.1432, 0.6284, 0.137, 0.6284, 0.1309, 0.6284, 0.1247, 0.6284, 0.1185, 0.6284, 0.1123, 0.6284, 0.1062, 0.6284, 0.1, 0.6276, 0.0938, 0.6276, 0.0877, 0.6276, 0.0815, 0.6284, 0.0753, 0.6317, 0.0704, 0.6358, 0.0679, 0.6399, 0.0679, 0.644, 0.0667, 0.6481, 0.0667, 0.6523, 0.0667, 0.6572, 0.0667, 0.6613, 0.0667, 0.6654, 0.0667, 0.6695, 0.0679, 0.6745, 0.0679, 0.6786, 0.0691, 0.6827, 0.0704, 0.6868, 0.0704, 0.6909, 0.0704, 0.6951, 0.0716, 0.6992, 0.0716, 0.7025, 0.0753, 0.7066, 0.0778, 0.7082, 0.084, 0.7091, 0.0901, 0.7099, 0.0963, 0.7099, 0.1025, 0.7099, 0.1086, 0.7099, 0.1148, 0.7099, 0.121, 0.7099, 0.1272, 0.7107, 0.1333, 0.7115, 0.1395, 0.7115, 0.1457, 0.7123, 0.1519 }, r = 996317973, t = "route" },
                 { ink = 3, p = { 0.7123, 0.1469, 0.7165, 0.1469, 0.7206, 0.1444, 0.7247, 0.142, 0.7296, 0.1395, 0.7337, 0.1383, 0.7379, 0.1358, 0.742, 0.1346, 0.7453, 0.1309 }, r = 1425104327, t = "route" },
@@ -2046,7 +2080,7 @@ ns.FoundNotes = {
             },
         },
         marginW = 370,
-        rev = 19,
+        rev = 22,
         sepia = true,
     },
     {
@@ -2072,7 +2106,6 @@ ns.FoundNotes = {
             { "the heart of the mountain holds what she looks for. go down and take it.", after = 7, hand = "whisper" },
             { "Old man's rule: the deeper, the safer.", after = 11, down = 5 },
             { "you wrote this too", after = 11, down = 20, hand = "whisper", right = 2 },
-            { "the mountain has a heart. go and see it", after = 11, down = 2, hand = "whisper" },
         },
         marginAt = { 0.0785, 0.7981 },
         signAt = { 0.4341, 0.8883 },
@@ -2095,7 +2128,6 @@ ns.FoundNotes = {
                 "I sent the hired ones round the long way today. I don't trust my hands near people. Ewen walks beside me anyway.",
                 "I dreamt the mountain had a heart, beating slow under all that stone. When I woke the book was open at a page I hadn't written, and it was in my hand.",
             },
-            whisper = "go down. the heart is beating.",
             asked = {
                 { "Vaelan", ", at the spire's door. The seal of ascension.", quest = 4742 },
                 { "General Drakkisath's command", ", off his own guards.", quest = 5089 },
@@ -2139,7 +2171,6 @@ ns.FoundNotes = {
                 { gen = 2, ink = 3, p = { 0.3281, 0.4042 }, r = 1233076679, sc = 0.8, t = "q", v = 1 },
                 { gen = 2, ink = 3, p = { 0.3473, 0.4013 }, r = 1048080721, sc = 0.8, t = "q", v = 1 },
                 { gen = 2, ink = 3, p = { 0.5673, 0.5421 }, r = 809209067, sc = 0.8, t = "q", v = 1 },
-                { f = "apple", ink = 3, p = { 0.6075, 0.6286 }, r = 0, s = "deeper", t = "text" },
                 { f = "apple", ink = 3, p = { 0.6075, 0.4986 }, r = 0, s = "two more when he bleeds", t = "text" },
             },
             [7] = {
@@ -2148,7 +2179,7 @@ ns.FoundNotes = {
                 { ink = 3, p = { 0.3595, 0.3105 }, r = 1747726435, sc = 1.2, t = "blot", v = 1 },
             },
         },
-        rev = 12,
+        rev = 14,
     },
     {
         id = "diremaul",
@@ -2188,7 +2219,7 @@ ns.FoundNotes = {
                 { "crown", 322, 40, 0.75, by = "ewen" },
             },
             diary = {
-                "I heard a dog bark outside the inn at Feathermoon and thought I'd dreamt it. Then the old man came through the door, put his pack down, laid Tam's knife on the table in front of me, sharpened, and asked what we were drinking.",
+                "I heard a dog bark outside the inn at Feathermoon and thought I'd dreamt it. Then the old man came through the door, put his pack down, laid Tam's knife on the table in front of me, sharpened, and ordered us a round.",
                 "He didn't say a word about the Temple, or Tam. Neither did I. We sat until the fire was out.",
                 "Ewen says the elves of Dire Maul kept the oldest library in Kalimdor, and if there's a cure, it's there.",
             },
@@ -2218,6 +2249,7 @@ ns.FoundNotes = {
                 { gen = 2, ink = 3, p = { 0.2921, 0.6574 }, r = 1279550521, sc = 0.8, t = "lock", v = 1 },
                 { gen = 2, ink = 3, p = { 0.2647, 0.5779 }, r = 1578606979, sc = 0.8, t = "q", v = 1 },
                 { gen = 2, ink = 3, p = { 0.2235, 0.604 }, r = 722759957, sc = 0.8, t = "q", v = 1 },
+                { f = "apple", ink = 3, p = { 0.37, 0.21 }, r = 0, s = "kill the king and the crown is hers", sc = 1.06, t = "text" },
                 { f = "nothing", ink = 3, p = { 0.3553, 0.3434 }, r = 0, s = "Ewen's crown", t = "text" },
                 { ink = 3, p = { 0.5077, 0.7998, 0.7164, 0.7785, 0.6311, 0.7075 }, r = 553082547, sc = 0.8, t = "tracks" },
             },
@@ -2262,7 +2294,7 @@ ns.FoundNotes = {
                 { f = "nothing", gen = 1, ink = 3, p = { 0.6159, 0.8113 }, r = 0, s = "A", sc = 1.2, t = "text" },
             },
         },
-        rev = 19,
+        rev = 21,
     },
     {
         id = "scholomance",
@@ -2335,8 +2367,6 @@ ns.FoundNotes = {
                 { f = "apple", ink = 3, p = { 0.2981, 0.3029 }, r = 0, s = "the true face casts the curse", struck = 1, t = "text" },
             },
             [3] = {
-                { gen = 2, ink = 3, p = { 0.903, 0.4054 }, r = 1567987831, sc = 0.8, t = "q", v = 1 },
-                { gen = 2, ink = 3, p = { 0.9208, 0.5208 }, r = 745965793, sc = 0.8, t = "q", v = 1 },
             },
             [4] = {
                 { gen = 2, ink = 3, p = { 0.4061, 0.8836 }, r = 1521395444, sc = 0.8, t = "q", v = 1 },

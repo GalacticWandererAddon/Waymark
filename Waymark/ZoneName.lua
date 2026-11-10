@@ -122,6 +122,8 @@ local function ComposeBrowsed(id)
         local pct = ns.ExplorationProgress(zoneID)
         if pct then extras[#extras + 1] = pct .. "%" end
     end
+    local fish = ns.FishingHeaderText and ns.FishingHeaderText(zoneID)
+    if fish then extras[#extras + 1] = fish end
     return info.name, table.concat(extras, "  ")
 end
 
@@ -153,6 +155,9 @@ local function Compose()
         local pct = ns.ExplorationProgress(zoneID)
         if pct then extras[#extras + 1] = pct .. "%" end
     end
+    -- (the zone's fishing level with a small ink fish, when you fish: FishingMap.lua)
+    local fish = ns.FishingHeaderText and ns.FishingHeaderText(zoneID)
+    if fish then extras[#extras + 1] = fish end
     return name, table.concat(extras, "  ")
 end
 
@@ -183,7 +188,7 @@ local function ApplyStyle()
     parchment:SetVertexColor(tint[1], tint[2], tint[3])
     parchment:SetShown((st.paper or st.parchment) and true or false)
     -- the edge: the style's own ("auto"), or one of the map border's styles
-    local own = c.border == nil or c.border == "auto"
+    local own = st.ownEdge or c.border == nil or c.border == "auto"   -- (ownEdge: the Lab's headers draw their own)
     local bd = st.backdrop
     if bd and not own then
         bd = bd.bgFile and { bgFile = bd.bgFile, tile = bd.tile, tileSize = bd.tileSize, insets = bd.insets } or nil

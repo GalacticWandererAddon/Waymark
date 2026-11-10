@@ -34,8 +34,11 @@ local DOT = MEDIA .. "InkDot"  -- (the dots of ? and !: a short line would be a 
 local INKS = { { 0.27, 0.16, 0.07 }, { 0.53, 0.16, 0.10 }, { 0.15, 0.19, 0.25 },  -- (sepia darkened 2026-10-30: read on the maps)
                { 0.31, 0.33, 0.19 }, { 0.24, 0.22, 0.20 } }  -- (4: Ewen's olive grey-green (2026-10-31: less blue on the warm paper), 5: Tam's charcoal from the fire)
 -- the whispers' words (hand "apple") are never in anyone's ink: a violet-black of their own, bleeding a little
-local WHISPER, WHISPER_BLEED = { 0.30, 0.10, 0.36 }, { 0.58, 0.30, 0.66, 0.45 }
+local WHISPER, WHISPER_BLEED = { 0.30, 0.10, 0.36 }, { 0.58, 0.30, 0.66, 0.28 }  -- (bleed 0.45 -> 0.28, 2026-11-10: it doubled the thin letters)
 ns.WHISPER_INK = WHISPER
+-- (6: their violet as a pen ink, for the wanderer's own hand gone over to it: the way back's last line and the
+-- stroke after it. Only on the quill's bar when writing as the wanderer)
+INKS[6] = WHISPER
 local NOTE_COLOR = { 0.93, 0.82, 0.6 }
 -- the hands for notes: key, name, file, size factor (the game's Morpheus, and
 -- handwriting fonts we ship, OFL but Homemade Apple's Apache 2.0; their
@@ -44,7 +47,7 @@ local NOTE_COLOR = { 0.93, 0.82, 0.6 }
 local HANDS = {
     { "morpheus", "Morpheus", "Fonts\\MORPHEUS.ttf", 1.15 },
     { "kalam", "Kalam", MEDIA .. "Fonts\\Kalam-Regular.ttf", 1.0 },
-    { "apple", "Homemade Apple", MEDIA .. "Fonts\\HomemadeApple-Regular.ttf", 0.8 },
+    { "apple", "Homemade Apple", MEDIA .. "Fonts\\HomemadeApple-Waymark.ttf", 0.92, 1 / 0.6 },  -- (0.8 -> 0.92, 2026-11-10: hard to read; [5]: the file's letters are 0.6 of its em, tools/whisper_font.py, so it's set that much bigger)
     { "nothing", "Nothing You Could Do", MEDIA .. "Fonts\\NothingYouCouldDo.ttf", 1.0 },
     { "shadows", "Shadows Into Light", MEDIA .. "Fonts\\ShadowsIntoLight.ttf", 1.2 },
     { "reenie", "Reenie Beanie", MEDIA .. "Fonts\\ReenieBeanie.ttf", 1.35 },
@@ -895,10 +898,10 @@ local function DrawList(h, list)
             -- book map, so never past it; past it even unturned, drawn at 120 and scaled up)
             local up = 1
             -- (ink.turnUp: the "twice", tried in game with /waymark turn <n>)
-            if fs.SetScale then up = math.min(m.rot and (Cfg().turnUp or 2) or 1, FONT_MAX / size) end
+            if fs.SetScale then up = math.min(m.rot and (Cfg().turnUp or 2) or 1, FONT_MAX / (size * (hand[5] or 1))) end
             if fs.SetScale then fs:SetScale(1 / up) end
-            if not fs:SetFont(hand[3], size * up, "") then fs:SetFont(HANDS[1][3], size * up, "") end
-            fs:SetHeight(m.f == "apple" and size * 2 * up or 0)  -- (the whispers' long tails aren't cut off)
+            if not fs:SetFont(hand[3], size * up * (hand[5] or 1), "") then fs:SetFont(HANDS[1][3], size * up, "") end
+            fs:SetHeight(m.f == "apple" and size * 3.4 * up or 0)  -- (the whispers' long tails aren't cut off: f, j; centred, so taller moves nothing)
             -- (a faint halo of the paper's colour lifts the words off dark map art; the whispers bleed instead)
             if m.f == "apple" then
                 c = WHISPER
@@ -922,7 +925,7 @@ local function DrawList(h, list)
             fs:SetParent(m.f == "apple" and h.top or h)
             fs:Show()
             -- (only where something is drawn under their words, and on the book's pages: maps show it)
-            local under = m.struck and m.f == "apple" and h.paper or false  -- (its own strokes count)
+            local under = m.f == "apple" and h.paper or false  -- (always on the book's maps, 2026-11-10: their thin hand got lost on dark map art)
             if m.f == "apple" and h.paper then
                 local bx0, bx1 = m.p[1] * W - size * 0.3, m.p[1] * W + tw0 + size * 0.3
                 local by0, by1 = -m.p[2] * H - size * 0.8, -m.p[2] * H + size * 0.8
@@ -948,7 +951,7 @@ local function DrawList(h, list)
                         h.halos[nh2] = hf
                     end
                     if hf.SetScale then hf:SetScale(1 / up) end
-                    if not hf:SetFont(hand[3], size * up, "") then hf:SetFont(HANDS[1][3], size * up, "") end
+                    if not hf:SetFont(hand[3], size * up * (hand[5] or 1), "") then hf:SetFont(HANDS[1][3], size * up, "") end
                     hf:SetTextColor(PAPER[1], PAPER[2], PAPER[3], 0.25)
                     hf:SetShadowOffset(0, 0)
                     hf:SetText(m.s or "")
@@ -1193,28 +1196,9 @@ local function Size(i, d)
     Refresh(true)
 end
 
-StaticPopupDialogs["BFI_INK_TEXT"] = {
-    text = "%s",
-    button1 = SAVE or "Save", button2 = CANCEL or "Cancel",
-    hasEditBox = true, maxLetters = 255, editBoxWidth = 280,
-    OnShow = function(self, data)
-        local eb = self.editBox or (self.GetEditBox and self:GetEditBox())
-        if eb then eb:SetText(data.value or "") eb:HighlightText() end
-    end,
-    OnAccept = function(self, data)
-        local eb = self.editBox or (self.GetEditBox and self:GetEditBox())
-        data.done(eb and strtrim(eb:GetText() or "") or "")
-    end,
-    EditBoxOnEnterPressed = function(eb)
-        local p = eb:GetParent()
-        StaticPopupDialogs["BFI_INK_TEXT"].OnAccept(p, p.data)
-        p:Hide()
-    end,
-    EditBoxOnEscapePressed = function(eb) eb:GetParent():Hide() end,
-    timeout = 0, whileDead = true, hideOnEscape = true,
-}
+-- (Waymark's own ask box, Ask.lua: the game's popup broke a controller's buttons)
 local function Ask(title, value, done)
-    StaticPopup_Show("BFI_INK_TEXT", title, nil, { value = value, done = done })
+    ns.Ask({ text = title, edit = value or "", ok = "Write it", onAccept = done })
 end
 
 local function Rewrite(i)

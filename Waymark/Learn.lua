@@ -693,3 +693,56 @@ function ns.QuestProbe()
     ns.db.diag.questprobe = r
     L("saved: /reload to write it to disk.")
 end
+
+
+-- Dungeon entrances, learned (2026-11-09): where you stood just before a dungeon's loading screen.
+-- Forever's own dungeons (the Hall of Thanes...) have no entrance point in the game's files, so "find
+-- on map" had nothing to light for a quest whose item is found inside. WaymarkDB.entrances[instanceID]
+-- = { mapID, x, y } on the most detailed map you were on. A ticker every 2 s outside instances, one
+-- spot kept, no other work.
+local lastOut
+local entranceWatch = CreateFrame("Frame")
+local since = 0
+entranceWatch:SetScript("OnUpdate", function(_, dt)
+    since = since + dt
+    if since < 2 then return end
+    since = 0
+    if IsInInstance() then return end
+    local mapID = C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+    local pos = mapID and C_Map.GetPlayerMapPosition(mapID, "player")
+    if pos and pos.x and (pos.x > 0 or pos.y > 0) then lastOut = { mapID, pos.x, pos.y, GetTime() } end
+end)
+entranceWatch:RegisterEvent("PLAYER_ENTERING_WORLD")
+entranceWatch:SetScript("OnEvent", function()
+    if not (WaymarkDB and lastOut) then return end
+    local inside, kind = IsInInstance()
+    if not inside or (kind ~= "party" and kind ~= "raid") then return end
+    if GetTime() - lastOut[4] > 180 then return end   -- (a loading screen, not a hearth from far off)
+    local instanceID = select(8, GetInstanceInfo())
+    if not instanceID then return end
+    WaymarkDB.entrances = WaymarkDB.entrances or {}
+    WaymarkDB.entrances[instanceID] = { lastOut[1], lastOut[2], lastOut[3] }
+    if ns.ForgetEntranceSpots then ns.ForgetEntranceSpots() end
+end)
+
+-- where a dungeon is entered: as you've walked in, else Forever's known ones: mapID, x, y (0-1), or nil
+function ns.LearnedEntrance(instanceID)
+    local e = WaymarkDB and WaymarkDB.entrances and WaymarkDB.entrances[instanceID]
+    if e then return e[1], e[2], e[3] end
+    local known = ns.ForeverQuestData and ns.ForeverQuestData.entrances
+    e = known and known[instanceID]
+    if e then return e[1], e[2], e[3] end
+end
+
+-- a quest started by an item found inside a dungeon (ForeverQuestData.itemIn): that dungeon's
+-- instance ID, or nil
+function ns.QuestItemDungeon(id)
+    local FQ = ns.ForeverQuestData
+    local itemIn = FQ and FQ.itemIn
+    if not itemIn then return end
+    local row = FQ.quests and FQ.quests[id]
+    local starts = row and row[16]
+    for _, item in ipairs(starts and starts[3] or {}) do
+        if itemIn[item] then return itemIn[item] end
+    end
+end

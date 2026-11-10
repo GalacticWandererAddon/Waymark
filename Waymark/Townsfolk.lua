@@ -169,6 +169,12 @@ local function Request(key)
     RunBuilder()
 end
 
+-- a type's NPCs on every map ({ [uiMapID] = { {x, y, id, name, sub}... } }, Search.lua); nil while it's built
+function ns.TownsfolkIndex(key)
+    if not cache[key] then Request(key) end
+    return cache[key]
+end
+
 -- level-up changes which food/drink/ammo vendors are relevant; QuestData.lua
 -- re-sorts its lists when next asked, so re-index a few seconds later
 local events = CreateFrame("Frame")
@@ -218,7 +224,10 @@ end
 -- town or city view with its own list on (townView/cityView.ownTypes), that
 -- list; it starts as a copy of the map's the first time.
 function ns.TownsfolkSettings()
-    if ns.db.cityView.ownTypes and ns.InCityView and ns.InCityView() then return ns.TownTownsfolk("cityView") end
+    -- (a capital's own list there, and on its map from anywhere too, the user 2026-11-09)
+    local map = BattlefieldMapFrame
+    local onCity = map and map.GetMapID and ns.CITY_MAPS and ns.CITY_MAPS[map:GetMapID()]
+    if ns.db.cityView.ownTypes and (onCity or (ns.InCityView and ns.InCityView())) then return ns.TownTownsfolk("cityView") end
     if ns.db.townView.ownTypes and ns.InTownView and ns.InTownView() then return ns.TownTownsfolk() end
     return Cfg()
 end

@@ -162,33 +162,15 @@ local function Note(instanceID, name)
     return t and t[name]
 end
 local RefreshNotes  -- (whatever shows a note, once one changed: further down)
-StaticPopupDialogs["BFI_BOSS_NOTE"] = {
-    text = "Your note on %s:",
-    button1 = SAVE or "Save", button2 = CANCEL or "Cancel",
-    hasEditBox = true, maxLetters = 255, editBoxWidth = 280,
-    OnShow = function(self, data)
-        local eb = self.editBox or (self.GetEditBox and self:GetEditBox())
-        if eb then eb:SetText(Note(data.instance, data.name) or "") eb:HighlightText() end
-    end,
-    OnAccept = function(self, data)
-        local eb = self.editBox or (self.GetEditBox and self:GetEditBox())
-        local text = eb and strtrim(eb:GetText() or "") or ""
-        local t = ns.db.bossNotes[data.instance] or {}
-        ns.db.bossNotes[data.instance] = t
-        t[data.name] = text ~= "" and text or nil
-        if RefreshNotes then RefreshNotes() end
-    end,
-    EditBoxOnEnterPressed = function(eb)
-        local p = eb:GetParent()
-        StaticPopupDialogs["BFI_BOSS_NOTE"].OnAccept(p, p.data)
-        p:Hide()
-    end,
-    EditBoxOnEscapePressed = function(eb) eb:GetParent():Hide() end,
-    timeout = 0, whileDead = true, hideOnEscape = true,
-}
 local function EditNote(instanceID, name)
     if not (instanceID and name) then return end
-    StaticPopup_Show("BFI_BOSS_NOTE", name, nil, { instance = instanceID, name = name })
+    ns.Ask({ text = "Your note on " .. name .. ":", edit = Note(instanceID, name) or "", ok = SAVE or "Save",
+             onAccept = function(text)
+                 local t = ns.db.bossNotes[instanceID] or {}
+                 ns.db.bossNotes[instanceID] = t
+                 t[name] = text ~= "" and text or nil
+                 if RefreshNotes then RefreshNotes() end
+             end })
 end
 
 -- { floor (OpenMap's index), x, y } or nil
@@ -1970,6 +1952,20 @@ local function EntrancesOn(mapID)
             end
         end
     end
+    -- (Forever's own dungeons, which the game's files give no entrance: the known and walked-in ones,
+    -- on their own map only. The user, 2026-11-09: the Hall of Thanes)
+    local function Add(id, m, x, y)
+        if m == mapID and not (ns.DungeonEntrances and ns.DungeonEntrances[id]) then
+            for _, o in ipairs(out) do if o.id == id then return end end
+            out[#out + 1] = { id = id, x = x, y = y }
+        end
+    end
+    for id in pairs(ns.ForeverQuestData and ns.ForeverQuestData.entrances or {}) do
+        if ns.LearnedEntrance then Add(id, ns.LearnedEntrance(id)) end
+    end
+    for id in pairs(WaymarkDB and WaymarkDB.entrances or {}) do
+        if ns.LearnedEntrance then Add(id, ns.LearnedEntrance(id)) end
+    end
     -- entrances on one spot (Blackrock Mountain's four): side by side, so each can be clicked
     -- (on a continent the spot and the step are smaller, as its doors are)
     local near, step = wide and 0.004 or 0.012, wide and 0.006 or 0.014
@@ -1985,6 +1981,8 @@ local function EntrancesOn(mapID)
     entrancesOn[mapID] = out
     return out
 end
+-- (a newly learned entrance: placed again, Learn.lua)
+function ns.ForgetEntranceSpots() wipe(entrancesOn) end
 
 -- the dungeon doors on the zone you're in (Notebook.lua: the book opens where you are)
 function ns.EntrancesOnZone()
@@ -2059,8 +2057,17 @@ function BFIDungeonPinMixin:OnAcquired(p)
     self:SetPosition(p.x, p.y)
 end
 
+-- an entrance's name and raid flag (Forever's own: from the instance's name)
+local function EntranceInfo(id)
+    local e = ns.DungeonEntrances and ns.DungeonEntrances[id]
+    if e then return e end
+    local name = GetRealZoneText and GetRealZoneText(id)
+    return { (name and name ~= "") and name or ("Instance " .. id), false }
+end
+ns.DungeonEntranceInfo = EntranceInfo
+
 function BFIDungeonPinMixin:OnEnter()
-    local e = ns.DungeonEntrances[self.info.id]
+    local e = EntranceInfo(self.info.id)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine(e[1])
     GameTooltip:AddLine(e[2] and "Raid" or "Dungeon", 1, 1, 1)
@@ -2095,7 +2102,7 @@ function BFIDungeonPinMixin:OnMouseUp(button)
             items[#items + 1] = { "the found notes: who asked us", function() ns.OpenNotebook(id, nil, true) end }
         end
         if ns.HasBossLoot and ns.HasBossLoot(id) then items[#items + 1] = { "what they carry", function() ns.OpenBossLoot(id) end } end
-        ns.PinMenu(self, items, ns.DungeonEntrances[id] and ns.DungeonEntrances[id][1])
+        ns.PinMenu(self, items, EntranceInfo(id)[1])
         return
     end
     local book = button == "LeftButton" and ns.NotebookQuests and ns.NotebookQuests(self.info.id)

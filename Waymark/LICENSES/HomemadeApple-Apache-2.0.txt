@@ -1,3 +1,5 @@
+Homemade Apple by Font Diner (Google Fonts). Media/Fonts/HomemadeApple-Waymark.ttf is a modified copy:
+every glyph and metric scaled to 0.6 of the em (tools/whisper_font.py), so its long loops are not cut off in game.
 
                                  Apache License
                            Version 2.0, January 2004
