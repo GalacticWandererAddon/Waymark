@@ -109,6 +109,17 @@ function ns.SafePassthrough(self, ...)
 end
 BFIQuestiePinMixin.CheckMouseButtonPassthrough = ns.SafePassthrough
 
+-- A quest's link into chat, as shift-click does everywhere in the game: only with chat open.
+-- true if it went in. title: when the game doesn't know the quest (not in your log)
+function ns.LinkQuestInChat(id, title)
+    local edit = ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()
+    if not (edit and id and ChatEdit_InsertLink) then return false end
+    if C_QuestLog and C_QuestLog.GetTitleForQuestID then title = C_QuestLog.GetTitleForQuestID(id) or title end
+    local level = ns.QuestLevelOf and ns.QuestLevelOf(id) or 0
+    ChatEdit_InsertLink(string.format("|cffffff00|Hquest:%d:%d|h[%s]|h|r", id, level, title or ("Quest " .. id)))
+    return true
+end
+
 -- A TomTom arrow to a pin (again on the same one: off). x, y: 0-1 on the pin's map
 local tomtomUid, tomtomAt
 function ns.PinArrow(pin, title, x, y)
@@ -940,12 +951,7 @@ function BFIQuestiePinMixin:OnMouseUp(button)
     if IsControlKeyDown() and TomTom and TomTom.AddWaypoint then
         QuestArrow(self)
     elseif IsShiftKeyDown() then
-        -- (as everywhere in the game: a link, with chat open)
-        local edit = ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()
-        if edit and self.questId then
-            local level = ns.QuestLevelOf and ns.QuestLevelOf(self.questId) or 0
-            ChatEdit_InsertLink(string.format("|cffffff00|Hquest:%d:%d|h[%s]|h|r", self.questId, level, self.questName or ""))
-        end
+        if self.questId then ns.LinkQuestInChat(self.questId, self.questName) end
     elseif OpensQuestWindow(self) and ns.ShowQuestWindow then
         ns.ShowQuestWindow(self.questId)
     elseif self.bfiGroup == "spots" and self.questId and ns.ToggleQuestGlow then

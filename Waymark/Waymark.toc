@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Waymark
 ## Notes: Quests, townsfolk, rares, zoom and more for the Battlefield Map
-## Version: 1.2.7
+## Version: 1.2.8
 ## X-Edition: Forever
 ## IconTexture: Interface\AddOns\Waymark\Media\Icon
 ## AddonCompartmentFunc: Waymark_CompartmentClick
@@ -51,6 +51,7 @@ Controls.lua
 Art.lua
 Fonts.lua
 Check.lua
+Report.lua
 Ask.lua
 WorldQuests.lua
 QuestData.lua

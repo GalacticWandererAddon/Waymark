@@ -1152,6 +1152,7 @@ local function TrackPins(map, provider, group)
                 pcall(self.RemoveAllData, self)
             end
             deferred[self] = true
+            if ns.Trail then ns.Trail("in a fight, held: " .. tostring(group)) end
             return
         end
         self.bfiDrawnMap = map:GetMapID()
@@ -1178,11 +1179,12 @@ local function GamePinsWait(map)
     local wait = {}
     for _, name in ipairs(WAIT_IN_COMBAT) do
         local mixin = _G[name]
-        if mixin and mixin.RefreshAllData and mixin.RefreshAllData ~= base then wait[mixin.RefreshAllData] = true end
+        if mixin and mixin.RefreshAllData and mixin.RefreshAllData ~= base then wait[mixin.RefreshAllData] = name end
     end
     for provider in pairs(map.dataProviders or {}) do
         local orig = provider.RefreshAllData
-        if wait[orig] then
+        local name = wait[orig]
+        if name then
             provider.bfiDrawnMap = map:GetMapID()  -- (what's on the map now is this map's)
             provider.RefreshAllData = function(self, ...)
                 if InCombatLockdown() then
@@ -1190,6 +1192,7 @@ local function GamePinsWait(map)
                         pcall(self.RemoveAllData, self)
                     end
                     deferred[self] = true
+                    if ns.Trail then ns.Trail("in a fight, held: " .. name) end
                     return
                 end
                 self.bfiDrawnMap = map:GetMapID()
@@ -1871,6 +1874,8 @@ local function Setup()
     if ns.SetupCave then ns.SetupCave(map) end
     if ns.SetupExplore then ns.SetupExplore(map) end
     if ns.SetupInk then ns.SetupInk(map) end
+    if ns.SetupCamps then ns.SetupCamps(map) end  -- (the book's camps on the zone maps: Camps.lua, dev copy only for now)
+    if ns.SetupDangers then ns.SetupDangers(map) end  -- (what kills here, on and beside the dungeon map: Dangers.lua, dev copy only for now)
     if ns.SetupZoneArt then ns.SetupZoneArt(map) end
     if ns.SetupStyle then ns.SetupStyle(map) end
     if ns.SetupZoneName then ns.SetupZoneName(map) end
@@ -1924,6 +1929,7 @@ local function Setup()
     if ns.SetupDock then ns.SetupDock(map) end
     if ns.SetupClickThrough then ns.SetupClickThrough(map) end
     if ns.SetupWelcome then ns.SetupWelcome(map) end
+    if ns.SetupReport then ns.SetupReport(map) end
 end
 
 -- Blocked actions: the game says which function it blocked in these events (the
@@ -1942,7 +1948,10 @@ local function ReportBlocked(event, addon, func)
     if addon ~= addonName then return end
     local when = date("%H:%M:%S")
     local where = InCombatLockdown() and "in combat" or "out of combat"
-    Log("|cffff6060blocked:|r", tostring(func), "(" .. event .. ", " .. where .. ", " .. when .. ")")
+    -- (Report.lua: a report players can copy into a CurseForge comment, and its link)
+    if ns.NoteBlock then pcall(ns.NoteBlock, event, func) end
+    Log("|cffff6060blocked:|r", tostring(func), "(" .. event .. ", " .. where .. ", " .. when .. ")",
+        ns.ReportLink and ns.ReportLink() or "")
     WaymarkDB = WaymarkDB or {}
     local list = WaymarkDB.blockedLog or {}
     list[#list + 1] = { func = tostring(func), event = event, where = where, when = when }
@@ -1966,6 +1975,7 @@ local function ShowBlockedFromLastTime()
         for _, b in ipairs(list) do
             Log("  " .. b.func .. " (" .. b.event .. ", " .. b.where .. ", " .. b.when .. ")")
         end
+        if ns.ReportLink then Log("a report to copy for Waymark's CurseForge page:", ns.ReportLink()) end
         WaymarkDB.blockedLog = nil
     end)
 end
@@ -1974,9 +1984,23 @@ end
 -- it, wherever you are. The game only does that itself in the open world and battlegrounds, and
 -- loads its map too late for our dungeon hooks to catch a reload inside an instance (the user,
 -- 2026-11-02: still closed after /reload). A profile that hides the map hides it again after.
+local reopenAfterFight
 local function ReopenMap()
     if ns.standBy or GetCVar("showBattlefieldMinimap") ~= "1" then return end
     if not BattlefieldMapFrame then
+        -- (loaded by our code in a fight, the game's own map pins are blocked as they're made:
+        -- SetPassThroughButtons. A guess at a player's 1.2.7 report "in combat", not proved. After the fight.)
+        if InCombatLockdown() then
+            if not reopenAfterFight then
+                reopenAfterFight = CreateFrame("Frame")
+                reopenAfterFight:SetScript("OnEvent", function(self)
+                    self:UnregisterAllEvents()
+                    ReopenMap()
+                end)
+            end
+            reopenAfterFight:RegisterEvent("PLAYER_REGEN_ENABLED")
+            return
+        end
         local load = (C_AddOns and C_AddOns.LoadAddOn) or LoadAddOn
         if load then pcall(load, "Blizzard_BattlefieldMap") end
     end
@@ -2011,7 +2035,7 @@ end)
 local DEV_SLASH = {}
 for _, c in ipairs({ "bar", "bosses list", "bosses place", "buttons", "cave", "controls", "cut", "devart", "forevermap",
     "layers", "notes me", "notes ship", "notes shots", "probe", "questart", "questprobe", "shapes", "tour", "town",
-    "watch", "where rec", "fillwatch" }) do DEV_SLASH[c] = true end
+    "watch", "where rec", "fillwatch", "padcheck" }) do DEV_SLASH[c] = true end
 local function DevOnly(msg)
     return not ns.DevCommands and (DEV_SLASH[msg] or msg:match("^tour ") or msg:match("^quest%s")) and true or false
 end
@@ -2022,6 +2046,11 @@ SlashCmdList.BFI = function(msg)
     if DevOnly(msg) then msg = "?" end
     if msg == "debug" then
         Debug()
+        return
+    end
+    -- the last blocked action's report, to copy into a CurseForge comment (Report.lua)
+    if msg == "report" then
+        if ns.ShowReport then ns.ShowReport() end
         return
     end
     -- (dev commands: the map scale by number, turned words' size; DevCommands.lua, not shipped)

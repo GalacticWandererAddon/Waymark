@@ -178,6 +178,8 @@ function BFIQuestPOIProviderMixin:OnMapChanged() self:RefreshAllData() end
 -- One pin over the whole map; every quest on it drawn (the game's drew only the one in focus,
 -- and Waymark drew the rest after it), plus the quest highlighted from the tracker.
 BFIQuestBlobPinMixin = CreateFromMixins(MapCanvasPinMixin)
+-- (made when the map first loads, which can be in a fight: the game blocks pass-through there)
+BFIQuestBlobPinMixin.CheckMouseButtonPassthrough = ns.SafePassthrough
 
 function BFIQuestBlobPinMixin:OnLoad()
     self:SetFillTexture("Interface\\WorldMap\\UI-QuestBlob-Inside")

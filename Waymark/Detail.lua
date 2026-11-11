@@ -13,6 +13,8 @@ local TINT = { 1, 0.93, 0.80 }
 
 local function Cfg() return ns.db.detail end
 
+local UNDERGROUND = { [1455] = true, [1458] = true }  -- Ironforge, Undercity (their maps are below the surface)
+
 local host           -- frame on the canvas holding the tiles
 local textures = {}  -- in use
 local pool = {}
@@ -99,6 +101,9 @@ local function Build(map)
     local info = C_Map.GetMapInfo(mapID)
     local T = Enum and Enum.UIMapType
     if info and T and (info.mapType == T.Dungeon or info.mapType == T.Micro or info.mapType == T.Orphan) then return end
+    -- nor on Ironforge's and Undercity's: underground floor plans, the surface's tiles over them
+    -- showed the mountain and the ruins above (a player: Tirisfal in Undercity, the city's pins doubled)
+    if UNDERGROUND[mapID] then return end
     local cont, x0, y0 = WorldAt(mapID, 0, 0)  -- top-left: north-most X, west-most Y
     local cont1, x1, y1 = WorldAt(mapID, 1, 1)
     if not (cont and cont == cont1) or x0 == x1 or y0 == y1 then return end

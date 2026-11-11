@@ -1527,6 +1527,7 @@ local DRAWN_BY = {
     tam = { ink = 5, w = 0.65 },    -- charcoal from the fire, light and careful, always an animal in it
     ewen = { ink = 4, w = 0.8 },    -- her grey-green
     brakk = { ink = 1, w = 1.35 },  -- a guide's sketch: heavy, plain, the way marked
+    them = { ink = 6, w = 1 },      -- not his: a sketch found on a page he hadn't drawn on, in their violet (the Spire)
 }
 local function SceneSketch(scene, ink, seed, by)
     local out, pieces = {}, ns.INK_SCENES or {}
@@ -1537,11 +1538,40 @@ local function SceneSketch(scene, ink, seed, by)
             if not piece.wide then x, y = (s[2] or 0) / SCENE_W, (s[3] or 0) / SCENE_H end
             local hand = DRAWN_BY[s.by or by or ""]
             out[#out + 1] = { t = "sketch", piece = s[1], ink = hand and hand.ink or ink, w = hand and hand.w or nil,
-                              r = (seed + n * 131) % 2000000000 + 1,
+                              r = (seed + n * 131) % 2000000000 + 1, rot = s.rot,  -- (rot: turned, degrees clockwise, round its foot)
                               p = { x, y }, sc = not piece.wide and s[4] ~= 1 and s[4] or nil }
         end
     end
     return out
+end
+-- A before page's study (book.study, drawn 240 wide at the right page's foot): how far under the page's top its
+-- ink host goes, given where the text ends (textEnd, down from the top). The drawing's own height is measured from
+-- its pieces. At the foot as designed when that is clear of the text; else in the middle of the room left under
+-- the last line; nil when it doesn't fit there either.
+function ns.NotebookStudyTop(scene, textEnd)
+    local pieces, k = ns.INK_SCENES or {}, 240 / SCENE_W
+    local top, bottom
+    for _, s in ipairs(scene) do
+        local piece = pieces[s[1]]
+        if piece then
+            local oy, sc = piece.wide and 0 or (s[3] or 0), piece.wide and 1 or (s[4] or 1)
+            local a = math.rad(s.rot or 0)
+            for _, stroke in ipairs(piece.strokes) do
+                for i = 1, #stroke - 1, 2 do
+                    local py = oy + (stroke[i] * math.sin(a) + stroke[i + 1] * math.cos(a)) * sc
+                    top, bottom = math.min(top or py, py), math.max(bottom or py, py)
+                end
+            end
+        end
+    end
+    if not top then return end
+    top, bottom = top * k - 3, bottom * k + 3  -- (in the host, from its top; the pen's own width and wobble)
+    local hostH = 240 * SCENE_H / SCENE_W
+    local foot = PH - 40 - hostH  -- (the host's top as designed: its foot 40 over the page's)
+    if foot + top >= textEnd + 8 then return foot end
+    local room = (PH - 30) - (textEnd + 4)
+    if room < bottom - top then return end
+    return textEnd + 4 + (room - (bottom - top)) / 2 - top
 end
 local function SceneInk(dg, spreadIndex)
     local b = dg.before
@@ -2052,6 +2082,27 @@ local function Before(dg)
             t:SetPoint("CENTER", side[1], "TOPLEFT", side[2], pr.y)
         end
     end
+    -- (book.study: a thing looked at closely, drawn larger at the foot of the right page in the scene's own pieces
+    -- (a 360 x 170 box, as a scene): the pair of compasses at Kharanos, each needle on the other; Tam's knife,
+    -- chipped at Gadgetzan and whole again on the table at Feathermoon. Never explained in words. 2026-11-11)
+    -- Where: at the page's foot when the text leaves it room; on a full page (Dire Maul's, where the old man's
+    -- rule ran into the knife) in the middle of what is left under the last line; with no room at all, not drawn.
+    local study = right.study
+    local studyTop = story and book.study and ns.InkHost and ns.InkDrawList and ns.NotebookStudyTop(book.study, -y - 10)  -- (y carries 14 of air under the last line: 4 of it kept)
+    if studyTop then
+        if not study then
+            study = ns.InkHost(right)
+            right.study = study
+        end
+        study:ClearAllPoints()
+        study:SetPoint("TOP", right, "TOP", 0, -studyTop)
+        study:SetSize(240, 240 * SCENE_H / SCENE_W)
+        study:SetFrameLevel(right:GetFrameLevel() + 2)
+        study:Show()
+        ns.InkDrawList(study, SceneSketch(book.study, deep and 3 or 1, Hash(id .. ":study"), book.studyBy))
+    elseif study then
+        study:Hide()
+    end
 end
 
 -- The hand's prints on a page: not put there, left there. Where a hand holds a book (the outer
@@ -2176,25 +2227,35 @@ function ns.NotebookWayBack()
         y = y - step
     end
     -- the inside of the back cover: the paper pocket pasted in (empty until the end), the letter, the compass
-    -- (Media\Notes\Pocket, Letter: tools\pocket_art.py, from the book's own paper; Compass: tools\compass_render.py)
+    -- (Media\Notes\Pocket, LetterOpen, PocketCord: tools\pocket_render.py, real paper modelled and lit in Blender,
+    -- each alone with its own shadow; that tool prints the boxes used here. Compass: tools\compass_render.py)
     right.stain:Hide()  -- (no cup ring inside the cover)
-    local pw, ph = 336, 210
     local pocket = ns.notebookPocket  -- (a frame of its own, over the page's words: the letter's lower lines go in it)
     if not pocket then
         pocket = CreateFrame("Frame", nil, right)
         pocket.t = pocket:CreateTexture(nil, "ARTWORK")
         pocket.t:SetAllPoints()
         pocket.t:SetTexture(NOTES .. "Pocket")
-        pocket.t:SetTexCoord(0, 1, 0, 160 / 256)  -- (drawn in the top 256 x 160)
+        -- (the compass's cord, out of an eyelet in the pocket's corner and down to the ring: its own picture,
+        -- with the shadow it throws on the pocket; only there once the compass is)
+        pocket.cord = pocket:CreateTexture(nil, "OVERLAY")
+        pocket.cord:SetTexture(NOTES .. "PocketCord")
+        pocket.cord:SetSize(32.1, 189.7)
+        pocket.cord:SetPoint("TOPLEFT", pocket, "TOPLEFT", 307.3, -37.4)
         ns.notebookPocket = pocket
     end
     pocket:SetFrameLevel(right:GetFrameLevel() + 4)
     pocket:ClearAllPoints()
-    pocket:SetSize(pw, ph)
-    local lift = 118  -- (how far up the cover the pocket's pasted)
-    pocket:SetPoint("BOTTOM", right, "BOTTOM", 4, lift)
+    pocket:SetSize(352.7, 216.4)  -- (the picture's box: the pocket, the shadow round it, the petals over its mouth)
+    pocket:SetPoint("TOPLEFT", right, "TOPLEFT", 45.2, -228.1)
     pocket:Show()
-    if not all then return end
+    pocket.cord:SetShown(all and true or false)
+    if not all then
+        if pocket.camp then pocket.camp:Hide() end
+        pocket.needle = nil
+        pocket:SetScript("OnUpdate", nil)
+        return
+    end
     -- her -W.: a promise, big and pressed hard (the same word laid down again a hair off, as a pressed hand),
     -- in the last page's corner: the book's own sign-off
     for _, o in ipairs({ { 0, 0, 0.9 }, { 0.7, -0.4, 0.75 }, { -0.4, -0.7, 0.6 } }) do
@@ -2205,57 +2266,167 @@ function ns.NotebookWayBack()
     end
     DrawPrints({ id = "wayback", prints = { { cell = 1, ink = 4, alpha = 0.5, rot = 0.5, size = 62, side = "left",
                                                x = 26, y = last[2] - 4 } } }, 0)
-    -- the letter (FoundNotes.letter), standing in the pocket, opened out: only its top panel stands up out of
-    -- it, the first fold at the pocket's mouth. What can be read ends with "Read it slow."; the rest of it
-    -- (FoundNotes.letter.gap, .cut) stays down in the pocket, unread. His old brown ink, no name signed.
+    -- the letter (FoundNotes.letter), standing in the pocket, opened out: its top panel stands up out of it, the
+    -- first fold at the pocket's mouth, ending "Then, read it slow." A click on it draws it up one fold, by the
+    -- reader's own hand (2026-11-11): the line under the fold, "Don't follow me in." (letter.gap, his brown with
+    -- the blue-black creeping into it), and under that the next one (letter.cut), cut to its tops by the pocket's
+    -- edge but for what the thumb notch lets through. Another click lets it back down. No name signed.
     local lt = d.letter or {}
-    local edge = -(PH - lift - ph) - 24     -- (the pocket's mouth, on the page)
-    local x0, y0, lw = (PW - 340) / 2 + 4, edge + 114, 290
-    local sheet = Tex(right, "ARTWORK", 2)
+    local pull = ns.notebookLetterPulled and 50 or 0
+    -- (the sheet's picture: 320.6 x 191 with its shadow, the paper itself from 8 in and 6.7 down, 298 wide, its
+    -- fold 103.5 under its top; the pocket's mouth is 113.5 under it. Narrower than the pocket, as a letter in
+    -- one must be, so its lines are set a twentieth smaller than the page's)
+    local lx, ly, lw = 61.3, -144 + pull, 276
+    -- (on a layer of its own, over the page's words and under the pocket: drawn up, it lies ON her lines, the
+    -- user 2026-11-11; before, the lines under it were left out and seemed to vanish)
+    local letter = ns.notebookLetter
+    if not letter then
+        letter = CreateFrame("Frame", nil, right)
+        letter:SetAllPoints(right)
+        letter.pools = { text = { n = 0 }, tex = { n = 0 }, mapText = { n = 0 }, mapTex = { n = 0 } }
+        ns.notebookLetter = letter
+    end
+    Reset(letter)
+    letter:SetFrameLevel(right:GetFrameLevel() + 2)
+    letter:Show()
+    local sheet = Tex(letter, "ARTWORK", 2)
     sheet:SetTexture(NOTES .. "LetterOpen")
-    sheet:SetTexCoord(0, 1, 0, 211 / 256)
-    sheet:SetSize(340, 280)
-    sheet:SetPoint("TOPLEFT", right, "TOPLEFT", x0, y0)
-    local function Line(text, y, size, key)
+    sheet:SetTexCoord(0, 1, 0, 1)
+    sheet:SetSize(320.6, 191)
+    sheet:SetPoint("TOPLEFT", right, "TOPLEFT", lx, ly)
+    local notch = 218.9  -- (the middle of the pocket's thumb notch, across the page)
+    local function Line(text, at, size, key, over, through)
         local words, h = Layout(text, lw, size, HAND_BODY)
-        Place(right, words, x0 + 26, y0 + y, size, INK, HAND_BODY, "letter:" .. key)
+        local x = lx + 23
+        -- (through = { from, to }: those words stand in the thumb notch, whatever the line's own width)
+        if through and words[through[1]] and words[through[2]] then
+            local a, b = words[through[1]], words[through[2]]
+            x = notch - (a.x + b.x + b.width) / 2
+        end
+        Place(letter, words, x, ly + at, size, INK, HAND_BODY, "letter:" .. key, nil, over)
         return h
     end
-    Line(lt[1] or "Ewen,", -14, 20, "to")
-    local y = -48
-    for k = 2, #lt do y = y - Line(lt[k], y, 15, k) - 2 end
-    -- the compass: through a hole in the pocket's corner on its cord, lying in the cover's corner
-    local size = 74
+    -- (the blue-black creeping into a line from one of its words on, most at its end: what follows may not be
+    -- what he set out to write. letter.gapTurn / cutTurn = the word it starts at; false or nil: his brown throughout)
+    local function Turning(text, from)
+        if not from then return nil end
+        local c = { INK[1] + (DEEP_INK[1] - INK[1]) * 0.7, INK[2] + (DEEP_INK[2] - INK[2]) * 0.7, INK[3] + (DEEP_INK[3] - INK[3]) * 0.7 }
+        local last = select(2, text:gsub("%S+", ""))
+        return { fadeAt = from, fadeFull = math.max(from, last), fadeTo = c }
+    end
+    Line(lt[1] or "Ewen,", -15, 19, "to")
+    local y = -47
+    for k = 2, #lt do y = y - Line(lt[k], y, 14.3, k) - 2 end
+    if pull > 0 then
+        if lt.gap then Line(lt.gap, -124, 15.2, "gap", Turning(lt.gap, lt.gapTurn)) end
+        -- (the line the pocket's edge cuts to its tops: letter.cutNotch = { from, to }, the words that show whole in
+        -- the thumb notch; without it, its last two)
+        if lt.cut then
+            local n = select(2, lt.cut:gsub("%S+", ""))
+            Line(lt.cut, -157, 14.3, "cut", Turning(lt.cut, lt.cutTurn), lt.cutNotch or { math.max(1, n - 1), n })
+        end
+    end
+    Hit(right, lx + 6, ly - 4, 302, 100 + pull, function()
+        ns.notebookLetterPulled = not ns.notebookLetterPulled or nil
+        Sound("IG_ABILITY_PAGE_TURN")
+        Show(spread)
+    end)
+    -- her road (FoundNotes.herRoad): his list of roads home, kept going in her hand on the only paper left, the
+    -- inside of the cover over the pocket. Written to him, as all her lines are. (The letter drawn up lies over
+    -- the lower ones, on its own layer.)
+    local hy = -24
+    for k, line in ipairs(d.herRoad or {}) do
+        local size = 15
+        local words = Layout(line, 9999, size, HAND_EWEN)
+        if #words > 0 then
+            local wide = words[#words].x + words[#words].width
+            if wide > width then size = math.floor(size * width / wide) words = Layout(line, 9999, size, HAND_EWEN) end
+            Place(right, words, 40 + ((k * 29) % 5) - 2, hy, size, EWEN, HAND_EWEN, "herRoad:" .. k)
+        end
+        hy = hy - 21
+    end
+    -- (her drawing on the pocket is in the pocket's own picture now, ink in its paper: the company asleep round
+    -- the fire, seen from where she sat, tools\pocket_drawing.py. It took the place of the camp sketched live in
+    -- the Wanderer's scene pieces, which the user couldn't read and which wasn't hers in style. So are the two
+    -- peacebloom petals in the pocket's corner beside the letter: he took the flower and left her these.)
+    if pocket.camp then pocket.camp:Hide() end
+    -- the compass: through a hole in the pocket's corner on its cord, lying in the cover's corner. It works
+    -- (ns.NotebookNeedleTick): still when its other half is far, as Sparks made the pair
+    local size = 100
+    local cx, cy = -64, 66                   -- (its centre, from the page's bottom right corner)
     local case = Tex(right, "OVERLAY", 6)
     case:SetTexture(NOTES .. "Compass")
     case:SetTexCoord(0, 0.5, 0, 1)
     case:SetSize(size, size)
-    case:SetPoint("CENTER", right, "BOTTOMRIGHT", -64, 62)  -- (lying on the cover, in its corner)
+    case:SetPoint("CENTER", right, "BOTTOMRIGHT", cx, cy)  -- (lying on the cover, in its corner)
     local needle = Tex(right, "OVERLAY", 7)
     needle:SetTexture(NOTES .. "Compass")
     needle:SetTexCoord(0.5, 1, 0, 1)
     needle:SetSize(size, size)
-    needle:SetRotation(math.pi + 0.06)  -- (south, near enough: at the half in his pack, far off)
+    needle:SetRotation(pocket.at or (math.pi + 0.06))  -- (south, near enough, where she last saw it settle)
     needle:SetPoint("CENTER", case, "CENTER", 0, -size * 0.033)  -- (the face sits a little low in its picture)
-    -- (a twisted cord: dark, a lighter twist along it; from the pocket's corner to the ring, hanging slack in a
-    -- curve: short straight pieces along it)
-    local hx, hy = (PW - pw) / 2 + 4 + pw - 22, -(PH - lift) + ph - 30
-    local rx, ry = PW - 64, -(PH - 62) + size * 0.46
-    local cx, cy = (hx + rx) / 2 + 26, (hy + ry) / 2 - 10
-    local px, py = hx, hy
-    for k = 1, 14 do
-        local t = k / 14
-        local nx = (1 - t) ^ 2 * hx + 2 * (1 - t) * t * cx + t * t * rx
-        local ny = (1 - t) ^ 2 * hy + 2 * (1 - t) * t * cy + t * t * ry
-        for _, look in ipairs({ { 0.2, 0.13, 0.07, 0.95, 2.4, 0 }, { 0.5, 0.38, 0.24, 0.7, 0.9, 0.6 } }) do
-            local l = Take(right, "line", function() return right:CreateLine(nil, "OVERLAY", nil, 2) end)
-            l:SetColorTexture(look[1], look[2], look[3], look[4])
-            l:SetThickness(look[5])
-            l:SetStartPoint("TOPLEFT", right, px + look[6], py + look[6])
-            l:SetEndPoint("TOPLEFT", right, nx + look[6], ny + look[6])
-        end
-        px, py = nx, ny
+    pocket.needle = needle
+    pocket:SetScript("OnUpdate", ns.NotebookNeedleTick)
+    -- (its cord is the pocket's own picture, pocket.cord: it ends at the ring's top, PW + cx across, 450 down)
+end
+
+-- Sparks's compass works. Each needle points at the other half, and only when it's near (Kharanos: it woke as
+-- she walked past the inn). The half on this book lies still across most of the world; south of Feralas and the
+-- Needles it wakes and drifts; in the sand past the crater it settles, sure of itself, on the half sewn into a
+-- pack that someone still carries about beyond the wall (it has moved a little each time you look). Nobody is
+-- told: a player who opens the last page down there sees it. Bearings on Kalimdor's own map, the page's top as
+-- north. ns.notebookNeedleTest = "far" | "awake" | "sure": /bfi needle, to see each without the walk.
+function ns.NotebookNeedleBearing()
+    local test = ns.notebookNeedleTest
+    if test == "far" then return nil end
+    if not (C_Map and C_Map.GetPlayerMapPosition and C_Map.GetWorldPosFromMapPos and C_Map.GetMapPosFromWorldPos and CreateVector2D) then return nil end
+    local KALIMDOR, SANDS, TANARIS = 1414, 1451, 1446
+    local function OnKalimdor(zone, x, y)
+        local ok, cont, world = pcall(C_Map.GetWorldPosFromMapPos, zone, CreateVector2D(x, y))
+        if not (ok and cont and world) then return nil end
+        local ok2, _, pos = pcall(C_Map.GetMapPosFromWorldPos, cont, world, KALIMDOR)
+        if not (ok2 and pos and pos.GetXY) then return nil end
+        return pos:GetXY()
     end
+    local T = GetServerTime and GetServerTime() or time()
+    local tx, ty = OnKalimdor(SANDS, 0.30 + 0.07 * math.sin(T / 1700), 0.99 + 0.025 * math.sin(T / 2300 + 1))
+    local mx, my
+    if test == "awake" then
+        mx, my = OnKalimdor(TANARIS, 0.515, 0.28)   -- (Gadgetzan)
+    elseif test == "sure" then
+        mx, my = OnKalimdor(SANDS, 0.51, 0.38)      -- (the hold in the middle of the sand)
+    else
+        local ok, me = pcall(C_Map.GetPlayerMapPosition, KALIMDOR, "player")
+        if ok and me and me.GetXY then mx, my = me:GetXY() end
+    end
+    if not (tx and ty and mx and my) or (mx == 0 and my == 0) then return nil end
+    local dx, dy = (tx - mx) * 1.5, ty - my  -- (the map is half again as wide as it's tall)
+    local far = math.sqrt(dx * dx + dy * dy)
+    if far > 0.26 then return nil end
+    return math.atan2(-dx, -dy), far <= 0.115 and 2 or 1
+end
+
+function ns.NotebookNeedleTick(self, dt)
+    local n = self.needle
+    if not (n and n:IsShown()) then return end
+    self.clock, self.poll = (self.clock or 0) + dt, (self.poll or 1) + dt
+    if self.poll >= 1 then
+        self.poll = 0
+        self.bearing, self.sure = ns.NotebookNeedleBearing()
+    end
+    local rest = math.pi + 0.06
+    local to = rest
+    if self.bearing and self.sure == 2 then
+        to = self.bearing + 0.02 * math.sin(self.clock * 9)  -- (sure of itself: a tremble, no more)
+    elseif self.bearing then
+        to = self.bearing + 0.45 * math.sin(self.clock * 0.55) + 0.12 * math.sin(self.clock * 1.9)  -- (awake: drifting, slow)
+    end
+    local at = self.at or rest
+    local d = (to - at + math.pi) % (2 * math.pi) - math.pi  -- (the short way round)
+    if not self.bearing and math.abs(d) < 0.002 then return end  -- (lying still: nothing to do)
+    at = at + d * math.min(1, dt * (self.sure == 2 and 3 or 1.2))
+    self.at = at
+    n:SetRotation(at)
 end
 
 local function Dungeon(dg)
@@ -2492,7 +2663,14 @@ local function Dungeon(dg)
             local t = cr[1] + (cr[2] - cr[1]) * (i - 1) / math.max(1, #views - 1)
             creep = { ink = { INK[1] + (DEEP_INK[1] - INK[1]) * t, INK[2] + (DEEP_INK[2] - INK[2]) * t, INK[3] + (DEEP_INK[3] - INK[3]) * t } }
         end
+        -- (dg.ahead = n: the page's first n notes were there before the day was: written the night before, in
+        -- the neat hand of its "before" page. The Temple: "The page for tomorrow is already half written.")
+        local dayHand = pageHand
+        if story and dg.ahead and i <= dg.ahead and not v.yours then
+            pageHand = (Data().hands or {})[id .. ":before"] or pageHand
+        end
         local put = Place(page, wds, x, y, size, color, font, id .. ":" .. i .. ":" .. v.text, nil, creep)
+        pageHand = dayHand
         local num = Text(page, 16, v.yours and PENCIL or RED)
         num:SetPoint("TOPRIGHT", page, "TOPLEFT", x - 6, y - 1)
         num:SetText(i)
@@ -3713,6 +3891,7 @@ end
 
 Show = function(to)
     notesVersion = notesVersion + 1
+    if spread ~= to then ns.notebookLetterPulled = nil end  -- (the letter drawn up on the last page: let back down on leaving it)
     spread = to
     Cfg().spread = to
     Reset(left)
@@ -3725,7 +3904,9 @@ Show = function(to)
     if left.ribbon then left.ribbon:Hide() left.ribbon.label:Hide() end
     DrawPrints(nil)
     if left.scene then left.scene:Hide() end
+    if right.study then right.study:Hide() end  -- (a "before" page's closer drawing, at the right page's foot)
     if ns.notebookPocket then ns.notebookPocket:Hide() end  -- (the back cover's pocket: the way back's own)
+    if ns.notebookLetter then ns.notebookLetter:Hide() end  -- (and the letter in it)
     if beforeOf ~= to then beforeOf = nil end
     local dg = Entry(to)
     local hands = Data().hands or {}

@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Waymark: settings helper |cff9d9d9d(safe to delete later)|r
 ## Notes: Carries your Battlefield Info settings, ink and notes over to Waymark, the addon's new name. Safe to delete once each of your characters has logged in with Waymark.
-## Version: 1.2.7
+## Version: 1.2.8
 ## X-Waymark-Stub: 1
 ## SavedVariables: BattlefieldInfoDB, BattlefieldInfoQuestDB
 ## SavedVariablesPerCharacter: BattlefieldInfoCharDB

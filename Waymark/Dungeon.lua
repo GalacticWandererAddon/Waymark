@@ -501,6 +501,7 @@ local function Marker(i)
         GameTooltip:AddLine(self.bossName)
         if self.kind then GameTooltip:AddLine(self.kind == "rare" and "Rare" or "Friendly", unpack(KIND_COLOR[self.kind])) end
         if self.killed then GameTooltip:AddLine("Defeated", 0.3, 1, 0.3) end
+        if ns.DangersBossLines and not self.killed then ns.DangersBossLines(shownInstance, self.name) end  -- (what kills here, of this boss)
         ns.DungeonBossQuestLines(shownInstance, self.name)
         local note = Note(shownInstance, self.name)
         if note then GameTooltip:AddLine(note, NOTE_COLOR[1], NOTE_COLOR[2], NOTE_COLOR[3], true) end
@@ -708,6 +709,68 @@ local function Ends(l, f, x1, y1, x2, y2)
     l:SetEndPoint("TOPLEFT", f, x2, y2)
 end
 
+-- A note's paper (the Bosses slip here; Dangers.lua's note and its hover slip): a window of the book's paper for
+-- its body, and round it Media\Notes\Slip (tools\slip_art.py) cut in nine: a torn, uneven edge, the paper
+-- darker where it's been held, and a soft shadow down and to the right. Before 2026-11-11 a note was a
+-- straight-sided rectangle with a black box behind it for a shadow (the user: a new pass on the look). The
+-- rim's middle is clear, so the body keeps Paper's own grain at any size; the rim hides the body's straight sides.
+-- l, r, t, b: the window of Paper. The frame must be at least 36 across and high.
+function ns.PaperSlip(f, l, r, t, b)
+    local body = f:CreateTexture(nil, "BACKGROUND", nil, -1)
+    body:SetPoint("TOPLEFT", 3, -3)
+    body:SetPoint("BOTTOMRIGHT", -3, 3)
+    body:SetTexture(NOTES .. "Paper")
+    body:SetTexCoord(l, r, t, b)
+    body:SetVertexColor(0.96, 0.92, 0.84)
+    local C, O, T = 28, 10, 56 / 256   -- a corner piece; how far the picture reaches past the paper's edge; a corner's share of the picture
+    local function Piece(u0, u1, v0, v1)
+        local p = f:CreateTexture(nil, "BORDER")
+        p:SetTexture(NOTES .. "Slip")
+        p:SetTexCoord(u0, u1, v0, v1)
+        return p
+    end
+    local tl, tr = Piece(0, T, 0, T), Piece(1 - T, 1, 0, T)
+    local bl, br = Piece(0, T, 1 - T, 1), Piece(1 - T, 1, 1 - T, 1)
+    tl:SetSize(C, C)
+    tl:SetPoint("TOPLEFT", f, "TOPLEFT", -O, O)
+    tr:SetSize(C, C)
+    tr:SetPoint("TOPRIGHT", f, "TOPRIGHT", O, O)
+    bl:SetSize(C, C)
+    bl:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", -O, -O)
+    br:SetSize(C, C)
+    br:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", O, -O)
+    for _, e in ipairs({ { Piece(T, 1 - T, 0, T), tl, "TOPRIGHT", tr, "BOTTOMLEFT" }, { Piece(T, 1 - T, 1 - T, 1), bl, "TOPRIGHT", br, "BOTTOMLEFT" },
+                         { Piece(0, T, T, 1 - T), tl, "BOTTOMLEFT", bl, "TOPRIGHT" }, { Piece(1 - T, 1, T, 1 - T), tr, "BOTTOMLEFT", br, "TOPRIGHT" } }) do
+        e[1]:SetPoint("TOPLEFT", e[2], e[3])
+        e[1]:SetPoint("BOTTOMRIGHT", e[4], e[5])
+    end
+    return body
+end
+-- the brass pin through a note's top (Media\Notes\Pin: its dome lit from the top left, its shadow, the paper
+-- drawn in round it); y: its middle, down from the note's top
+function ns.PaperPin(f, y)
+    local t = f:CreateTexture(nil, "ARTWORK", nil, 3)
+    t:SetTexture(NOTES .. "Pin")
+    t:SetSize(22, 22)
+    t:SetPoint("CENTER", f, "TOP", 1, (y or -9) - 1)
+    return t
+end
+-- a line ruled across a note by hand: three strokes, not quite level. Answers SetShown, as a texture would.
+function ns.InkRule(f, inset, y)
+    local pts = { { "TOPLEFT", inset, y }, { "TOP", -24, y + 0.7 }, { "TOP", 30, y - 0.5 }, { "TOPRIGHT", -inset, y + 0.4 } }
+    local rule = { lines = {} }
+    for i = 1, 3 do
+        local l = f:CreateLine(nil, "ARTWORK")
+        l:SetColorTexture(P_SOFT[1], P_SOFT[2], P_SOFT[3], 0.42)
+        l:SetThickness(1.1)
+        l:SetStartPoint(pts[i][1], f, pts[i][2], pts[i][3])
+        l:SetEndPoint(pts[i + 1][1], f, pts[i + 1][2], pts[i + 1][3])
+        rule.lines[i] = l
+    end
+    function rule:SetShown(on) for _, l in ipairs(self.lines) do l:SetShown(on) end end
+    return rule
+end
+
 -- the floor (index into floors) a boss is drawn on
 local function FloorOf(name)
     for i, f in ipairs(floors or {}) do
@@ -800,6 +863,7 @@ local function RowTip(self, ring)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine(self.name)
     if n then GameTooltip:AddLine(n .. ".  " .. text:gsub("~", ""), 1, 0.93, 0.78, true) end
+    if ns.DangersBossLines then ns.DangersBossLines(shownInstance, self.name) end  -- (what kills here, of this boss)
     ns.DungeonBossQuestLines(shownInstance, self.name)
     if note then GameTooltip:AddLine(note, NOTE_COLOR[1], NOTE_COLOR[2], NOTE_COLOR[3], true) end
     ns.Hints({ { "Click", ring and "the found notes on it" or "its floor" },
@@ -978,42 +1042,15 @@ RefreshNotes = function() UpdateList() end
 
 local function CreateList(parent)
     list = CreateFrame("Frame", nil, parent)
+    ns.dungeonBossList = list  -- (Dangers.lua: its "!" tab sits beside this slip)
     -- (over the dungeon's object pins, DungeonObjects.lua at the canvas + 6 to 8: a quest pin sat on it)
     list:SetFrameLevel(parent:GetFrameLevel() + 10)
     list:SetSize(140, 30)
     list:EnableMouse(true)  -- (a click between rows isn't one on the map)
-    -- the slip: a window of the notebook's paper, its shadow on the map
-    local shadow = list:CreateTexture(nil, "BACKGROUND", nil, -2)
-    shadow:SetPoint("TOPLEFT", 2, -3)
-    shadow:SetPoint("BOTTOMRIGHT", 4, -5)
-    shadow:SetColorTexture(0, 0, 0, 0.45)
-    local paper = list:CreateTexture(nil, "BACKGROUND", nil, -1)
-    paper:SetAllPoints()
-    paper:SetTexture(NOTES .. "Paper")
-    paper:SetTexCoord(0.55, 0.75, 0.12, 0.42)
-    paper:SetVertexColor(0.96, 0.92, 0.84)
-    -- the brass pin through its top middle, above the title: the paper dimpled round
-    -- it, its shadow, a darker rim, the domed head lit from the top left
-    local pin = CreateFrame("Frame", nil, list)
-    pin:SetSize(14, 14)
-    pin:SetPoint("TOP", list, "TOP", 0, -3)
-    local function Disc(layer, size, x, y, r, g, b, a)
-        local t = pin:CreateTexture(nil, "ARTWORK", nil, layer)
-        t:SetTexture(ROUND)
-        t:SetVertexColor(r, g, b, a or 1)
-        t:SetSize(size, size)
-        t:SetPoint("CENTER", x, y)
-        return t
-    end
-    Disc(-2, 20, 0.5, -0.5, 0.3, 0.2, 0.08, 0.16)   -- (the dimple)
-    Disc(-1, 12, 2, -2.5, 0, 0, 0, 0.55)           -- (its shadow)
-    Disc(0, 11, 0, 0, 0.36, 0.25, 0.08)            -- (the rim)
-    local head = Disc(1, 9, -0.3, 0.3, 0.72, 0.55, 0.24)
-    if CreateColor then
-        pcall(head.SetGradient, head, "VERTICAL", CreateColor(0.5, 0.36, 0.12, 1), CreateColor(0.9, 0.74, 0.38, 1))
-    end
-    Disc(2, 4, -1.6, 1.8, 1, 0.95, 0.75, 0.85)     -- (the shine)
-    Disc(2, 2, 1.8, -1.8, 1, 0.9, 0.6, 0.3)        -- (light thrown back off the paper)
+    -- the slip: a window of the notebook's paper with torn edges and a soft shadow on the map, a brass pin
+    -- through its top middle, above the title (ns.PaperSlip, ns.PaperPin, above)
+    ns.PaperSlip(list, 0.55, 0.75, 0.12, 0.42)
+    ns.PaperPin(list, -9)
     listTitle = CreateFrame("Button", nil, list)
     listTitle:SetPoint("TOPLEFT", 0, -12)
     listTitle:SetPoint("RIGHT", list, "RIGHT")
@@ -1037,11 +1074,7 @@ local function CreateList(parent)
         GameTooltip:Show()
     end)
     listTitle:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    list.rule = list:CreateTexture(nil, "ARTWORK")
-    list.rule:SetColorTexture(P_SOFT[1], P_SOFT[2], P_SOFT[3], 0.3)
-    list.rule:SetHeight(1)
-    list.rule:SetPoint("TOPLEFT", 8, -39)
-    list.rule:SetPoint("TOPRIGHT", -8, -39)
+    list.rule = ns.InkRule(list, 9, -39)
     list.lucky = list:CreateFontString(nil, "OVERLAY")
     SetHand(list.lucky, 13)
     list.lucky:SetTextColor(P_SOFT[1], P_SOFT[2], P_SOFT[3])

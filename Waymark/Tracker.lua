@@ -272,9 +272,15 @@ local function OnQuestEvent(event, a, b)
     end
 end
 
+-- Controller mode (the gamepad UI): the game's quest log and map stay shut to our code, see OpenLog
+local function GamepadUI()
+    return InputUtil and InputUtil.IsGamepadUIEnabled and InputUtil.IsGamepadUIEnabled() or false
+end
+
 -- Opening the quest log at a quest. (On Forever, opening it from addon code
 -- with the gamepad UI on taints its bindings, which crashes: Questie warns too.)
 local function OpenLog(id)
+    if ns.Trail then ns.Trail("open the game's quest log") end
     if InCombatLockdown() then ns.Log("can't open the quest log in combat") return end
     if InputUtil and InputUtil.IsGamepadUIEnabled and InputUtil.IsGamepadUIEnabled() then
         ns.Log("opening the quest log from the tracker is off in controller mode")
@@ -301,6 +307,18 @@ local function OpenLog(id)
     if not logFrame:IsShown() then ShowUIPanel(logFrame) end
     if QuestLog_Update then pcall(QuestLog_Update) end
     if QuestLog_UpdateQuestDetails then pcall(QuestLog_UpdateQuestDetails) end
+end
+
+-- The game's world map at a quest (tracker.click "map"): Forever's map with the quest's details
+-- beside it; a client without that, its quest log.
+local function OpenOnMap(id)
+    if InCombatLockdown() or GamepadUI() then return OpenLog(id) end
+    if QuestMapFrame_OpenToQuestDetails and id and LogIndex(id) then
+        if ns.Trail then ns.Trail("open the game's map at a quest") end
+        QuestMapFrame_OpenToQuestDetails(id)
+        return
+    end
+    OpenLog(id)
 end
 
 -- Where -------------------------------------------------------------------------
@@ -919,12 +937,18 @@ local function Row(i)
             local page = ns.NotebookQuestPage and ns.NotebookQuestPage(id)
             if page then items[#items + 1] = { "in the found notes", function() ns.OpenNotebook(page, nil, true) end } end
             if ns.QuillMenu then ns.QuillMenu(items) end
+        elseif IsShiftKeyDown() and ns.LinkQuestInChat(q.id, q.title) then
+            return  -- (chat open: shift-click links it, as in the game's log)
         elseif q.untracked then
             Watch(q.id)  -- (an untracked one: a click tracks it)
             ns.UpdateTracker(true)
         elseif IsShiftKeyDown() then
             ToggleWatch(q.id)  -- (untracked, it leaves the list)
             ns.UpdateTracker(true)
+        elseif Cfg().click == "details" and ns.ShowQuestWindow then
+            ns.ShowQuestWindow(q.id)
+        elseif Cfg().click == "map" and not GamepadUI() then
+            OpenOnMap(q.id)
         else
             Cfg().folded[q.id] = not Cfg().folded[q.id] or nil
             ns.UpdateTracker(true)
@@ -1289,15 +1313,24 @@ end
 -- longer jumps (Caetras, 2026-11-08). See-through and tiny instead, for mouse
 -- players too: Forever switches between mouse and controller mode while playing,
 -- so checking the mode once at login left the hook on for anyone who began on the
--- mouse. No scripts run from us, and it can't catch a click.
+-- mouse. It can't catch a click.
+-- The scale goes through SetScaleBase, the frame's own SetScale. Edit Mode swaps SetScale on
+-- its frames for SetScaleOverride, which for this one runs ManageFramePositions and
+-- ObjectiveTrackerFrame:Update(): the game's whole tracker rebuilt from our code at login and
+-- at every open and close of our map (the trap saved it, 2026-11-10 11:30:36: Fade > SetScale >
+-- Update > SmartNavigationCloseHandler). With quests in the game's tracker that rebuild calls
+-- QuestCache:Get and the POI buttons under our taint, the cause already proved for the game's
+-- quest pins on our map (QuestPOI.lua): blocked SetPreferredGamepadInteractTarget, still
+-- reported on 1.2.7. The plain widget call runs no Lua of the game's.
 local faded = {}
 local function Fade(f, on)
+    local SetScale = f.SetScaleBase or f.SetScale
     if on and not faded[f] then
         faded[f] = f:GetScale()
         f:SetAlpha(0)
-        f:SetScale(0.001)
+        SetScale(f, 0.001)
     elseif not on and faded[f] then
-        f:SetScale(faded[f])
+        SetScale(f, faded[f])
         f:SetAlpha(1)
         faded[f] = nil
     end
@@ -2266,7 +2299,9 @@ local function ListRow(i)
             return
         end
         if button == "RightButton" then return end
-        if self.kind == "quest" and IsShiftKeyDown() then
+        if self.kind == "quest" and IsShiftKeyDown() and ns.LinkQuestInChat(self.questID) then
+            return  -- (chat open: a link, as in the game's log)
+        elseif self.kind == "quest" and IsShiftKeyDown() then
             ToggleWatch(self.questID)  -- (shift-click: track, as in the game's log)
             ns.UpdateTracker(true)
             ns.Safe("Quest window", FillQuestWindow)

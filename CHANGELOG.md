@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.8 (2026-11-11)
+
+**Controller players: another cause of the blocked-action error is out, and a blocked action now comes with a report you can copy.**
+
+New
+- When the game blocks something of Waymark's, the chat line has a [Copy a report] link (or type /waymark report). It opens a window with what Waymark was doing just before. Paste it in a comment on Waymark's CurseForge page: it tells us where to look. No character or realm names are in it.
+- Quest tracker: with chat open, Shift-click a quest to link it in chat. The quest window's rows do the same.
+- Quest tracker: choose what a click on a quest does. Settings > Tracker > "Click a quest": fold its objectives (as before), open its details, or open the game's map.
+
+Changed
+- The book: the last spread has a new pocket and letter, and more pages have new lines and drawings.
+
+Fixed
+- Controller (gamepad UI): "Waymark tried to call SetPreferredGamepadInteractTarget()" could still come with the game's quest tracker hidden by Waymark (the default) and quests tracked. Hiding it made the game rebuild its tracker on Waymark's account, at login and whenever Waymark's map opened or closed. It no longer does.
+- "Button:SetPassThroughButtons()" in a fight: two places where it could come from are closed (the quest-area marker, and the map loading after a reload in a fight). If you still see it, please send the report.
+- Undercity and Ironforge: the map no longer draws the land above over the city's own map.
+- A drawing in the book no longer lies over the last line of a page's text.
+
 ## 1.2.7 (2026-11-10)
 
 **Controller players: the blocked-action error and the broken jump button are fixed, and there's a new Fisherman's mode.**

@@ -27,6 +27,8 @@ end
 -- failure would hide a bug): label says where
 local Spent, depth
 function ns.Safe(label, fn, ...)
+    local trail = ns.Trail  -- (Report.lua: what Waymark did lately, for a report of a blocked action)
+    if trail then trail(label) end
     local t = debugprofilestop()
     depth = depth + 1
     local ok, err = pcall(fn, ...)

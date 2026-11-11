@@ -144,6 +144,7 @@ end
 function ns.Ask(o)
     if not o then return end
     box = box or Make()
+    if ns.Trail then ns.Trail("question box: " .. tostring(o.text):sub(1, 40)) end
     if current then Close(false) end
     current = o
     local f = box

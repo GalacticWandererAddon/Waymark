@@ -2985,7 +2985,7 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     local a = Column(p, 0, 0, HALF)
     a:Header("Quest tracker", ns.ToggleIcon("tracker"))
     a:Check("Show the quest tracker", "tracker", "shown")
-    a:Tip("Your tracked quests with something to do in this zone, and their objectives.", "Click: fold. Right-click: view details, find on map. Shift-click: stop tracking. Hover: its areas light up. Wheel: scroll.")
+    a:Tip("Your tracked quests with something to do in this zone, and their objectives.", "Right-click: view details, find on map. Shift-click: stop tracking, or with chat open, link it. Hover: its areas light up. Wheel: scroll.")
     -- (hideGameTracker: false, true (while ours shows) or "always")
     a:Choice("The game's quest tracker", "tracker", "hideGameTracker", {
         { "show", "Shown" }, { "with", "Hidden while this one shows" }, { "always", "Hidden always" },
@@ -2998,6 +2998,12 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     end)
     a:Tip("The game's own tracker, under the minimap. Hidden while this one shows: back when the map or this tracker closes. Hidden always: gone even then.")
     a:Requires("tracker", "shown")
+    a:Choice("Click a quest", "tracker", "click", {
+        { "fold", "Fold its objectives" }, { "details", "Open its details" }, { "map", "Open the game's map" },
+    }, function() return T().click or "fold" end, function(v)
+        T().click = v ~= "fold" and v or nil
+    end)
+    a:Tip("Its details: Waymark's quest window. The game's map: the world map with the quest beside it; with a controller, its objectives fold instead.")
     a:Check("Attach to the map", "tracker", "detached", true)  -- (ticked: not detached)
     a:Tip("Attached, it moves, fades and hides with the map. Off, it goes anywhere and stays open when the map closes.", "Off: drag its edge or zone name to move it, its corner to size it.")
     a:Requires(function() return T().shown and T().detached end)
