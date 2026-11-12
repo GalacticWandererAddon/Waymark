@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.9 (2026-11-12)
+
+**Controller players: the blocked-action report now catches where the error begins.**
+
+Changed
+- The report for a blocked action ([Copy a report] in chat, or /waymark report) now also names the moment Waymark first touched the game's world map, and what Waymark was doing just then. With the controller UI on, Waymark looks for that moment as you play: a few light checks, nothing of the game's changed.
+- The report lists more of what was touched: one long entry no longer crowds out the rest.
+- Waymark's map no longer announces its own map changes to the game.
+
+Still open
+- "SetPreferredGamepadInteractTarget()" can still come up with a controller. 1.2.8 took out one cause, not all of them. If you see it on 1.2.9, please paste the report in a comment on Waymark's CurseForge page: this version's report should show where it starts.
+- "Button:SetPassThroughButtons()" in a fight: the same, please send the report.
+
 ## 1.2.8 (2026-11-11)
 
 **Controller players: another cause of the blocked-action error is out, and a blocked action now comes with a report you can copy.**

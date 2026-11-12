@@ -1918,6 +1918,42 @@ local function Setup()
             end
         end
     end
+    -- Forever, the gamepad block again (a player's 1.2.8 report, 2026-11-11: the world map's zoom
+    -- levels, scales, view rect and scroll extents written as ours, the very fields its
+    -- ScrollContainer:SetMapID writes). The game's EventRegistry counts an event while it fires
+    -- (executingEvents) and clears the count after, and reads it unguarded at the next firing. Fired
+    -- from our map, count and clearing are written as ours (a cleared slot keeps its mark for a
+    -- while), so the game's own next firing of that event runs as ours from there on. The map canvas
+    -- fires "MapCanvas.MapSet" at every map change: ours, then the world map's. So our map changes
+    -- map without that event (the client's SetMapID less that line), and the game's pins on it don't
+    -- fire the world map's legend events when hovered or released.
+    if ns.FOREVER and sc and sc.SetMapID and sc.OnCanvasSizeChanged and sc.Child and map.AddMaskableTexture then
+        sc.SetMapID = function(self, mapID)
+            self.mapID = mapID
+            self:OnCanvasSizeChanged()
+            if self.Child.TiledBackground then self:GetMap():AddMaskableTexture(self.Child.TiledBackground) end
+        end
+        local function Nothing() end
+        local function QuietPin(pin)
+            if pin.bfiQuiet then return end
+            pin.bfiQuiet = true
+            if pin.OnLegendPinMouseEnter then
+                pin.OnLegendPinMouseEnter, pin.OnLegendPinMouseLeave = Nothing, Nothing
+            end
+        end
+        local queued
+        local function QuietPins()
+            queued = nil
+            pcall(EachPin, map, QuietPin)
+        end
+        hooksecurefunc(map, "AcquirePin", function()
+            if not queued then
+                queued = true
+                C_Timer.After(0, QuietPins)
+            end
+        end)
+        QuietPins()
+    end
     if ns.SetupTransports then ns.SetupTransports(map) end
     if ns.SetupFishing then ns.SetupFishing(map) end
     if ns.SetupMapHour then ns.SetupMapHour(map) end

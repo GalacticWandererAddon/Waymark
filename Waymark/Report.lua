@@ -36,6 +36,16 @@ function ns.Trail(text)
     e.t, e.text, e.n = now, text, 1
 end
 
+-- the trail as lines, times counted from t0
+local function TrailLines(Add, t0)
+    for k = 1, N do
+        local e = trail[(head + k - 1) % N + 1]
+        if e and e.text then
+            Add(string.format("  %+.1f  %s%s", e.t - t0, e.text, e.n > 1 and (" (x" .. e.n .. ")") or ""))
+        end
+    end
+end
+
 -- the nearest line of ours below a hook: "(Dungeon.lua:43)", or the game's own call
 local MINE = "AddOns/" .. addonName .. "/"
 local function Caller()
@@ -69,8 +79,12 @@ function ns.TaintSweep(maxVisits, maxFound)
         for k, v in pairs(t) do
             visits = visits + 1
             local ok, secure, by = pcall(issecurevariable, t, k)
-            if ok and not secure and by == addonName then out[#out + 1] = path .. "." .. tostring(k) end
-            if type(v) == "table" and depth > 0 then Walk(v, path .. "." .. tostring(k), depth - 1) end
+            if ok and not secure and by == addonName then
+                -- (a table we made: its fields are all ours, and listing them hid the rest)
+                out[#out + 1] = path .. "." .. tostring(k) .. (type(v) == "table" and " (and all in it)" or "")
+            elseif type(v) == "table" and depth > 0 then
+                Walk(v, path .. "." .. tostring(k), depth - 1)
+            end
         end
     end
     for _, root in ipairs(ROOTS) do
@@ -89,6 +103,66 @@ function ns.TaintSweep(maxVisits, maxFound)
         end
     end
     return out, visits
+end
+
+-- The first touch -----------------------------------------------------------------------------
+-- A controller block comes long after its cause: the world map's own view values turn "ours"
+-- first, and the trail at the block shows nothing of that moment (the 1.2.8 report, 2026-11-11).
+-- So with the controller UI on (and always in the dev copy) those values are asked each frame,
+-- five cheap questions, and the frame the first turns ours is kept with what the world map did
+-- last and the trail up to then. Once: the watch ends there. Reads only, nothing of the game's
+-- hooked or written.
+local WATCH = { "mapID", "zoomLevels", "baseScale", "targetScale", "edgePanDistance" }
+do
+    local watcher = CreateFrame("Frame")
+    local started, since, on = GetTime(), 0, false
+    local primed, lastMap, lastW, lastH, wasShown, mapAt, sizeAt, shownAt
+    local function Ago(t, now)
+        return t and string.format("%.1f s before", now - t) or "not since the watch began"
+    end
+    watcher:SetScript("OnUpdate", function(self, elapsed)
+        if not on then
+            -- (is there a reason to watch? asked every two seconds)
+            since = since + elapsed
+            if since < 2 then return end
+            since = 0
+            on = (ns.DevCommands ~= nil) or (InputUtil and InputUtil.IsGamepadUIEnabled
+                and InputUtil.IsGamepadUIEnabled()) or false
+            if not on then return end
+        end
+        local wm = WorldMapFrame
+        local sc = wm and wm.ScrollContainer
+        if not sc or not issecurevariable then return end
+        local now = GetTime()
+        local id, w, h, shown = wm.mapID, wm:GetWidth(), wm:GetHeight(), wm:IsShown()
+        if primed then
+            if id ~= lastMap then mapAt = now end
+            if w ~= lastW or h ~= lastH then sizeAt = now end
+            if shown ~= wasShown then shownAt = now end
+        end
+        primed, lastMap, lastW, lastH, wasShown = true, id, w, h, shown
+        local found
+        for _, k in ipairs(WATCH) do
+            local secure, by = issecurevariable(sc, k)
+            if not secure and by == addonName then found = (found and (found .. ", ") or "") .. k end
+        end
+        if not found then return end
+        self:SetScript("OnUpdate", nil)
+        local L = {}
+        local function Add(...) L[#L + 1] = table.concat({ ... }) end
+        Add("First touched: the world map's ", found, " (", date("%H:%M:%S"), ", ",
+            string.format("%.0f", now - started), " s after loading). World map ", shown and "open" or "closed",
+            ", ", shown and "opened " or "closed ", Ago(shownAt, now), "; its map (", tostring(id), ") changed ",
+            Ago(mapAt, now), "; its size changed ", Ago(sizeAt, now),
+            InCombatLockdown() and ". In a fight" or "", ".")
+        Add("What Waymark did just before that:")
+        TrailLines(Add, now)
+        ns.FirstTouch = L
+        WaymarkDB = WaymarkDB or {}
+        WaymarkDB.firstTouch = table.concat(L, "\n")
+        WaymarkDB.firstTouchWhen = date("%Y-%m-%d %H:%M")
+        if ns.DevCommands and ns.Log then ns.Log("the world map's values turned ours: /waymark report") end
+    end)
 end
 
 -- The report ---------------------------------------------------------------------------------
@@ -143,11 +217,10 @@ local function Build()
     Add("")
     Add("What Waymark did just before (seconds before the first block):")
     local t0 = blocks[1] and blocks[1].t or GetTime()
-    for k = 1, N do
-        local e = trail[(head + k - 1) % N + 1]
-        if e and e.text then
-            Add(string.format("  %+.1f  %s%s", e.t - t0, e.text, e.n > 1 and (" (x" .. e.n .. ")") or ""))
-        end
+    TrailLines(Add, t0)
+    if ns.FirstTouch then
+        Add("")
+        for _, line in ipairs(ns.FirstTouch) do Add(line) end
     end
     if pad then
         Add("")
@@ -303,6 +376,8 @@ end
 
 function ns.ShowReport()
     local text = WaymarkDB and WaymarkDB.report
+    -- (nothing blocked, but the first touch seen this session: that alone)
+    if not text and ns.FirstTouch then text = table.concat(ns.FirstTouch, "\n") end
     if not text then
         print("|cff33ff99Waymark:|r nothing has been blocked yet, so there's no report.")
         return
