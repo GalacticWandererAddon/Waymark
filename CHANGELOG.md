@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.3.0 (2026-11-16)
+
+**The map gets its land: shaded hills, pencil where you've only looked, boats where they really are, and your quests as the quest giver told them.**
+
+New
+- **The land has shape.** The whole map is shaded from the game's own terrain, zones and continents both. The light goes round with the time of day.
+- **Pencil where you've only looked.** Land you have seen but not walked is sketched in pencil. It takes its colour when you walk it. Simple now starts this way: unexplored land is blank, and fills in as you go.
+- **Boats where they really are.** Once you've ridden a boat or zeppelin, the map draws it where it is on its crossing.
+- **As told.** A small panel with your quest in the quest giver's own words, and the places they named pencilled on the map. Every quest in the game has been read for it.
+- **What kills here.** In a dungeon, the things that wipe groups are marked on its map with a note beside it. Click one for what to do about it. No boss guides.
+- **Search the map.** A magnifier in the map's corner. Type a trainer, a service or an item a vendor sells, and the map shows the closest one.
+- **The notebook has drawings.** Each dungeon's "before we go" page opens on a pen drawing of the place, and a small campfire on the zone map shows where it was drawn.
+- **Hold to glance.** Hold the map's key and the map is there only while you hold it. The map can also fold out of the way when you open a window over it.
+- **New frames** for the map, the tracker and the tooltips: Engraver's corners, Moonlit silver and Sun gold.
+- **Ready-made looks** for the header and border, one choice on Header & border. Each puts the header where it fits.
+- **Settings you can find things in.** One list of nine entries, and a Start here page that shows everything Waymark can do, each with its switch.
+- Clear view cuts the six capital cities and Forever's newer zones to their own outlines.
+- The quest window shows what a quest giver says for the next step in a chain.
+- Forever's new vendors have their stock, and Forever's new boss drops are in the loot lists.
+
+Changed
+- The download is bigger, about 58 MB: the shaded land is most of it. Performance mode rests the shading and the pencil on handhelds and older PCs.
+- The download holds one folder now, `Waymark`. If you install by hand, you can delete the old `BattlefieldInfo` folder.
+- The small "?" marks under quest pins on the notebook's dungeon maps are gone. Bare of their pins they looked like turn-ins.
+
+Fixed
+- Clear view with the pencil on stopped halfway through cutting the map to the zone's shape.
+- The header sat too low after picking a ready-made setup or look.
+- The map moved to the right on a /reload.
+- Map art sat over the border's corners.
+- Controller: typing in chat could lose its focus after a blocked-action report opened.
+
+Known
+- With Waymark's quest tracker switched off again, the game's own tracker can stay hidden. Chat says so when it happens: a /reload brings it back.
+- Class trainers don't have their lists yet. A right-click says so.
+- A few of Forever's newest dungeons have no map pictures yet.
+- "SetPreferredGamepadInteractTarget()" can still come up with a controller. If you see it, click [Copy a report] in the chat line and paste it in a comment on Waymark's CurseForge page.
+
 ## 1.2.9 (2026-11-12)
 
 **Controller players: the blocked-action report now catches where the error begins.**

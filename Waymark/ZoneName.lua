@@ -4,7 +4,9 @@ local GetZonePVPInfo = GetZonePVPInfo or ns.GetZonePVPInfo
 -- The header: where you are, by name (the sub-zone, or the zone where there's no
 -- sub-zone), on the zone map and in caves alike. zoneName:
 --   shown      on/off
---   mode       "header" above the map, "inside" at the top inside it, "below" under it
+--   mode       "header" above the map, "below" under it. ("inside", at the top inside it, is gone since
+--              2026-11-15: the nudge does it. A header still "inside" is turned into "header" with the
+--              nudge that keeps it on the very spot, the first time it is laid out (Layout).)
 --   style      the art behind it (STYLES below)
 --   font, fontSize, align, fullWidth (as wide as the map)
 --   showZone   "Sentinel Hill, Westfall"; levels: the zone's level range, coloured
@@ -26,7 +28,9 @@ local SILVER_EDGE = { 0.62, 0.65, 0.72 }
 
 -- Each style: how the backing is made, the text colour, and its padding
 local STYLES = {
-    plate     = { text = GOLD, padX = 10 },  -- the classic dialog header plate
+    -- the classic dialog header plate. Its own frame is the plate's art: a header border round it drew a second
+    -- frame round the first (the user, 2026-11-15: "doubles them because classic plate brings its own")
+    plate     = { text = GOLD, padX = 10, ownEdge = true },
     stone     = { text = GOLD, padX = 16, backdrop = {
                     bgFile = "Interface\\FrameGeneral\\UI-Background-Rock",
                     edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
@@ -47,7 +51,8 @@ local STYLES = {
                     tile = true, tileSize = 16, edgeSize = 14,
                     insets = { left = 3, right = 3, top = 3, bottom = 3 } },
                   bgColor = { 0, 0, 0, 0.85 } },
-    text      = { text = GOLD, padX = 4, outline = true },
+    -- (text only is lettering, never framed: a header border set for another style drew round it, the user 2026-11-15)
+    text      = { text = GOLD, padX = 4, outline = true, ownEdge = true },
 }
 ns.HEADER_STYLES = STYLES
 
@@ -282,6 +287,36 @@ local function Layout(map)
     -- your nudge (offsets are in the header's own units, so they stay the same on
     -- screen at any map scale)
     local dx, dy = c.offsetX or 0, c.offsetY or 0
+    -- the anchor's top over the map area's, in the header's units (0 where our border is the anchor)
+    local function Lift()
+        if anchor == area then return 0 end
+        local at, rt = anchor:GetTop(), area:GetTop()
+        if not (at and rt) then return nil end
+        return (at * anchor:GetEffectiveScale() - rt * area:GetEffectiveScale()) / header:GetEffectiveScale()
+    end
+    -- "Inside, at the top" left the settings (the user, 2026-11-15: "Remove inside at the top header location.
+    -- Nudges do the job"; "Make sure existing users dont have their header jump"). Its top sat at the map
+    -- area's top - 2 + dy; above the map, its bottom sits at the anchor's top + out + 2 - overlap + dy'. The
+    -- same spot: dy' = dy - 2 - h - (lift + out + 2 - overlap). Where the map is not laid out yet, it stays
+    -- inside this once and is turned the next time.
+    -- (Not before the map's border has been set once, Style.lua: on a fresh install the first layout came
+    -- before it, the header measured itself against the game's own frame, 20 px higher, and sat that much
+    -- too low on the map for good. The user, 2026-11-16: "Its too low on the map".)
+    -- (Nor while the border on the map is still an older one than the settings ask for: a premade look
+    -- sets the header first and the border after, and the header, measured against the look before, sat
+    -- too low. The user, 2026-11-16: "Headers get placed too low when choosing premade looks". Style.lua
+    -- lays the header out again once the border is the new one.)
+    if c.mode == "inside" and ns.styleApplied and ns.styleApplied == ns.StyleKey() then
+        local lift = Lift()
+        if lift then
+            local ny = math.floor(dy - 2 - h - (lift + out + 2 - overlap) + 0.5)
+            -- (what was turned into what: a preset still says "inside" in its file, and Setups.lua reads this
+            -- so the turn of our own making does not count as the player's change)
+            c.insideWas = { was = c.offsetY or 0, now = ny }
+            c.mode, c.offsetY, dy = "header", ny, ny
+            if type(c.nudges) == "table" then c.nudges.inside = nil end
+        end
+    end
     if c.mode == "inside" then
         header:SetPoint("TOP", area, "TOP", dx, -2 + dy)
     elseif c.mode == "below" then
@@ -295,7 +330,10 @@ local function Layout(map)
     local close = map.BorderFrame and map.BorderFrame.CloseButton
     if close then top = math.max(top, close:GetFrameLevel()) end
     if ns.BorderLevel then top = math.max(top, ns.BorderLevel()) end
-    if c.mode == "inside" then top = math.max(top, area:GetFrameLevel() + 5600) end
+    -- (inside the map, above its pins: a header nudged down over the map's edge as well)
+    local lift = c.mode == "header" and Lift()
+    local reach = c.mode == "inside" and (dy - 2 - h) or (lift and (lift + out + 2 - overlap + dy)) or nil
+    if c.mode == "inside" or (reach and reach < 0) then top = math.max(top, area:GetFrameLevel() + 5600) end
     header:SetFrameLevel(math.min(top + 10, 9800))
     edge:SetFrameLevel(header:GetFrameLevel() + 1)
     header.front:SetFrameLevel(header:GetFrameLevel() + 3)
@@ -308,7 +346,8 @@ local function Layout(map)
         -- (from where the header's bottom really is: nudged up over the edge,
         -- it covers less of the map, or none)
         local y = -8
-        if c.shown and c.mode == "inside" then y = math.min(y, -2 + dy - h - 6) end
+        -- (reach: the header's bottom against the map area's top; under it, it covers the map)
+        if c.shown and reach and reach < 0 then y = math.min(y, reach - 6) end
         hl:SetScale(inv)
         hl:SetPoint("TOPLEFT", area, "TOPLEFT", 0, y)
         hl:SetPoint("TOPRIGHT", area, "TOPRIGHT", 0, y)
@@ -440,7 +479,7 @@ function ns.MapFrameMenu()
           function() if ns.ToggleMapLock then ns.ToggleMapLock() end end },
     }
     if docked and ns.DockHasSpot and ns.DockHasSpot() then
-        items[#items + 1] = { "back to the minimap's spot", ns.DockSpotReset }
+        items[#items + 1] = { "reset position", ns.DockSpotReset }
     end
     -- (folding is the window's: not over the minimap)
     if not docked and ns.ToggleCollapse then

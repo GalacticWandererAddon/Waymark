@@ -286,6 +286,7 @@ local function CreateCheck(parent, label, get, set, invert, width, icon, row)
             if not ns.SetIconArt(c, tex, icon) and icon:find("\\Icons\\", 1, true) then
                 tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)  -- (a spell or item icon: without its frame)
             end
+            c.iconTex = tex
             text:SetPoint("LEFT", tex, "RIGHT", 4, 0)
             room = 50
         else
@@ -558,7 +559,12 @@ local ROW_W, ROW_LABEL, SEC_IN = 620, 290, 20
 -- A section you haven't touched starts folded, on every page but Start here (the user, 2026-11-06)
 local function SectionFolded(key)
     local v = ns.db.optionsWindow.folded[key]
-    if v == nil then return key:sub(1, 9) ~= "overview/" end
+    -- (nor on the two pages made to be read down in one go: what the map does by itself, and the keys'
+    -- first two groups)
+    if v == nil then
+        return not (key:sub(1, 9) == "overview/" or key:sub(1, 5) == "acts/"
+            or key == "keys/The keys worth having" or key == "keys/With a controller")
+    end
     return v
 end
 
@@ -725,6 +731,7 @@ local function Column(parent, x, y, width, side)
         EndIndent(self.y)
         if type(group) == "function" then
             dep = group
+            if key == true then StartIndent() end  -- (a switch of its own making right above)
         elseif key then
             local get = LayerSetting(group, key)
             dep = function() return get() and true or false end
@@ -789,6 +796,8 @@ local function Column(parent, x, y, width, side)
             b:SetScript("OnEnter", function() fs:SetTextColor(1, 0.82, 0) end)
             b:SetScript("OnLeave", function() fs:SetTextColor(INK_HEAD[1], INK_HEAD[2], INK_HEAD[3]) end)
             Index(text, self.y, h)
+            parent.bfiHeads = parent.bfiHeads or {}   -- (the scroll bar's marks: BuildPage)
+            table.insert(parent.bfiHeads, { key = key, text = text, y = self.y })
             local line = parent:CreateTexture(nil, "ARTWORK")
             line:SetPoint("TOPLEFT", hx + 18, self.y - h + 1)
             line:SetSize(baseW + secIn - 18, 1)
@@ -898,7 +907,7 @@ local function Column(parent, x, y, width, side)
             end
             get = function()
                 local v = View()
-                if v then return ns.db[v].sizes[group] end
+                if v then return ns.db[v].sizes[group] end   -- (the place's own slider comes on top: ns.TownPinSize)
                 return get0()
             end
             set = function(value)
@@ -1114,11 +1123,14 @@ local function Column(parent, x, y, width, side)
     end
     -- a checkbox with its own get/set, for values that aren't a plain setting
     -- compact: a smaller box and tighter rows (long lists); icon: see CreateCheck
-    function col:CheckWith(label, get, set, compact, icon)
+    -- marks: { { group, key }, ... }: the settings this row stands for, so "its settings" from a map button
+    -- (ns.ShowOption) lands on it
+    function col:CheckWith(label, get, set, compact, icon, marks)
         if Skipped() then return end
         local c = CreateCheck(parent, label, get, set, nil, width, icon, rows and ctrlX - x)
         if compact then c:SetSize(20, 20) end
         local h = PlaceCheck(c, compact)
+        for _, m in ipairs(marks or {}) do Mark(parent, m[1], m[2], x, self.y, width, h) end
         Made(c, label, Index(label, self.y, h))
         self.y = self.y - h
     end
@@ -1129,7 +1141,10 @@ local function Column(parent, x, y, width, side)
         local present = not f[7] or ns.AddonPresent(f[7])
         local get, set = LayerSetting(f[4], f[5])
         if f.get then get, set = f.get, f.set end
-        local c = CreateCheck(parent, f[1], get, set, nil, width - 120)
+        -- (its map button's icon, where it has one: "We should use icons where we have and it fits, it reads
+        -- easier", the user 2026-11-15)
+        local c = CreateCheck(parent, f[1], get, set, nil, width - 120, f.icon or (ns.LayerIcon and ns.LayerIcon(f[4], f[5])))
+        if f.iconSize and c.iconTex then c.iconTex:SetSize(f.iconSize, f.iconSize) end
         c:SetPoint("TOPLEFT", x, self.y)
         local desc = c:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         Ink(parent, desc, INK_SOFT)
@@ -1147,7 +1162,7 @@ local function Column(parent, x, y, width, side)
         go:SetSize(26, 20)
         go:SetPoint("TOPRIGHT", parent, "TOPLEFT", x + width - 12, self.y - 2)
         go:SetText(">")
-        go:SetScript("OnClick", function() ns.OpenOptionsPage(f[6]) end)
+        go:SetScript("OnClick", function() ns.OpenOptionAt(f[6], f[4], f[5]) end)
         -- hovering it: a tooltip, and the page it opens lights up in the list
         go:SetScript("OnEnter", function()
             GameTooltip:SetOwner(go, "ANCHOR_RIGHT")
@@ -1573,51 +1588,33 @@ local function Needs(title, addon)
     return title .. "  |cffff6a4dneeds " .. addon .. "|r"
 end
 
--- The map border's and the header's looks, for Start here and Header & border
+-- The map border's and the header's looks, for Start here and Header & borders
 local BORDER_STYLES = {
     { "game", "The game's own" }, { "dialog", "Classic dialog" }, { "gold", "Gold" },
     { "tooltip", "Tooltip" }, { "wood", "Wood" }, { "line", "Thin line" }, { "none", "None" },
 }
+-- Wood and Gold are trimmed from every border list (the user, 2026-11-15: "Gold is just classic dialog with
+-- a tint"). Gold is still drawn for a player who has it saved, and listed for that player alone, so their
+-- box is not blank. Wood is gone for everyone: saved ones become Classic dialog (ns.NoWood).
+local function Trimmed(list, saved)
+    local out = {}
+    for _, row in ipairs(list) do
+        if row[1] ~= "wood" and (row[1] ~= "gold" or saved == "gold") then out[#out + 1] = row end
+    end
+    return out
+end
 local HEADER_STYLES = {
     { "plate", "Classic plate" }, { "tan", "Tan leather" }, { "stone", "Stone" },
     { "parchment", "Parchment" }, { "tooltip", "Dark" }, { "text", "Text only" },
 }
 
--- Start here's quest help: the quest layers in steps (the Quests page has each). Objectives (obj) go
--- by the one switch, in the look you have: never the game's by themselves.
-local QUEST_LAYERS = { "questie", "turnins", "learned", "tracker" }
-local QUEST_HELP = {
-    { "none", "None", {} },
-    { "givers", "Quest givers", { questie = true, turnins = true, learned = true } },  -- (who gives and who takes)
-    { "tracker", "Quest givers & the tracker", { questie = true, turnins = true, learned = true, tracker = true } },
-    { "all", "Everything, objectives too", { questie = true, turnins = true, learned = true, tracker = true }, obj = true },
-}
-local function QuestHelp()
-    for _, h in ipairs(QUEST_HELP) do
-        local same = ns.ObjectivesOn() == (h.obj or false)
-        for _, g in ipairs(QUEST_LAYERS) do
-            if (ns.db[g].shown and true or false) ~= (h[3][g] or false) then same = false end
-        end
-        if same then return h[1] end
-    end
-    return "mix"
+-- The Style row of the map's border or of the header: where Frames.lua is in the build, its frame sets are more
+-- styles in the same list (ns.FrameStyle: the engraver's corners, the silver, the gold).
+local function StyleChoice(col, label, part, group, key, list)
+    if not ns.FrameStyle then return col:Choice(label, group, key, list) end
+    local rows, get, set = ns.FrameStyle(part, list, Setting(group, key))
+    col:Choice(label, group, key, rows, get, set)
 end
-local function SetQuestHelp(v)
-    for _, h in ipairs(QUEST_HELP) do
-        if h[1] == v then
-            for _, g in ipairs(QUEST_LAYERS) do
-                local want = h[3][g] or false
-                if ns.db[g].shown ~= want then
-                    ns.db[g].shown = want
-                    ns.OnSettingChanged(g, "shown")
-                end
-            end
-            ns.SetObjectives(h.obj or false)
-        end
-    end
-end
-local QUEST_HELP_CHOICES = { { "mix", "Your own mix (Quests page)" } }
-for _, h in ipairs(QUEST_HELP) do QUEST_HELP_CHOICES[#QUEST_HELP_CHOICES + 1] = { h[1], h[2] } end
 
 -- the map's role: a window, clear view, or over the minimap
 local function MapRole()
@@ -1631,6 +1628,8 @@ local function SetMapRole(v)
         end
     end
 end
+
+ns.MapRole, ns.SetMapRole = MapRole, SetMapRole  -- (the welcome page: Welcome.lua)
 
 -- Pages -----------------------------------------------------------------
 
@@ -1722,6 +1721,22 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
         who:SetJustifyH("LEFT")
         who:SetText(pr.who)
         local h = math.max(54, 9 + name:GetStringHeight() + 3 + who:GetStringHeight() + 10)
+        -- Apply on the picked card itself: with eight cards the box below, with what it would change and its
+        -- own Apply, lies under the fold, and a click on a card seemed to do nothing. (First tried: scrolling
+        -- the box into view. "Apply on the card", the user 2026-11-15.) Not on the card you are on: its
+        -- Restore and save row are in the box.
+        if picked and pr.id ~= base and #ns.PresetChanges(pr.id) > 0 then
+            local go = RedButton(card)
+            go:SetText("Apply")
+            go:SetSize(90, 20)
+            go:SetPoint("BOTTOMRIGHT", -8, 7)
+            go:SetScript("OnClick", function()
+                ns.ApplyPreset(pr.id)
+                presetDone = "Applied."
+                ns.RebuildOptionsPages()
+            end)
+            h = h + 24
+        end
         card:SetHeight(h)
         rowH = math.max(rowH, h)
         card:SetScript("OnClick", function()
@@ -1843,20 +1858,23 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
             nameBox:SetText(pick.mine and pick.name or (pick.name .. " (altered)"))
             nameBox:SetCursorPosition(0)
             local save = RedButton(box)
-            save:SetText("Save as new and restore")
+            -- (you stay on what you saved: it used to put the old preset's rows back over your settings. "should
+            -- not change you to the restored preset, but instead keep your current", the user 2026-11-15. The
+            -- old preset's card is itself again either way: you are on your own now.)
+            save:SetText("Save as your own preset")
             save:SetSize((save:GetFontString():GetStringWidth() or 160) + 30, 22)
             save:SetPoint("LEFT", nameBox, "RIGHT", 8, 0)
             save:SetScript("OnClick", function()
                 local n = strtrim(nameBox:GetText() or "")
-                if ns.SavePresetAs(n, true) then
-                    Done("Saved \"" .. n .. "\" as a preset of your own (a card here, and on the Your presets page); "
-                        .. pick.name .. " is restored.")
+                if ns.SavePresetAs(n) then
+                    presetPick = "my:" .. n
+                    Done("Saved \"" .. n .. "\" as a preset of your own, and you are on it. " .. pick.name .. " is as it was.")
                 end
             end)
             save:SetScript("OnEnter", function()
                 GameTooltip:SetOwner(save, "ANCHOR_RIGHT")
-                GameTooltip:SetText("Save as new and restore", 1, 0.82, 0)
-                GameTooltip:AddLine("Your settings now become a preset of your own under the name beside it: a card here, and a setup on the Setups page. Then " .. pick.name .. " is put back.", 1, 1, 1, true)
+                GameTooltip:SetText("Save as your own preset", 1, 0.82, 0)
+                GameTooltip:AddLine("Saves your current settings as a new preset under the name beside it. Nothing on your map changes. " .. pick.name .. " stays as it is.", 1, 1, 1, true)
                 GameTooltip:Show()
             end)
             save:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -1886,9 +1904,30 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
         if altered and not onIt then
             note = note .. (note ~= "" and " " or "") .. "Your changes to " .. ns.PresetName(base) .. " aren't kept: save them on its card first."
         end
-        if onIt then note = "Restore: only these rows go back. Save as new and restore: yours are kept as a preset of your own first." end
+        if onIt then note = "Restore puts back only these rows. Save as your own preset keeps your changes as a new preset." end
         after:SetText(note)
         inner = inner + (right and math.max(22, after:GetStringHeight()) or after:GetStringHeight()) + 10
+    end
+    -- (one of your own: a way to take its card away here, where the cards pile up. Two clicks.)
+    if pick and pick.mine then
+        local del = RedButton(box)
+        del:SetText("Delete this preset")
+        del:SetSize((del:GetFontString():GetStringWidth() or 120) + 30, 22)
+        del:SetPoint("TOPLEFT", 10, -inner)
+        local sure
+        del:SetScript("OnClick", function()
+            if not sure then
+                sure = true
+                del:SetText("Click again to delete")
+                del:SetWidth((del:GetFontString():GetStringWidth() or 140) + 30)
+                return
+            end
+            ns.DeleteSetup(pick.name)
+            if ns.db.presetBase == pick.id then ns.db.presetBase = nil end
+            presetPick = nil
+            Done("Deleted \"" .. pick.name .. "\". Your settings stay as they are.")
+        end)
+        inner = inner + 22 + 8
     end
     if presetDone then
         local done = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1920,34 +1959,43 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
     w.y = w.y - inner - 12
     w:Note("Presets leave your quest pins, objectives and quest ground as you have them.")
 
-    -- then the choices that matter most, each with > to its page
-    w:Header("Main settings")
+    -- then everything Waymark can do, a line each with its switch and > to its page: what is off shows too,
+    -- so a feature nobody turned on still says it exists (the settings pass, 2026-11-14)
+    w:Header("What Waymark can do")
+    -- (page: a page's key, or a function giving one when asked)
     local function Go(top, page)
+        local function Page() if type(page) == "function" then return page() end return page end
         local go = RedButton(p)
         go:SetSize(26, 20)
         go:SetPoint("RIGHT", p, "TOPLEFT", ROW_W - 2, (top + w.y) / 2)
         go:SetText(">")
-        go:SetScript("OnClick", function() ns.OpenOptionsPage(page) end)
+        go:SetScript("OnClick", function() ns.OpenOptionsPage(Page()) end)
         go:SetScript("OnEnter", function()
             GameTooltip:SetOwner(go, "ANCHOR_RIGHT")
             GameTooltip:SetText("More settings")
             GameTooltip:Show()
-            ns.GlowNavPage(page, true)
+            ns.GlowNavPage(Page(), true)
         end)
         go:SetScript("OnLeave", function()
             GameTooltip:Hide()
-            ns.GlowNavPage(page, false)
+            ns.GlowNavPage(Page(), false)
         end)
     end
 
     -- the map's role, its three choices side by side (clear view always in reach)
+    -- With pictures (Data\RoleShots.lua, made by tools\role_shots.py from /wmshots): one above each choice,
+    -- a real corner of a screen with the map in that place. "three screenshots here? one for each mode, would
+    -- show alot", the user 2026-11-15. Without them the row is the three buttons alone.
     local top = w.y
-    local roleH = 30
+    local PIC_W, PIC_H = 176, 132
+    local pics = ns.ROLE_SHOTS
+    local picOff = pics and (PIC_H + 10 + 20) or 0   -- (and a line for the label, above them)
+    local roleH = 30 + picOff
     local label = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     Ink(p, label)
-    label:SetPoint("LEFT", p, "TOPLEFT", left, top - roleH / 2)
+    if pics then label:SetPoint("LEFT", p, "TOPLEFT", left, top - 10) else label:SetPoint("LEFT", p, "TOPLEFT", left, top - 15) end
     label:SetText("The map")
-    local roleTip = "Window: the Battlefield Map where you put it. Clear view: the map without its frame, laid over the world. Minimap: it replaces your minimap, and every map feature still works there."
+    local roleTip = "Window: a map you can move. Clear view: no frame, just the map over the world. Minimap: the map replaces your minimap."
     local hover = CreateFrame("Frame", nil, p)
     hover:SetAllPoints(label)
     hover:EnableMouse(true)
@@ -1956,13 +2004,33 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
                          { "dock", "Minimap", "minimap" } }) do
         local b = RedButton(p)
         b:SetText(r[2])
-        b:SetSize((b:GetFontString():GetStringWidth() or 60) + 30, 22)
-        if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0) else b:SetPoint("LEFT", p, "TOPLEFT", ROW_LABEL, top - roleH / 2) end
+        b:SetSize(pics and PIC_W or ((b:GetFontString():GetStringWidth() or 60) + 30), 22)
+        if prev then b:SetPoint("LEFT", prev, "RIGHT", pics and 6 or 4, 0) else
+            -- (with pictures: from the page's left edge, the label on a line above, not at the rows' control
+            -- column, where the third picture ran off the page's right edge. The user's screenshot, 2026-11-15)
+            b:SetPoint("LEFT", p, "TOPLEFT", pics and (left + 2) or ROW_LABEL, top - picOff - 15)
+        end
         b:SetScript("OnClick", function()
             SetMapRole(r[1])
             ns.RefreshControls()
         end)
         b.role = r[1]
+        local cut = pics and pics[r[1]]
+        if cut then
+            local pic = CreateFrame("Button", nil, p)
+            pic:SetSize(PIC_W, PIC_H)
+            pic:SetPoint("BOTTOM", b, "TOP", 0, 6)
+            local tex = pic:CreateTexture(nil, "ARTWORK")
+            tex:SetPoint("TOPLEFT", 2, -2)
+            tex:SetPoint("BOTTOMRIGHT", -2, 2)
+            tex:SetTexture(ns.MEDIA .. "Roles\\" .. cut.file)
+            tex:SetTexCoord(cut[1], cut[2], cut[3], cut[4])
+            b.edge = pic:CreateTexture(nil, "BACKGROUND")
+            b.edge:SetAllPoints()
+            pic:SetHighlightTexture("Interface\\Buttons\\WHITE8X8", "ADD")
+            pic:GetHighlightTexture():SetVertexColor(1, 0.82, 0, 0.12)
+            pic:SetScript("OnClick", function() b:Click() end)
+        end
         roles[#roles + 1] = b
         prev = b
     end
@@ -1980,34 +2048,66 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
         local now = MapRole()
         for _, b in ipairs(roles) do
             if b.role == now then b:LockHighlight() else b:UnlockHighlight() end
+            -- (the picture of the place the map is in: a gold edge; the others a dim one)
+            if b.edge then
+                if b.role == now then b.edge:SetColorTexture(1, 0.82, 0, 1) else b.edge:SetColorTexture(0.4, 0.37, 0.33, 0.9) end
+            end
         end
     end
     controls[#controls + 1] = roleRow
     roleRow.Refresh()
     w.y = top - roleH
-    Go(top, MapRole() == "dock" and "minimap" or "clearview")
+    -- (the arrow: the settings of the place the map is in now. It was fixed when the page was built, and for
+    -- a window it went to Clear view. "Arrow takes me to the one i selected. inteded?", the user 2026-11-15)
+    Go(top, function()
+        local now = MapRole()
+        return now == "dock" and "minimap" or now == "clear" and "clearview" or "window"
+    end)
 
+    local function Feature(name, what, group, key, page, addon)
+        w:Feature({ name, what, "", group, key, page, addon })
+    end
+    w:Header("On your map")
+    if ns.ReliefSetting then Feature("The lie of the land", "Hills, valleys and shadows from the game's real terrain.", "relief", "on", "look") end
+    if ns.PencilSetting then Feature("Land you've seen, in pencil", "Land you've seen is sketched in pencil. It gets its colour once you walk there.", "pencil", "on", "look") end
+    Feature("Townsfolk", "Trainers, vendors, innkeepers, flight masters.", "townsfolk", "shown", "people")
+    Feature("Rares and chests", "Rares, rare elites and treasure chests.", "wilds", "shown", "rares")
+    if not ns.GatherPulled() then Feature("Herbs, ore and fishing spots", "Small ink marks, on the map and the minimap.", "gather", "shown", "rares") end
+    if ns.SetupTransports then Feature("Boats & zeppelins", "Their ways across the sea, drawn on the continent.", "transports", "shown", "traversal") end
+    Feature("Dungeon entrances", "Click one for the dungeon's map.", "dungeons", "shown", "dungeon")
+    -- (the clock is on the map: it sat under "Beside the map" with the book's button, "strange mix", the
+    -- user 2026-11-15)
+    Feature("Clock", "An engraved clock on the map.", "clock", "shown", "clock")
+
+    -- (each way of questing a line of its own, not one choice of a few mixes: the giver's words and the
+    -- objectives on the map do the same job two ways, and a player may want either, both or neither)
+    w:Header("Quests")
+    w:Feature({ "Quest givers", "Where you pick quests up and hand them in.", "", "questie", "shown", "quests",
+        get = function() return ns.QuestGiversOn() end, set = function(v) ns.SetQuestGivers(v) ns.RefreshControls() end })
+    if ns.ToldNow then Feature("As told", "A small panel with what the quest giver said. The map marks only the places they named.", "told", "on", "told") end
+    w:Feature({ "Where your quest mobs are", "Objectives marked on the map.", "", "spots", "shown", "quests",
+        get = function() return ns.ObjectivesOn() end, set = function(v) ns.SetObjectives(v) ns.RefreshControls() end })
+    Feature("Quest tracker", "This zone's quests, nearest first, in place of the game's.", "tracker", "shown", "tracker")
+    Feature("Quest log", "A quest's page in a window of its own.", "questlog", "shown", "questlog")
+    if ns.ToldNow then w:Note("As told and quest objectives are two ways to find your quest. As told gives you the giver's words and pencils in the places they named. Objectives mark where the mobs and items are. Most players pick one.") end
+
+    w:Header("The book", ns.ToggleIcon and ns.ToggleIcon("book"))
+    -- (the welcome page's own line first, the same words in both places: the user, 2026-11-15)
+    w:Note("A wanderer's dungeon notebook came with the map. It also opens from its button on the map, and from a dungeon's map.")
+    w:Button("Open the book", function() if ns.ToggleNotebook then ns.ToggleNotebook() end end)
+
+    w:Header("How it acts")
+    Feature("Follows you", "The map keeps you in its middle as you move.", "mapFrame", "center", "acts")
+    w:Button("Everything the map does by itself", function() ns.OpenOptionsPage("acts") end)
+    w:Tip("Zooming in towns, changing shape per zone, folding, fading: one list, each with its switch.")
+    w:Note("Hold the map key (Shift-M by default) to show the map only while you hold it. More keys are on the Keys page.")
+
+    w:Header("Its frame")
     top = w.y
-    w:Choice("Quest help", nil, nil, QUEST_HELP_CHOICES, QuestHelp, SetQuestHelp)
-    w:Tip("Quest givers, where you pick quests up and hand them in; then the quest tracker; then objectives too. Each is on the Quests page.")
-    Go(top, "quests")
-    top = w.y
-    w:Check("Townsfolk", "townsfolk", "shown")
-    w:Tip("Trainers, vendors, innkeepers, flight masters and the like.")
-    Go(top, "people")
-    top = w.y
-    w:Check("Unexplored areas", "explore", "shown")
-    w:Tip("The areas you haven't found yet, drawn in, where the game leaves them blank.")
-    Go(top, "explore")
-    top = w.y
-    w:Check("Keep centred on me", "mapFrame", "center")
-    w:Tip("The map follows you as you move.")
-    Go(top, "behaviour")
-    top = w.y
-    w:Choice("Border", "border", "style", BORDER_STYLES)
+    StyleChoice(w, "Border", "border", "border", "style", Trimmed(BORDER_STYLES, ns.db.border.style))
     Go(top, "header")
     top = w.y
-    w:Choice("Header", "zoneName", "style", HEADER_STYLES)
+    StyleChoice(w, "Header", "header", "zoneName", "style", HEADER_STYLES)
     Go(top, "header")
 
     w:Button("Show the welcome page again", function()
@@ -2022,27 +2122,48 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
         ow.folded["overview/About"] = true
     end
     w:Header("About")
-    w:Note("The list on the left starts with the map: The window, Getting around and What's shown. Extras holds what's beside it: the tracker, quest log, clock and book. Hover any setting for what it does; Show advanced settings, at the bottom, adds the fine-tuning to every page.")
+    w:Note("Hover any setting to see what it does. Show advanced settings, at the bottom, adds the fine-tuning.")
     w:Note("Minimap and dungeon map data: OpenMap (MIT licence, see LICENSES). QuestieDB, RareScanner and GatherMate2 data are read from those addons while the game runs; nothing of theirs is copied into this addon. Where Questie is installed, its quest icons are used." .. (ns.FOREVER and "" or " Gathering spots: the Waymark Nodes addon beside this one (GPL v3, from the CMaNGOS database)."))
 end }
 
 local function Percent(v) return string.format("%d%%", v * 100 + 0.5) end
 
+-- One row, two ticks (the lie of the land's line on Performance mode). first: the row's own box, just
+-- made (col.last): it gets a caption after it, and a second box with its own caption follows on the same line.
+-- dep: the second is greyed while this says no.
+local function TwoTicks(p, first, caption, label, get, set, tip, dep)
+    local cap = first:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    Ink(p, cap)
+    cap:SetPoint("LEFT", first, "RIGHT", 2, 0)
+    cap:SetText(caption)
+    local c = CreateCheck(p, label, get, set)
+    c:SetPoint("LEFT", cap, "RIGHT", 22, 0)
+    c.bfiDep = dep
+    c:HookScript("OnEnter", function()
+        GameTooltip:SetOwner(c, "ANCHOR_RIGHT")
+        GameTooltip:SetText(label, 1, 0.82, 0)
+        GameTooltip:AddLine(tip, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    c:HookScript("OnLeave", function() GameTooltip:Hide() end)
+    return c
+end
+
 -- Performance mode (ns.Perf, BattlefieldInfo.lua): one switch, then each thing it lightens, ticked
 -- unless the player wants that one kept as it is. Their own settings elsewhere stay untouched
 local PERF_ROWS = {
     { "art", "Continents: the game's own map",
-      "Waymark's painted continents are hundreds of pictures. The game's own continent map is a few." },
+      "Uses the game's own continent map, which is much lighter than Waymark's painted one." },
     { "warm", "Don't load map pictures ahead",
-      "Waymark loads the continents' pictures after you log in, so the map opens at once. Not loaded ahead, the map's first open may blink." },
+      "Stops Waymark loading map pictures in the background after you log in. The map may flicker the first time you open it." },
     { "detail", "No close-up detail",
       "The trees, rocks and buildings that fade in as you zoom in stay off." },
     { "ground", "Quest areas as spots",
       "Quest areas on the ground, if you have them on, show as objective spots instead." },
     { "effects", "No map effects",
-      "The time of day tint, soft edges and clear view rest." },
+      "The time of day tint, soft edges and clear view are switched off." },
     { "ticks", "Fewer map updates",
-      "The map looks for changes 4 times a second instead of 10. A pin can come a moment later." },
+      "The map updates 4 times a second instead of 10. Pins can show up a moment late." },
 }
 
 PAGES[#PAGES + 1] = { key = "performance", label = "Performance mode", build = function(p)
@@ -2064,29 +2185,54 @@ PAGES[#PAGES + 1] = { key = "performance", label = "Performance mode", build = f
         end)
         a:Tip(row[3])
     end
+    -- the lie of the land (while it is in the build): one line, two ticks. Off, as it comes; unticked it stays,
+    -- and Steady light holds its light in one place (the user, 2026-11-14)
+    if ns.ReliefSetting then
+        local function Tick(item)
+            return function() return ns.db.perf.items[item] ~= false end, function(v)
+                if v then ns.db.perf.items[item] = nil else ns.db.perf.items[item] = false end
+                ns.OnSettingChanged("perf", item)
+                ns.RefreshControls()
+            end
+        end
+        local get, set = Tick("relief")
+        a:CheckWith("The lie of the land", get, set)
+        a:Tip("Turns the shaded hills off. Untick Off to keep them. Steady light keeps them at a lower cost.")
+        get, set = Tick("reliefHour")
+        TwoTicks(p, a.last, "Off", "Steady light", get, set,
+            "The light stays in the north-west instead of moving with the time of day. About half the cost.",
+            function() return ns.db.perf.on and ns.db.perf.items.relief == false end)
+    end
     a:Requires()
 end }
 
-PAGES[#PAGES + 1] = { key = "window", label = "Size, shape & fade", build = function(p)
+PAGES[#PAGES + 1] = { key = "window", label = "Size & shape", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Size and shape")
     a:Slider("Waymark size", ns.MIN_ADDON_SCALE, ns.MAX_ADDON_SCALE, 0.05, nil, "addonScale", "%.2fx")
-    a:Tip("All of Waymark bigger or smaller together: the map, tracker, quest window, book and settings. The game's own UI stays as it is.")
-    a:Note("Drag the map's bottom-right corner to give it any size and shape. Right-click the corner: with auto shape, this zone goes back to its automatic shape; once it's automatic (or without auto shape), the game's own size comes back.")
-    a:Check("Auto shape: follow each zone's shape", "mapFrame", "autoWidth")
-    a:Tip("The map takes on the zone's shape at about your size: tall zones like the Barrens get narrower and taller, wide ones like Duskwood wider and shorter.")
+    a:Tip("All of Waymark bigger or smaller together: the map, tracker, quest log and book. This settings window and the game's own UI stay as they are.")
+    -- (ns.db.scale, the map frame's own scale. It has been "Map scale", "Pin & text size" and "Everything on
+    -- the map"; it is the map's scale, and it lives with the map's size.)
+    -- Its slider is out of the settings (2026-11-15). The corner drag took over the map's size long ago, the
+    -- buttons, area text and pins were each made to keep their size against it, and what was left (border,
+    -- header, an attached tracker) has settings of its own: "it doesnt resize anything on or near the map",
+    -- the user. The saved value stays and is still applied, so no map changes. Its floor for pins is the
+    -- Layers tab's "Size of all pins".
+    a:Note("Drag the map's bottom-right corner to resize it. Right-click the corner to reset: first to this zone's own shape, then to the game's default size.")
+    a:Check("Changes shape per zone", "mapFrame", "autoWidth")
+    a:Tip("The map changes shape to fit the zone: taller for the Barrens, wider for Duskwood. It stays about the size you set.")
     a:Requires("mapFrame", "autoWidth")
     a:Advanced(true)
     a:Slider("How much of the zone's shape", 0, 1, 0.05, "mapFrame", "shapeFollow", function(v)
         return string.format("%d%%", v * 100 + 0.5)
     end)
-    a:Tip("100%: exactly the zone's shape. Less: part way from your own shape, so the map changes less between zones; zoomed out, a strip of the neighbouring zones shows round the zone.")
+    a:Tip("100%: exactly the zone's shape. Lower: closer to your own shape, so the map changes less from zone to zone.")
     a:Slider("Room to grow", 0, 0.5, 0.05, "mapFrame", "shapeGrow", function(v)
         return string.format("up to %d%%", v * 100 + 0.5)
     end, "none")
-    a:Tip("The more a zone's shape differs from yours, the more area the map may take, so more of the zone shows. All of it from twice as wide (or tall) on.")
+    a:Tip("Lets the map grow for zones that are much taller or wider than your shape, so you see more of them.")
     a:Choice("Shapes you drag", "mapFrame", "rememberShapes", {
-        { true, "Remember it for that zone" }, { false, "Forget it when I leave" },
+        { true, "Remember it for that zone" }, { false, "Forget it when you leave" },
     })
     a:Tip("Remember: a zone keeps the shape you drag it to. Forget: it goes back to its own shape when you leave.")
     a:Button("Reset shape to defaults", function() ns.ConfirmResetGroup("shape") end)
@@ -2094,7 +2240,7 @@ PAGES[#PAGES + 1] = { key = "window", label = "Size, shape & fade", build = func
     a:Requires()
     a:Header("Soft edges")
     a:Check("Fade the map into the world at its edges", "softEdges", "on")
-    a:Tip("The border goes while this is on. Not on continents, or docked over the minimap. With clear view's zone cut on, only once you've zoomed in.")
+    a:Tip("Hides the border. Doesn't apply on continent maps or while docked. If clear view is cutting the zone out, only when zoomed in.")
     a:Requires("softEdges", "on")
     a:Choice("Shape", "softEdges", "shape", {
         { "square", "Soft square" }, { "round", "Round corners" }, { "oval", "Oval" }, { "worn", "Worn edge" },
@@ -2103,53 +2249,121 @@ PAGES[#PAGES + 1] = { key = "window", label = "Size, shape & fade", build = func
     a:Check("Pins fade at the edge too", "softEdges", "pins")
     a:Tip("Off: pins stay sharp right up to the edge.")
     a:Requires()
-    a:Header("Time of day")
-    a:Check("The map follows the hour", "mapHour", "on")
-    a:Tip("Zone maps warm at dawn and dusk and turn moonlit blue at night, with a lamp round you in the dark. Goes by the clock's time, from Time from on the Clock settings.")
+    a:Button("Go to: The colours follow the time of day", function() ns.ShowOption("mapHour", "on") end)
 
     local b = Column(p, HALF, 0, HALF)
     b:Header("Placement")
     b:Check("Lock the map", "mapFrame", "locked")
     b:Tip("The map stays where it is: dragging its header (or edge) doesn't move it. Also in the header's right-click menu.")
+    -- (fine-tuning since the settings pass, 2026-11-14: both are on in every preset and set once at most)
+    b:Advanced(true)
     b:Requires(function() return not ns.db.mapFrame.locked end)
     b:Check("Move the map by its edge", "mapFrame", "unlocked")
-    b:Tip("Drag any edge of the map to move it. Off: it stays where it is.")
+    b:Tip("Drag any edge of the map to move it. Off: only its header moves it.")
     b:Requires()
     b:Check("Hide the Zone Map tab", "mapFrame", "hideTab")
-    b:Tip("The tab sits above the map and stops it from reaching the top of the screen.")
-    b:Check("Clicks go through the map", "clickThrough", "on")
-    b:Tip("Clicks and the mouse wheel reach the world behind the map, so it never gets in your way. Not while docked over the minimap.", "Hold the key below to use the map; pin tooltips still show.")
-    b:Requires("clickThrough", "on")
-    b:Choice("Hold to use the map", "clickThrough", "modifier", {
-        { "ALT", "Alt" }, { "CTRL", "Ctrl" }, { "SHIFT", "Shift" },
-    })
-    b:Check("Only in combat", "clickThrough", "combat")
-    b:Tip("Out of combat the map takes clicks as usual.")
-    b:Requires()
+    b:Tip("The game's own tab sits above the map and stops it from reaching the top of the screen.")
+    b:Advanced()
     if ns.LeatrixBattleMapActive and ns.LeatrixBattleMapActive() then
         b:Note("Leatrix Maps' battlefield map options are on too. Use one or the other, or they'll fight over the map.", 1, 0.5, 0.3)
     end
-    b:Header("Opacity and fading")
-    b:Slider("Map opacity", 0, 1, 0.05, "mapFrame", "opacity", Percent)
-    b:Tip("The map picture itself. At 0% only the pins, border, header and buttons are left.")
-    b:Slider("Frame opacity", 0, 1, 0.05, "mapFrame", "frameAlpha", Percent)
-    b:Tip("The border, the header and the buttons on the map.")
-    b:Slider("Pin opacity", 0, 1, 0.05, "pins", "alpha", Percent)
-    b:Tip("Every pin on the map at once, on top of each layer's own opacity (on its page).")
-    b:Check("Fade the map while I move", "fade", "moving")
-    b:Tip("Flight paths don't count as moving.")
-    b:Requires("fade", "moving")
-    b:Slider("Opacity while moving", 0, 100, 5, "fade", "movingAlpha", "%d%%")
-    b:Requires()
-    b:Check("Fade the map in combat", "fade", "combat")
-    b:Requires("fade", "combat")
-    b:Slider("Opacity in combat", 0, 100, 5, "fade", "combatAlpha", "%d%%")
-    b:Requires()
-    b:Check("Full opacity under the mouse", "fade", "hover")
-    b:Tip("Fading comes on top of the map's own opacity: 50% opacity faded to 40% shows at 20%. At 0% the map still catches clicks.")
-    b:Header("Collapsing")
-    b:Check("Collapse the map in combat", "collapse", "combat")
-    b:Tip("The map folds up under its header during a fight and opens again after it. An attached quest tracker stays.", "Key bindings page: Collapse the map.")
+end }
+
+-- What the map does by itself, all of it on one page, each line a sentence about what you would see: so the
+-- switch for "it just did that" is found by reading down one list, not by guessing a setting's name (the
+-- settings pass, 2026-11-14; the user: "page A is great and I love it"). Folding, fading and click-through
+-- live here; the rest are the same settings as on their own tabs, which hold their fine-tuning.
+PAGES[#PAGES + 1] = { key = "acts", label = "What the map does by itself", build = function(p)
+    local w = Column(p, 0, 0, CONTENT_W)
+    w:Note("Everything the map does by itself. Untick what you don't want.")
+    local function More(label, page)
+        w:Button(label, function() ns.OpenOptionsPage(page) end)
+    end
+
+    w:Header("As you travel")
+    w:Check("Follows you", "mapFrame", "center")
+    w:Tip("Keeps you in the middle of the map. Dragging or zooming the map pauses this until you move again. While you look at another zone it waits until the map comes back to you: Looking at another zone, below.", "Hold Shift to pause it.")
+    w:Check("Changes shape per zone", "mapFrame", "autoWidth")
+    w:Tip("A tall zone like the Barrens gets a taller, narrower map, a wide one like Duskwood a wider, shorter one, at about your size. Off: the map keeps the shape you dragged it to.")
+    w:Requires("townView", "enabled")
+    w:Check("Zooms in on towns", "townView", "zoom")
+    w:Tip("Zooms in when you enter a town and back out when you leave. Not while you've moved or zoomed the map yourself.")
+    w:Requires()
+    w:Check("Shows the whole city in a capital", "cityView", "zoom")
+    w:Check("Shows a cave's map inside a cave", "cave", "enabled")
+    if not ns.DungeonsOff then
+        w:Check("Switches to the dungeon's map inside one", "dungeon", "fallback")
+        w:Tip("Off: inside a dungeon the map shows the zone outside.")
+    end
+    More("More for towns and cities", "town")
+
+    w:Header("Folding away")
+    w:KeyBind("A glance: hold the map's own key", "TOGGLEBATTLEFIELDMINIMAP")
+    w:CheckWith("A glance when you hold the map's key", function() return ns.db.collapse.glance ~= false end, function(v)
+        ns.db.collapse.glance = v and true or false
+        if ns.ApplyMapKey then ns.ApplyMapKey() end
+    end)
+    w:Tip("Off: the key only opens and closes the map. If you change this in combat, it applies when combat ends.")
+    w:Note("Tap the map key (Shift-M by default) to open or close the map. Hold it to show the map only while you hold it, or to hide an open map while you hold it. Does nothing while docked.")
+    w:Check("Folds in combat", "collapse", "combat")
+    w:Tip("The map folds up under its header in combat and opens again after it. An attached quest tracker stays.")
+    w:Check("Folds when you open a window over it", "collapse", "windows")
+    w:Tip("The map folds when a window opens on top of it (loot, a quest, a vendor, your bags) and comes back when you close it.", "Not while docked over the minimap.")
+    w:Check("Folded, it leaves a ribbon of the map visible", "collapse", "ribbon")
+    w:Tip("When folded, a ribbon of the map stays, zoomed in on where you are.", "Not while docked over the minimap.")
+    w:KeyBind("A key that folds the map", "BFI_COLLAPSE")
+    w:Note("Folds the map but keeps the ribbon and an attached quest tracker. The map key closes everything.")
+
+    w:Header("Fading and clicks")
+    w:Check("Fades while you move", "fade", "moving")
+    w:Tip("Flight paths don't count as moving.")
+    w:Requires("fade", "moving")
+    w:Slider("Opacity while moving", 0, 100, 5, "fade", "movingAlpha", "%d%%")
+    w:Requires()
+    w:Check("Fades in combat", "fade", "combat")
+    w:Requires("fade", "combat")
+    w:Slider("Opacity in combat", 0, 100, 5, "fade", "combatAlpha", "%d%%")
+    w:Requires()
+    w:Check("Full again on hover", "fade", "hover")
+    w:Tip("Fading adds to the map's own opacity, so a see-through map gets fainter still. At 0% the map still takes clicks.")
+    w:Check("Its buttons fade until you hover it", "toggles", "fadeOut")
+    w:Tip("The small buttons on the map, the gear with them.")
+    -- (behind the fine-tuning: the user, 2026-11-16, "Almost shouldnt be a setting at all". Ticked by
+    -- accident, the map takes no clicks any more.)
+    w:Advanced(true)
+    w:Check("Lets your clicks through to the world", "clickThrough", "on")
+    w:Tip("Clicks and the mouse wheel go through the map to the game. Not while docked.", "Hold the key below to use the map; pin tooltips still show.")
+    w:Requires("clickThrough", "on")
+    w:Choice("Hold to use the map", "clickThrough", "modifier", {
+        { "ALT", "Alt" }, { "CTRL", "Ctrl" }, { "SHIFT", "Shift" },
+    })
+    w:Check("Only in combat", "clickThrough", "combat")
+    w:Tip("Out of combat the map takes clicks as usual.")
+    w:Requires()
+    w:Advanced()
+
+    w:Header("Looking at another zone")
+    -- (said once, the rows short: "Comes back" on each row said back to what on none, and two of them
+    -- wrapped. The user, 2026-11-16.)
+    w:Note("The map returns to your own zone:")
+    w:Requires("browse", "enabled")
+    w:Check("When you close and open the map", "browse", "onReopen")
+    w:Check("When you walk into a new zone", "browse", "onZone")
+    w:Slider("After the mouse has been away", 0, 60, 1, "browse", "idle", "%d s", "never")
+    w:Tip("Back to your own map once the mouse has been off the map this long.", "Middle-click the map: back at once.")
+    w:Requires()
+
+    w:Header("As you play")
+    if ns.ReliefSetting then
+        w:Check("The land's light follows the time of day", "relief", "hour")
+        w:Tip("Shadows on the map follow the time of day. Off: the light stays still.")
+    end
+    w:Check("A gold flash where you discover an area", "explore", "flash")
+    w:Check("Learns quest givers as you talk to them", "learned", "record")
+    w:Tip("For quests the quest data lacks. Shared by all your characters.")
+    w:Check("Learns vendors and trainers as you talk to them", "townsfolk", "record")
+    w:Check("Quest progress on mob and item tooltips", "questie", "unitTips")
+    w:Tip("Hover a mob or item out in the world to see your quest progress on its tooltip.")
 end }
 
 -- Clear view and the minimap replacement: modes of the window, each its own page
@@ -2157,23 +2371,26 @@ PAGES[#PAGES + 1] = { key = "clearview", label = "Clear view", build = function(
     local b = Column(p, 0, 0, HALF)
     b:Header("Clear view")
     b:Check("Clear view", "clearView", "on")
-    b:Tip("Just the map, laid over the world: no border, the zone name and buttons under the mouse only, your pins kept clear.", "Key bindings page: Clear view.")
+    b:Tip("Only the map over the world. No border, and the zone name and buttons show only when you hover.", "Key bindings page: Clear view.")
     b:Slider("Map opacity in clear view", 0.1, 1, 0.05, "clearView", "opacity", Percent)
-    b:Tip("In place of the map opacity (The window page) while clear view is on. Pins keep their own opacity.")
+    b:Tip("Used instead of the normal map opacity while clear view is on. Pins keep their own.")
     b:Advanced(true)
+    -- (greyed with no border to hide: the border is switched off on Header & border; the user, 2026-11-15)
+    b:Requires(function() return ns.db.border.shown and true or false end)
     b:Check("Hide the border", "clearView", "noFrame")
+    b:Requires()
     b:Choice("Zone name", "clearView", "header", {
         { "hover", "On mouse-over" }, { "shown", "Shown" }, { "hidden", "Hidden" },
     })
     b:Choice("Buttons and coordinates", "clearView", "buttons", {
         { "hover", "On mouse-over" }, { "shown", "Shown" },
     })
-    b:Check("Only the zone I'm in", "clearView", "zoneOnly")
-    b:Tip("The neighbouring zones and the sea round its edges are cut away, on a zone's map (not continents or caves).")
+    b:Check("Only the zone you're in", "clearView", "zoneOnly")
+    b:Tip("Cuts away the neighbouring zones and the sea, so only your zone shows. Zone maps only.")
     b:Check("Cut city maps too", "clearView", "cities")
     b:Tip("A city's map cut to the city, where it has an outline.")
     b:Check("Cut dungeon maps too", "clearView", "dungeons")
-    b:Tip("A dungeon floor's map cut to its halls, where it has an outline: the world shows round it, not black.")
+    b:Tip("Cuts a dungeon map to its rooms, so you see the game around it instead of black.")
     b:Check("Whole map when big", "clearView", "bigUncut")
     b:Tip("No cutting while the map is big (the big map button or key): the whole map shows.")
     -- (the optional views made in the outline editor, CutEdit.lua: one box each)
@@ -2196,17 +2413,19 @@ PAGES[#PAGES + 1] = { key = "minimap", label = "Minimap replacement", build = fu
     local b = Column(p, 0, 0, HALF)
     b:Header("Minimap replacement")
     b:Check("Dock the map over the minimap", "dock", "on")
-    b:Tip("The map takes the minimap's place, square and north up. Your blips show on it. Changes to the minimap wait until a fight ends.")
+    b:Tip("The map replaces your minimap, square and north up, with your minimap dots on it. If you switch in combat, it changes when combat ends.")
     b:Requires("dock", "on")
-    b:Advanced(true)
-    if ns.DockOurArt and C_Minimap and C_Minimap.SetDrawGroundTextures then b:Check("Waymark's map under the minimap's blips", "dock", "ourGround") end
-    b:Advanced()
+    -- (no row for dock.ourGround, "Waymark's map under the minimap's blips": the user, 2026-11-16, "Should
+    -- it even be an option at all?". Off was the old way, the game's minimap picture up close, and left a
+    -- line of it outside the frame. The switch lives on as /waymark blips, for a bug reply.)
     b:Slider("Size", 100, 400, 10, "dock", "size", "%d")
     b:Tip("The square's size; on the big map, the big map's.", "Or drag its corner grip (bottom left); right-click the grip for 160.")
     local shapes = { { "square", "Square" }, { "54", "5:4" }, { "43", "4:3" }, { "1610", "16:10" },
                      { "45", "4:5" }, { "34", "3:4" }, { "1016", "10:16" } }
     b:Choice("Shape", "dock", "shape", shapes)
-    b:Tip("Wider than tall: the top and bottom are cut off, so you see as far east and west as before and less north and south. Size sets the width. Taller than wide: the sides are cut, and Size sets the height.")
+    b:Tip("Wide: you see less north and south. Tall: you see less east and west. Size sets the longer side.")
+    -- (how it is moved was nowhere on its own page)
+    b:Note("Drag its border or its header to move it. Right-click either: its menu, with \"back to the minimap's spot\".")
     b:Advanced(true)
     -- (not on Forever: the minimap goes where you like with Edit Mode, the square by a Ctrl-drag, and the
     -- header's "back to the minimap's spot"; the corner was one more say in it, the user 2026-11-08)
@@ -2223,12 +2442,17 @@ PAGES[#PAGES + 1] = { key = "minimap", label = "Minimap replacement", build = fu
     b:Advanced()
     b:Requires()
 
+    -- (its keys shown here, not only on the Key bindings page: docked, the map's own key rests, so these two
+    -- are how it's worked; the tip sat behind advanced settings before)
     local n = Column(p, HALF, 0, HALF)
-    n:Advanced(true)
-    n:Header("Controls")
+    n:Header("Its keys")
+    n:KeyBind("Dock/undock the map", "BFI_DOCK")
+    n:KeyBind("Big map", "BFI_BIGMAP")
+    n:Note("Tip: put Big map on M. Shift M does nothing while docked.")
     n:Note("Big map key or arrow: the big map beside the square. Drag its edge to move it, its corner grip to size it.")
+    n:Advanced(true)
     n:Note("Hold any of the minimap's buttons to move it; right-click while holding puts it back.")
-    n:Note("Tip: put Big map on M (Key bindings page). Shift+M does nothing while docked.")
+    n:Advanced()
 end }
 
 -- zoom as art on screen (MapControls' ArtX): screen pixels per pixel of the map art
@@ -2238,23 +2462,27 @@ local function HowClose(v)
     if v < 0.05 then return "fully out" end
     return ArtSize(v)
 end
-local HOW_CLOSE_TIP = "How big the map picture is drawn: at 1x each pixel of it is one pixel of your screen, at 2x two. The same closeness at any map size. 0 is fully zoomed out; past the closest zoom it stops there."
+local HOW_CLOSE_TIP = "How far the map zooms in. 0 is fully zoomed out. It never goes past your closest zoom."
 
 -- The What's shown group's own page: every layer, and what filters them all
 local SHOWN_SWITCHES = {
     { "Quest givers", "Where you pick quests up and hand them in.", "built in, or QuestieDB", "questie", "shown", "quests", nil,
       get = function() return ns.QuestGiversOn() end, set = function(v) ns.SetQuestGivers(v) ns.RefreshControls() end },
-    { "Quest objectives", "Where your quests' monsters and items are.", "", "spots", "shown", "quests", nil,
+    { "Quest objectives", "Where your quest mobs and items are.", "", "spots", "shown", "quests", nil,
       get = function() return ns.ObjectivesOn() end, set = function(v) ns.SetObjectives(v) ns.RefreshControls() end },
-    { "Learned quest givers", "For quests the quest data lacks.", "built in", "learned", "shown", "quests" },
+    -- (the user's walk, 2026-11-15: learned quest givers "never touched", its switch is on Quest pins; the line
+    -- to a party member "soo niche, only under group is fine". Both off this list.)
     { "Townsfolk", "Trainers, vendors, innkeepers...", "built in, or QuestieDB; learned", "townsfolk", "shown", "people" },
-    { "Player & group", "Your arrow and your group.", "the game", "party", "shown", "group" },
-    { "Line to party member", "A line to the party member you target.", "built in", "line", "shown", "group" },
+    { "Player & group", "Your arrow and your group.", "the game", "party", "shown", "group",
+      icon = "Interface\\Minimap\\MinimapArrow", iconSize = 19 },   -- (the game's own player arrow: it has no map button)
     { "Rares & treasures", "Rare mobs, treasures and events.", "RareScanner", "rares", "shown", "rares", "RareScanner" },
     { "Rares & chests", "Rares, rare elites and treasure chests.", "built in", "wilds", "shown", "rares" },
     { "Gathering nodes", "Herbs, ore, fish and more.", "", "gather", "shown", "rares" },
-    { "Unexplored areas", "Shows what you haven't found yet.", "", "explore", "shown", "explore" },
+    { "Unexplored land", "Shows what you haven't found yet.", "", "explore", "shown", "explore" },
     { "Area names", "Names the area under the cursor.", "", "explore", "hoverNames", "explore" },
+    -- (the boats' and zeppelins' routes: on Start here and on their own tab, but not on this list of every
+    -- layer, where the user looked for their switch, 2026-11-16)
+    { "Boats & zeppelins", "Their dotted routes across the sea, and the tram.", "", "transports", "shown", "traversal" },
 }
 
 -- The Extras group's own page: what's beside the map, each off until wanted
@@ -2268,29 +2496,43 @@ local EXTRAS_SWITCHES = {
 PAGES[#PAGES + 1] = { key = "shownhome", label = "What's shown", summary = true, build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Layers")
-    for _, f in ipairs(ns.DropNoGameLayers(SHOWN_SWITCHES, 4)) do a:Feature(f) end
+    -- (another addon's layer only with that addon there: greyed "Rares & treasures, needs RareScanner" above
+    -- our own "Rares & chests" read as rares twice, the user 2026-11-15. Its page still says what it needs.)
+    for _, f in ipairs(ns.DropNoGameLayers(SHOWN_SWITCHES, 4)) do
+        -- (the boats only where the build has them: not on Era)
+        if (not f[7] or ns.AddonPresent(f[7])) and (f[4] ~= "transports" or ns.SetupTransports) then a:Feature(f) end
+    end
 
     local b = Column(p, HALF, 0, HALF)
+    -- (the map's own scale: pins, text, the border, and how large the art is at each zoom step. It was "Pin &
+    -- text size": "It sizes border to??", the user 2026-11-15. Its floor for pins sits right under it, out of
+    -- advanced: below the floor the slider stops moving pins, and the row that holds them was hidden.)
+    -- (the map's scale and its floor for pins are on Size & shape: it sizes the border and an attached
+    -- tracker too, "It still doesnt belong", the user 2026-11-15)
     b:Header("All pins")
     b:Slider("Pin opacity", 0, 1, 0.05, "pins", "alpha", Percent)
-    b:Tip("Every pin on the map at once, on top of each layer's own opacity (on its page).")
-    b:Slider("Pin & text size", ns.MIN_MAP_SCALE, ns.MAX_MAP_SCALE, 0.05, nil, "scale", "%.2fx")
-    b:Tip("Everything drawn on the map (pins, text, the border) bigger or smaller; the map keeps its size. Each layer has its own size on its page too.")
+    b:Tip("Fades every pin on the map together. Each kind of pin also has its own opacity on its page.")
+    -- (pins.minMapScale, once "Pins no smaller than": with the map's scale out of the settings it is the size
+    -- of every pin. Shown as it stands now; once moved it is that size outright: ns.PinScale, pins.sizeAll)
+    b:SliderWith("Size of all pins", 0.5, 3, 0.05,
+        function()
+            local floor, scale = ns.db.pins.minMapScale or 0, ns.db.scale or 1
+            if ns.db.pins.sizeAll then return floor end
+            return math.max(floor, scale)
+        end,
+        function(v)
+            ns.db.pins.minMapScale = v
+            ns.db.pins.sizeAll = true
+            ns.OnSettingChanged("pins", "minMapScale")
+        end, "%.2fx")
+    b:Tip("Every pin on the map at once, bigger or smaller. One kind of pin alone: the Size slider on its own tab.")
     b:Slider("Tooltip size", 0.6, 1.2, 0.05, "pins", "tipScale", Percent)
-    b:Tip("Tooltips of anything you hover on the map (pins, buttons), as a share of their usual size. Tooltips elsewhere keep theirs.")
-    b:Advanced(true)
-    b:Slider("Pins no smaller than", 0, 3, 0.1, "pins", "minMapScale", "%.1fx", "off")
-    b:Tip("With the size above set lower than this, pins keep the size they'd have at this one, so they stay readable. Off: they shrink with it.")
-    b:Advanced()
+    b:Tip("The size of tooltips on the map's pins and buttons. Other tooltips aren't changed.")
     b:Header("Fewer pins")
     b:Check("Hide quest pins outside the zone", "outside", "hideQuests")
-    b:Tip("The zone map shows bits of the zones around it; quest pins that fall there are hidden.")
-    b:Check("Hide quest pins in unexplored areas", "explore", "hideQuests")
-    b:Check("Hide other pins in unexplored areas", "explore", "hideOthers")
-    b:Tip("Townsfolk, rares, nodes and dungeon entrances.")
-    b:CheckWith("Low-level (grey) quests", ns.GetTrivialQuests, ns.SetTrivialQuests)
-    b:Tip("Grey quest givers: quests far below your level.")
-    b:Check("Quest givers coloured by difficulty", "questie", "color")
+    b:Tip("Hides quest pins that fall in the neighbouring zones at the map's edges.")
+    b:Button("Go to: Hide pins in unexplored land", function() ns.ShowOption("explore", "hideQuests") end)
+    b:Button("Go to: Colour by quest difficulty", function() ns.ShowOption("questie", "color") end)
 end }
 
 PAGES[#PAGES + 1] = { key = "extrashome", label = "Extras", summary = true, build = function(p)
@@ -2300,177 +2542,298 @@ PAGES[#PAGES + 1] = { key = "extrashome", label = "Extras", summary = true, buil
     a:Button("Open the book", function() if ns.ToggleNotebook then ns.ToggleNotebook() end end)
 end }
 
-PAGES[#PAGES + 1] = { key = "browse", label = "Other zones & continent", build = function(p)
+PAGES[#PAGES + 1] = { key = "browse", label = "Zoom, other zones & continent", build = function(p)
     local a = Column(p, 0, 0, HALF)
+    -- (the zoom page's rows: it had two showing, and Keep centred is on What the map does by itself now)
+    a:Header("Zoom")
+    a:Slider("Closest zoom", 2, 24, 0.5, "zoom", "closestX", ArtSize)
+    a:Tip("How far in you can zoom with the mouse wheel.")
+    a:Advanced(true)
+    a:Slider("Smoother zoom", 1, 5, 1, "zoom", "smoothness", "%dx steps", "1.5x a click")
+    a:Tip("Splits each wheel click into this many smaller steps.")
+    a:Check("Zoomed out shows just the zone", "zoom", "fitZone")
+    a:Tip("Fully zoomed out shows your zone edge to edge, without the neighbouring zones around it.")
+    a:Slider("Zoom speed", 0.3, 3, 0.1, "zoom", "animTime", "%.1f s")
+    a:Tip("How long an automatic zoom in or out takes, here and in towns and cities.")
+    a:Button("Reset zoom & detail to defaults", function() ns.ConfirmResetGroup("zoom") end)
+    a:Tip("Resets the zoom and close-up detail sliders. Your on and off switches stay.")
+    a:Advanced()
     a:Header("Getting there")
     a:Check("Look at other zones and the continent", "browse", "enabled")
-    a:Tip("Look at the continent and other zones on this map, then come back to yours. What follows you waits until you're back.", "Right-click: one map up. Left-click a zone or a capital: that map. Middle-click: back to yours.")
+    a:Tip("Lets you look at other zones and the continent on this map. It stops following you until you come back.", "Right-click: one map up. Left-click a zone or a capital: that map. Middle-click: back to yours.")
     a:Requires("browse", "enabled")
     a:Check("The mouse wheel climbs maps", "browse", "wheel")
     a:Tip("Wheel out past fully zoomed out for the continent; wheel in over a zone, or a capital, to open it.")
     a:Requires("browse", "wheel")
     a:Slider("Wheel clicks past fully out", 1, 6, 1, "browse", "friction", "%d")
-    a:Tip("How many more clicks out it takes to leave the zone. The inside of the map's frame blinks with a glow on each but the last, so you feel where the zone's own zoom ends.")
+    a:Tip("How many extra wheel clicks it takes to zoom out of the zone. The map's edge glows on each one, so you don't leave by accident.")
     a:Requires("browse", "enabled")
     a:Header("While you look")
+    a:Advanced(true)
     a:Check("Silver header on a map you're not in", "browse", "silver")
-    a:Check("Zone names under the mouse", "browse", "overviewNames")
+    a:Advanced()
+    a:Check("Zone names on hover", "browse", "overviewNames")
     a:Tip("The zone's name and levels as you move the mouse over the continent or the world.")
     a:Check("Quest givers on the continent", "browse", "continentGivers")
-    a:Tip("Every zone's quest givers on the continent map, as your quest giver settings show them. Low-level (grey) ones stay on the zone maps.")
-    a:Check("Sharp zone maps on the continent", "browse", "zoneArt")
-    a:Tip("As you zoom in on a continent, each zone's own sharp map fades in over the blocky continent picture.")
-    a:Requires("browse", "zoneArt")
-    a:Advanced(true)
-    a:Stops("How they come in", "browse",
-        { { "fadeFrom", "map from" }, { "fadeFull", "in" }, { "detailFull", "areas full" } },
-        0.05, 1.2, 0.05,
-        { { 0.23, 0.18, 0.13 }, { 0.85, 0.77, 0.61 }, { 0.50, 0.69, 0.41 }, { 1, 0.82, 0 } },
-        { { 0.25, "25%" }, { 0.5, "50%" }, { 0.75, "75%" }, { 1, "opens" } },
-        function(v) return string.format("%d%%", v * 100 + 0.5) end)
-    a:Tip("How close you are when each zone's plain map starts to show, when it's fully in, and when its area colours have filled in (a share of the zone's own map; \"opens\": where the wheel opens the zone).", "Press the track to bring the nearest stop there, and drag.")
-    a:Check("Smooth zone colours underneath", "browse", "zoneWash")
-    a:Tip("Each zone's colour laid smooth under its map, in place of the continent's blocky picture. Off: the blocky picture shows through.")
-    a:Advanced()
-    a:Requires("browse", "enabled")
+    a:Tip("Shows quest givers on the continent map too. Grey quests show on zone maps only.")
+    a:Button("Go to: Painted continents", function() ns.OpenOptionsPage("look") end)
     a:Requires()
 
     local b = Column(p, HALF, 0, HALF)
     b:Header("Back to your map")
     b:Note("Middle-click the map to go back.")
     b:Requires("browse", "enabled")
-    b:Slider("After the mouse is away", 0, 60, 1, "browse", "idle", "%d s", "never")
+    b:Check("When you close and open the map", "browse", "onReopen")
+    b:Check("When you walk into a new zone", "browse", "onZone")
+    b:Slider("After the mouse has been away", 0, 60, 1, "browse", "idle", "%d s", "never")
     b:Tip("Back to your own map once the mouse has been off the map this long.")
-    b:Check("When the map is closed and opened", "browse", "onReopen")
-    b:Check("When I walk into another zone", "browse", "onZone")
     b:Requires()
-    b:Check("Keep what I'm looking at on a flight path", "browse", "taxi")
-    b:Tip("Looking at the continent or another zone when you take off: it stays there while you fly, and your map comes back when you land. Your own zone's map follows you as usual.")
+    b:Check("Keep what you're looking at on a flight path", "browse", "taxi")
+    b:Tip("If you're looking at another zone or the continent when you take a flight, the map stays there until you land.")
     b:Note("Key binding: Continent map (Key bindings page). Again: back to your map.")
 end }
 
-PAGES[#PAGES + 1] = { key = "behaviour", label = "Zoom, centring & detail", build = function(p)
-    local a = Column(p, 0, 0, HALF)
-    a:Header("Centring and zoom", ns.ToggleIcon("zoom"))  -- (the Keep centered button's)
-    a:Check("Keep centred on me", "mapFrame", "center")
-    a:Tip("The map follows you as you move; after you pan or zoom it waits until you move on.", "Hold Shift to pause it.")
-    a:Slider("Closest zoom", 2, 24, 0.5, "zoom", "closestX", ArtSize)
-    a:Tip("How far in the mouse wheel goes: the map picture this many times its own size on your screen, whatever the map's size.")
-    a:Advanced(true)
-    a:Slider("Smoother zoom", 1, 5, 1, "zoom", "smoothness", "%dx steps", "1.5x a click")
-    a:Tip("Each wheel click zooms 1.5x, split into this many smaller clicks.")
-    a:Check("Zoomed out shows just the zone", "zoom", "fitZone")
-    a:Tip("Fully zoomed out frames the zone itself, not the whole map picture with its neighbours. Zooming out stays inside the zone.")
+-- The map's look: how the map itself is drawn, in one place (the user, 2026-11-14: "Its all part of the same
+-- deal, so it should feel that way"; mockups/map-look-settings.html). A look on top sets the four switches
+-- that carry it, each look one step richer than the last; every switch is underneath, in three groups. The
+-- rows came from Size, shape & fade (the hour), Zoom, centring & detail (close-up detail) and Other zones &
+-- continent (painted continents). Soft edges went back to the window's page: a frame setting, as clear view. The thresholds the user tuned to find the sweet spot stay
+-- behind Show advanced settings.
+local LOOKS = {
+    { "game",    "The game's map",      relief = false, painted = false, detail = false, hour = false },
+    { "painted", "Painted",             relief = false, painted = true,  detail = true,  hour = false },
+    { "land",    "The lie of the land", relief = true,  painted = true,  detail = true,  hour = false },
+    { "hour",    "The lie of the land, by the hour", relief = true,  painted = true,  detail = true,  hour = true },
+}
+-- (a build without the relief: three looks, and the relief's part is not asked)
+local function LookFits(l)
+    local has = ns.ReliefSetting ~= nil
+    if not has and l[1] == "land" then return false end
+    return (not has or l.relief == (ns.db.relief.on and true or false))
+        and l.painted == (ns.db.browse.zoneArt and true or false)
+        and l.detail == (ns.IsShown("detail") and true or false)
+        and l.hour == (ns.db.mapHour.on and true or false)
+end
+local function LookNow()
+    for _, l in ipairs(LOOKS) do
+        if LookFits(l) then return l[1] end
+    end
+    return "own"
+end
+local function LookSet(key)
+    for _, l in ipairs(LOOKS) do
+        if l[1] == key then
+            if ns.ReliefSetting then select(2, Setting("relief", "on"))(l.relief) end
+            select(2, Setting("browse", "zoneArt"))(l.painted)
+            select(2, LayerSetting("detail", "shown"))(l.detail)
+            select(2, Setting("mapHour", "on"))(l.hour)
+        end
+    end
+    ns.RefreshControls()
+end
+ns.MapLook = { now = LookNow, set = LookSet }      -- (tools/options_pages_smoke.lua)
 
+-- The pencilled map's one switch for players (Pencil.lua, cleared for 1.3 on 2026-11-14), on The map's
+-- look (it was on Exploration too until the settings pass took the doubles out): a plain setting (pencil.on), and the row is made only while ns.PencilSetting is there
+-- (Pencil.lua defines it on Forever), so a build without the pencil (Classic Era) has no dead row. Greyed while
+-- unexplored land is drawn "As explored": every area shows whole then, and there is nothing left to sketch.
+-- Land you have not found: one choice of three, and for the middle one how much of it shows. (It was a
+-- list of six looks, Left blank / Fog / Sepia / Dark ink / Faded / As explored, and a tick for the pencil
+-- beside it: "We need to rework this whole thing. Dark ink looks bad, sepia is unneeded. It doeesnt explain
+-- penciling sighted. The important switches are, show as explored, as unexplored with a gradient choice, and
+-- paint in sighted (with rest unexplored)", the user 2026-11-15.) The settings underneath are the same:
+-- explore.shown, explore.fogStyle, explore.fogAlpha, pencil.on. Sepia and Dark ink are no longer offered; a
+-- map that has one keeps it until this choice is touched.
+local function UnfoundRows(col)
+    local shown, setShown = LayerSetting("explore", "shown")
+    local function Pencil() return ns.PencilSetting and ns.db.pencil and ns.db.pencil.on end
+    local function SetPencil(on)
+        if not ns.PencilSetting then return end
+        ns.db.pencil.on = on and true or false
+        ns.OnSettingChanged("pencil", "on")
+    end
+    local function Now()
+        if shown() and ns.db.explore.fogStyle == "full" then return "full" end
+        if Pencil() and not shown() then return "pencil" end
+        return "dim"
+    end
+    local function Dim()   -- (a look that dims: the one it has, else Faded)
+        local st = ns.db.explore.fogStyle
+        if st == "full" or st == nil then
+            ns.db.explore.fogStyle = "faded"
+            ns.OnSettingChanged("explore", "fogStyle")
+        end
+    end
+    local choices = { { "full", "Shown, as if explored" }, { "dim", "Dimmed until you find it" } }
+    if ns.PencilSetting then choices[#choices + 1] = { "pencil", "Blank, pencilled in as you see it" } end
+    -- ("Unexplored land": "the word unexplored is fammiliar", the user 2026-11-15)
+    col:Choice("Unexplored land", nil, nil, choices, Now, function(v)
+        if v == "full" then
+            ns.db.explore.fogStyle = "full"
+            ns.OnSettingChanged("explore", "fogStyle")
+            setShown(true)
+        elseif v == "pencil" then
+            setShown(false)
+            SetPencil(true)
+        else
+            SetPencil(false)
+            Dim()
+            setShown(true)
+        end
+        ns.RefreshControls()
+    end)
+    col:Tip("Shown: the whole zone from the start. Dimmed: unexplored land is faint until you find it. Pencilled: unexplored land is blank. What you've seen is sketched in pencil, and it gets colour where you walk.")
+    col:Requires(function() return Now() == "dim" end)
+    col:SliderWith("How much of it shows", 0, 1, 0.05,
+        function() return shown() and (ns.db.explore.fogAlpha or 0.7) or 0 end,
+        function(v)
+            if v < 0.03 then
+                setShown(false)
+            else
+                ns.db.explore.fogAlpha = v
+                ns.OnSettingChanged("explore", "fogAlpha")
+                Dim()
+                if not shown() then setShown(true) end
+            end
+        end, function(v) return v < 0.03 and "nothing" or string.format("%d%%", v * 100 + 0.5) end)
+    col:Tip("From blank to nearly as clear as explored land.")
+    col:Requires()
+end
+
+PAGES[#PAGES + 1] = { key = "look", label = "The map's look", build = function(p)
+    local a = Column(p, 0, 0, HALF)
+    a:Header("The map's look")
+    a:Note("How the map itself is drawn. Pick a look, or set each part yourself below.")
+    a:Choice("Look", nil, nil, function()
+        local out = {}
+        for _, l in ipairs(LOOKS) do
+            if ns.ReliefSetting or l[1] ~= "land" then out[#out + 1] = { l[1], l[2] } end
+        end
+        if LookNow() == "own" then out[#out + 1] = { "own", "Your own mix" } end
+        return out
+    end, LookNow, LookSet)
+    a:Tip("The game's map: as the game draws it. Painted: sharper continents, with trees and buildings up close. The lie of the land: adds hills and shadows. By the hour: adds colours that change with the time of day.")
+    -- (the look named on top follows a switch changed by hand at once: "Your own mix", or the look it now fits)
+    do
+        local box, shown = a.last, LookNow()
+        local watch = CreateFrame("Frame", nil, p)
+        watch:SetScript("OnUpdate", function()
+            local now = LookNow()
+            if now ~= shown then
+                shown = now
+                if box and box.Refresh then box.Refresh() end
+            end
+        end)
+    end
+
+    a:Header("The land")
+    if ns.ReliefSetting then
+        a:Check("The lie of the land", "relief", "on")
+        a:Tip("Hills, valleys and shadows from the game's real terrain. Off in performance mode unless you keep it on there.")
+        a:Requires("relief", "on")
+        a:Slider("Strength", 30, 160, 5, "relief", "shadeAlpha", "%d%%")
+        a:Check("Shadows thrown by ridges", "relief", "cast")
+        a:Tip("Mountains and ridges cast shadows over the land behind them.")
+        a:Requires()
+    end
+    a:Check("Painted continents", "browse", "zoneArt")
+    a:Tip("Zoomed in on a continent, each zone's own sharper map replaces the game's blocky one. The lie of the land needs this on to show on continents.")
+    a:Advanced(true)
+    a:Requires("browse", "zoneArt")
+    a:Stops("How they come in", "browse",
+        { { "fadeFrom", "map from" }, { "fadeFull", "in" }, { "detailFull", "areas full" } },
+        0.05, 1.2, 0.05,
+        { { 0.23, 0.18, 0.13 }, { 0.85, 0.77, 0.61 }, { 0.50, 0.69, 0.41 }, { 1, 0.82, 0 } },
+        { { 0.25, "25%" }, { 0.5, "50%" }, { 0.75, "75%" }, { 1, "opens" } },
+        function(v) return string.format("%d%%", v * 100 + 0.5) end)
+    a:Tip("How far you zoom in before each zone's own map starts to show, is fully shown, and has its colours.", "Press the track to bring the nearest stop there, and drag.")
+    a:Requires()
     a:Advanced()
+    a:Check("Close-up detail", "detail", "shown", nil, ns.ToggleIcon("detail"))
+    a:Tip("Trees, rocks and buildings fade in as you zoom in. Eastern Kingdoms and Kalimdor only. Tile data from OpenMap (MIT).")
+    a:Requires("detail", "shown")
+    a:Slider("Opacity when zoomed in", 0.1, 1, 0.05, "detail", "strength")
+    a:Advanced(true)
+    a:Check("On the big map too", "detail", "bigMap")
+    a:Tip("Off: the detail shows on the small map only, the big map keeps to the map art.")
+    a:Slider("Starts to show at", 1, 16, 0.1, "detail", "fromZoom", Closer)
+    a:Tip("How far you zoom in before the detail starts to show.")
+    a:Slider("Full detail at", 1, 16, 0.1, "detail", "fullZoom", Closer)
+    a:Tip("How far you zoom in before the detail is fully shown.")
+    a:Check("Full detail at every zoom", "detail", "always", nil, ns.ToggleIcon("detailAll"))
+    a:Tip("Shows the detail at any zoom, on continent maps too.")
+    a:Check("Blend with the map's colours", "detail", "blend")
+    a:Advanced()
+    a:Requires()
 
     local b = Column(p, HALF, 0, HALF)
-    b:Advanced(true)
-    b:Header("Automatic zoom")
-    b:Slider("Zoom speed", 0.3, 3, 0.1, "zoom", "animTime", "%.1f s")
-    b:Tip("How long an automatic zoom in or out takes, here and in town and city view.")
-    b:Advanced()
-    b:Header("Close-up detail", ns.ToggleIcon("detail"))
-    b:Check("The minimap's detail up close", "detail", "shown")
-    b:Tip("Trees, rocks and buildings from the game's minimap fade in as you zoom in, and stay at full detail however far past that you zoom. Eastern Kingdoms and Kalimdor; tile data from OpenMap (MIT).")
-    b:Requires("detail", "shown")
-    b:Slider("Opacity when zoomed in", 0.1, 1, 0.05, "detail", "strength")
-    b:Advanced(true)
-    b:Check("On the big map too", "detail", "bigMap")
-    b:Tip("Off: the detail shows on the small map only, the big map keeps to the map art.")
-    b:Slider("Starts to show at", 1, 16, 0.1, "detail", "fromZoom", Closer)
-    b:Tip("How close the zoom is when it starts to fade in: this many times closer than fully zoomed out. The same view of the zone at any map size, so resizing the map doesn't change it.")
-    b:Slider("Full detail at", 1, 16, 0.1, "detail", "fullZoom", Closer)
-    b:Tip("Fully faded in from this close on. Never past the closest zoom (left), so it can always be reached.")
-    b:Check("Full detail at every zoom", "detail", "always", nil, ns.ToggleIcon("detailAll"))
-    b:Tip("Also on the continent maps, which otherwise keep to the map art however close you zoom.")
-    b:Check("Blend with the map's colours", "detail", "blend")
-    b:Requires()
-    b:Button("Reset zoom & detail to defaults", function() ns.ConfirmResetGroup("zoom") end)
-    b:Tip("Every zoom and close-up detail threshold back to how the addon comes. Your switches stay as they are.")
-    b:Advanced()
+    b:Header("The light")
+    if ns.ReliefSetting then
+        b:Check("The land's light follows the time of day", "relief", "hour")
+        b:Tip("The light on the hills comes from the east in the morning, the south at noon and the west at dusk, weaker at night. Off: one steady light from the north-west.")
+        b.last.bfiDep = function() return ns.db.relief.on and true or false end
+    end
+    b:Check("The colours follow the time of day too", "mapHour", "on")
+    b:Tip("Zone maps turn warm at dawn and dusk and blue at night, with a lamp around you in the dark. Goes by the clock's time (Time from, on the Clock settings).")
+
+    b:Header("Unexplored land")
+    UnfoundRows(b)
+    p.bfiKeys = p.bfiKeys or {}
+    table.insert(p.bfiKeys, { "explore", "fogStyle" })     -- (Reset this page)
+    -- (from Size & shape, a leftover of when that tab was "Size, shape & fade": how see-through the map is
+    -- belongs with how it is drawn. "these are found under size and shape. why", the user 2026-11-15)
+    b:Header("See-through")
+    -- (clear view has an opacity of its own, in place of this one while it is on: the slider read 0% beside
+    -- a map in clear view at full strength, and moving it did nothing. The user's two screenshots,
+    -- 2026-11-15. It now shows and moves the opacity the map has as it is, and its number says which.)
+    local function Clear() return ns.db.clearView and ns.db.clearView.on end
+    b:SliderWith("Map opacity", 0, 1, 0.05,
+        function()
+            if Clear() then return ns.db.clearView.opacity or 1 end
+            return ns.db.mapFrame.opacity or 1
+        end,
+        function(v)
+            if Clear() then
+                ns.db.clearView.opacity = math.max(0.1, v)
+                ns.OnSettingChanged("clearView", "opacity")
+            else
+                ns.db.mapFrame.opacity = v
+                ns.OnSettingChanged("mapFrame", "opacity")
+            end
+        end,
+        function(v) return string.format("%d%%", v * 100 + 0.5) .. (Clear() and "  in clear view" or "") end)
+    b:Tip("How see-through the map picture is. At 0% only pins, border, header and buttons are left. Clear view has its own opacity.")
+    p.bfiKeys = p.bfiKeys or {}
+    table.insert(p.bfiKeys, { "mapFrame", "opacity" })     -- (Reset this page, and "its settings" from elsewhere)
+    b:Button("Go to: Border and header opacity", function() ns.ShowOption("mapFrame", "frameAlpha") end)
+    b:Button("Go to: Pin opacity", function() ns.ShowOption("pins", "alpha") end)
+    b:Button("Go to: Fades while you move", function() ns.ShowOption("fade", "moving") end)
+    b:Note("Performance mode switches off the lie of the land" .. (ns.PencilSetting and ", the time-of-day colours and the pencil" or " and the time-of-day colours") .. " while it is on.")
 end }
 
 -- Town view and City view (view: "townView" / "cityView") -----------------
 
--- each layer's size there (view.sizes; unset: its map size times "All pins")
+-- One slider a place: every pin there, bigger or smaller (view.pinScale, on top of each pin's own size:
+-- ns.TownPinSize). The seven sliders a place for single layers are gone (2026-11-15): a layer has one Size
+-- slider, on its own tab, and it moves the pin you are looking at.
 local function ViewPinSizes(a, view, where)
-    a:Header("Pin sizes " .. where)
-    a:Slider("All pins", 0.5, 3, 0.05, view, "pinScale", "%.2fx")
-    a:Tip("Every layer's map size times this, for the layers you haven't set below.")
-    a:Advanced(true)
-    local LAYERS = {
-        { "questie", "Quest givers & turn-ins" },   -- (one size: turn-ins follow the givers here, ns.TownPinSize)
-        { "objectives", "Objective markers (the game's)" },   -- (objective pins and dots: their own size everywhere)
-        { "learned", "Learned quest givers" }, { "townsfolk", "Townsfolk" },
-        { "rares", "Rares & treasures" }, { "gather", "Gathering nodes" },
-        { "dungeons", "Dungeon entrances" },
-    }
-    for _, l in ipairs(ns.DropNoGameLayers(LAYERS, 1)) do
-        a:SliderWith(l[2], 0.2, 3, 0.05,
-            function() return ns.TownPinSize(l[1], view) end,
-            function(v)
-                ns.db[view].sizes[l[1]] = v
-                ns.OnSettingChanged(view, "sizes")
-            end, "%.2fx")
-    end
-    a:Button("Same sizes as on the map", function()
-        wipe(ns.db[view].sizes)
-        ns.db[view].pinScale = 1
-        ns.OnSettingChanged(view, "sizes")
-        ns.RefreshControls()
-    end)
-    a:Advanced()
+    a:Header("Pin size " .. where)
+    a:Slider("All pins " .. where, 0.5, 3, 0.05, view, "pinScale", "%.2fx")
+    a:Tip("Every pin on the map while you are there, bigger or smaller. One kind of pin alone: the Size slider on its own tab.")
+    -- ("Same sizes as in the open world", a button under the fine-tuning, is gone: the user, 2026-11-15, "no
+    -- need".)
 end
 
--- townsfolk there: their own list (view.types), a copy of the map's at first
-local function ViewTownsfolk(b, view, where, when)
-    b:Header("Townsfolk " .. where)
-    b:Check("Their own list " .. where, view, "ownTypes")
-    b:Tip("On: the townsfolk ticked here " .. when .. ", so the map elsewhere can stay quiet. Off: the map's own list (Townsfolk page).")
-    b:Requires(view, "ownTypes")
-    local function TownType(label, key)
-        b:CheckWith(label,
-            function() return ns.TownTownsfolk(view).types[key] end,
-            function(v)
-                ns.TownTownsfolk(view).types[key] = v or nil
-                ns.OnSettingChanged(view, "types")
-            end, true)
-    end
-    -- in the Townsfolk page's groups: trainers, services, vendors
-    local types = ns.TOWNSFOLK_TYPES or { services = {}, vendors = {} }
-    local trainers = { ["Class Trainer"] = true, ["Weapon Master"] = true, ["Portal Trainer"] = true }
-    b:Grid(3)  -- (side by side, as on the Townsfolk page)
-    b:SubHeader("Trainers")
-    TownType("Profession trainers", "professions")
-    b:Indent(true)
-    b:CheckWith("Only my professions",
-        function() return ns.TownTownsfolk(view).myProfessionsOnly end,
-        function(v)
-            ns.TownTownsfolk(view).myProfessionsOnly = v and true or false
-            ns.OnSettingChanged(view, "myProfessionsOnly")
-        end, true)
-    b:Indent()
-    for _, t in ipairs(types.services) do
-        if trainers[t.key] then TownType(t.label, t.key) end
-    end
-    b:SubHeader("Services")
-    for _, t in ipairs(types.services) do
-        if not trainers[t.key] then TownType(t.label, t.key) end
-    end
-    b:SubHeader("Vendors")
-    for _, t in ipairs(types.vendors) do TownType(t.label, t.key) end
-    b:Grid()
-    b:Requires()
-end
-
-PAGES[#PAGES + 1] = { key = "town", label = "Town view", build = function(p)
+-- Towns and cities on one page (they were two with the same layout, the settings pass, 2026-11-14): what the
+-- map does in a town, then in a capital, each with its pin sizes; the tools for a place the town finding got
+-- wrong; and, as fine-tuning, a townsfolk list of their own for each.
+PAGES[#PAGES + 1] = { key = "town", label = "Towns & cities", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("In a town", ns.ToggleIcon("town"))
     a:Check("Town view", "townView", "enabled")
-    a:Tip("All of town view at once: its zoom, pin sizes, townsfolk list and the Towns & cities profile. Capitals have City view instead.")
-    a:Check("Zoom in when I'm in a town", "townView", "zoom")
-    a:Tip("A close-up of the town when you arrive, following you; back to your own zoom when you leave. It waits while you've panned or zoomed yourself.")
+    a:Tip("Turns all of town view on or off: the zoom, bigger pins and the townsfolk list. Capital cities have their own switch below.")
+    a:Check("Zooms in on towns", "townView", "zoom")
+    a:Tip("A close-up of the town when you arrive, following you; back to your own zoom when you leave. Paused while you've panned or zoomed the map yourself.")
     a:Requires("townView", "zoom")
     a:Slider("How close", 0.5, 16, 0.1, "zoom", "townX", HowClose)
     a:Tip("", HOW_CLOSE_TIP)
@@ -2489,14 +2852,29 @@ PAGES[#PAGES + 1] = { key = "town", label = "Town view", build = function(p)
         if ns.UpdateProfile then ns.UpdateProfile() end
         ns.RefreshControls()
     end)
-    a:Tip("Trainers, vendors and the like, in towns and capitals, whatever the Townsfolk layer says elsewhere.")
+    a:Tip("Shows trainers, vendors and the rest in towns and cities, even if Townsfolk is off elsewhere.")
 
     ViewPinSizes(a, "townView", "in town")
 
-    local b = Column(p, HALF, 0, HALF)
-    ViewTownsfolk(b, "townView", "in town", "while you're in a town")
+    a:Header("In a capital city", ns.ToggleIcon("city"))
+    a:Check("Zoom when you enter a capital", "cityView", "zoom")
+    a:Tip("In a capital city the map shows the whole city, and goes back to your zoom when you leave.")
+    a:Requires("cityView", "zoom")
+    a:Slider("How close", 0, 16, 0.1, "cityView", "zoomX", function(v)
+        if v < 0.05 then return "the whole city" end
+        return ArtSize(v)
+    end)
+    a:Tip("0 shows the whole city.", HOW_CLOSE_TIP)
+    a:Requires(nil, "mapButtons")
+    a:Check("City view button on the map", nil, "cityButton")
+    a:Tip("The button with your faction's crest. Turns the whole-city zoom on or off.")
+    a:Requires()
+    a:Note("Off: in a capital city the map keeps your own zoom.")
 
-    -- (last: the tools for when the town finding gets a place wrong)
+    ViewPinSizes(a, "cityView", "in a city")
+
+    -- (the tools for when the town finding gets a place wrong, and where it thinks you are now)
+    local b = Column(p, HALF, 0, HALF)
     b:Header("Is this a town?")
     local status = p:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     Ink(p, status)
@@ -2509,129 +2887,218 @@ PAGES[#PAGES + 1] = { key = "town", label = "Town view", build = function(p)
         local sub = ns.CurrentSubZone and ns.CurrentSubZone() or ""
         local inTown, why = false, "-"
         if ns.TownStatus then inTown, why = ns.TownStatus() end
-        status:SetText((sub ~= "" and sub or "(no sub-zone)") .. "\n"
-            .. (inTown and "|cff4ddf4dIn town|r" or "|cffff6a4dNot a town|r") .. "  |cff9d9d9d(" .. why .. ")|r")
+        local here = inTown and "|cff4ddf4dIn town|r" or "|cffff6a4dNot a town|r"
+        if ns.InCityView and ns.InCityView() then here = "|cff4ddf4dIn a capital city|r" end
+        status:SetText((sub ~= "" and sub or "(no sub-zone)") .. "\n" .. here .. "  |cff9d9d9d(" .. why .. ")|r")
     end)
     b:Button("This place is a town", function() ns.MarkTown(true) end)
     b:Button("This place is not a town", function() ns.MarkTown(false) end)
     b:Button("Back to automatic", function() ns.MarkTown(nil) end)
-    b:Note("A town is where two kinds of service NPC (inn, repair, mail, flight, stable, bank, auction) stand within 60 yards; its sub-zone is then remembered. A place you mark wins.")
+    b:Note("Waymark counts a place as a town when it has two services close together, like an inn and a flight master. A place you mark with the buttons above wins.")
     b:Button("Forget remembered towns", function() ns.ForgetLearnedTowns() end)
-end }
 
-PAGES[#PAGES + 1] = { key = "city", label = "City view", build = function(p)
-    local a = Column(p, 0, 0, HALF)
-    a:Header("In a capital city", ns.ToggleIcon("city"))
-    a:Check("Zoom when I enter a capital", "cityView", "zoom")
-    a:Tip("In a capital the map shows the whole city (or as close as below), and your own zoom again when you leave.")
-    a:Requires("cityView", "zoom")
-    a:Slider("How close", 0, 16, 0.1, "cityView", "zoomX", function(v)
-        if v < 0.05 then return "the whole city" end
-        return ArtSize(v)
-    end)
-    a:Tip("0 shows the whole city.", HOW_CLOSE_TIP)
-    a:Requires(nil, "mapButtons")
-    a:Check("City view button on the map", nil, "cityButton")
-    a:Tip("Beside the town view button, with your faction's crest: switches city view's zoom to the whole capital on or off.")
-    a:Requires()
-    a:Note("Off: in a capital the map stays at your own zoom (town view never zooms in a capital).")
-
-    ViewPinSizes(a, "cityView", "in a city")
-
-    local b = Column(p, HALF, 0, HALF)
-    ViewTownsfolk(b, "cityView", "in a city", "while you're in a capital")
-
-    b:Header("Where you are")
-    local status = p:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    Ink(p, status)
-    status:SetPoint("TOPLEFT", b:Left() + 4, b.y - 2)
-    status:SetWidth(HALF - 30)
-    status:SetJustifyH("LEFT")
-    b.y = b.y - 24
-    local ticker = CreateFrame("Frame", nil, p)
-    ticker:SetScript("OnUpdate", function()
-        local inCity = ns.InCityView and ns.InCityView()
-        status:SetText(inCity and "|cff4ddf4dIn a capital city|r" or "|cffff6a4dNot in a capital city|r")
-    end)
+    -- (which townsfolk show in a town or a capital: the Townsfolk tab's list, with its place switch)
+    b:Button("Go to: Which townsfolk show here", function() ns.OpenOptionsPage("people") end)
 end }
 
 -- the header on the left; the map's border and the header's side by side on the right
+-- Header & border (the settings pass, 2026-11-15; mockups\header-borders.html). It was two columns of some
+-- thirty controls: the header, the map's border, the header's own border, the tooltip's and the tracker's
+-- frames, one look for wherever the map was. Now: each place the map lives keeps its own look (PlaceLooks.lua),
+-- picked here by the place's tab, which also puts the map there so the change is seen; a ready-made look
+-- first; the few choices a player makes; the rest with the fine-tuning.
 PAGES[#PAGES + 1] = { key = "header", label = "Header & border", build = function(p)
-    local a = Column(p, 0, 0, HALF)
+    local a = Column(p, 0, 0, CONTENT_W)
+    a:Header("The look, for each place the map lives")
+    a:Note("The map can look different as a window, in clear view and as your minimap. Pick one to switch the map to it and change its look.")
+    do
+        local tabs = {}
+        local function TabLook()
+            local now = MapRole()
+            for _, b in ipairs(tabs) do
+                local on = b.place == now
+                if on then b.text:SetTextColor(1, 1, 1) else b.text:SetTextColor(1, 0.82, 0) end
+                b.under:SetShown(on)
+            end
+        end
+        local tx = a:Left() + 4
+        for _, t in ipairs({ { "window", "A window" }, { "clear", "Clear view" }, { "dock", "The minimap's place" } }) do
+            local b = CreateFrame("Button", nil, p)
+            b.place = t[1]
+            b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            b.text:SetText(t[2])
+            b.text:SetPoint("CENTER", 0, 1)
+            b:SetSize(b.text:GetStringWidth() + 24, 24)
+            b:SetPoint("TOPLEFT", p, "TOPLEFT", tx, a.y)
+            b.under = b:CreateTexture(nil, "ARTWORK")
+            b.under:SetColorTexture(1, 0.82, 0, 0.9)
+            b.under:SetPoint("BOTTOMLEFT", 6, 0)
+            b.under:SetPoint("BOTTOMRIGHT", -6, 0)
+            b.under:SetHeight(2)
+            b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+            b:SetScript("OnClick", function()
+                SetMapRole(t[1])
+                ns.RefreshControls()
+            end)
+            tabs[#tabs + 1] = b
+            tx = tx + b:GetWidth() + 6
+        end
+        -- (the tab of the place the map is in, whoever moved it there)
+        local look = CreateFrame("Frame", nil, p)
+        look.Refresh = TabLook
+        controls[#controls + 1] = look
+        TabLook()
+        a.y = a.y - 32
+    end
+    if ns.PlaceLookChoices then
+        a:Choice("Ready-made look", nil, nil, ns.PlaceLookChoices, ns.PlaceLookNow, function(v)
+            if v ~= "own" then ns.PlaceLookSet(v) end
+            ns.RefreshControls()
+        end)
+        a:Tip("A matching header and border. It says Your own once you've changed a part yourself.")
+    end
+
     a:Header("Header")
-    a:Check("Show", "zoneName", "shown")
-    a:Requires("zoneName", "shown")
-    a:Choice("Where", "zoneName", "mode", {
+    -- (clear view has switches of its own over these two: its zone name shown, on mouse-over or hidden, and
+    -- its border hidden, Clear view tab. There the ticks here answer for both, or a tick that is on showed
+    -- nothing: the user, 2026-11-15, "feels broken".)
+    local function InClear() return MapRole() == "clear" end
+    local function HeaderOn()
+        return ns.db.zoneName.shown and not (InClear() and ns.db.clearView.header == "hidden") and true or false
+    end
+    a:CheckWith("Show the header", HeaderOn, function(v)
+        ns.db.zoneName.shown = v and true or false
+        ns.OnSettingChanged("zoneName", "shown")
+        if v and InClear() and ns.db.clearView.header == "hidden" then
+            ns.db.clearView.header = "shown"
+            ns.OnSettingChanged("clearView", "header")
+        end
+        ns.RefreshControls()
+    end)
+    a:Requires(HeaderOn, true)
+    -- each spot keeps its own nudge (zoneName.nudges[mode] = { x, y }): the one nudge counted for all three,
+    -- so a nudge made above the map threw the header off inside or below it (the user, 2026-11-15: "nudge
+    -- sliders count for all dropdowns, which doesnt make sense"). The drawing code reads offsetX / offsetY
+    -- as ever; a change of spot puts the old spot's away and brings out the new one's (a spot never nudged: 0).
+    a:Choice("Where it sits", "zoneName", "mode", {
         { "header", "Above the map" },
-        { "inside", "Inside, at the top" },
         { "below", "Below the map" },
-    })
-    a:Choice("Style", "zoneName", "style", HEADER_STYLES)
+    }, function() return ns.db.zoneName.mode end, function(v)
+        local z = ns.db.zoneName
+        local old = z.mode == "below" and "below" or "header"
+        if v == old then return end
+        z.nudges = type(z.nudges) == "table" and z.nudges or {}
+        z.nudges[old] = { z.offsetX or 0, z.offsetY or 0 }
+        local n = z.nudges[v]
+        z.mode = v
+        z.offsetX, z.offsetY = n and n[1] or 0, n and n[2] or 0
+        ns.OnSettingChanged("zoneName", "mode")
+        ns.RefreshControls()
+    end)
     a:Slider("Text size", 9, 24, 1, "zoneName", "fontSize", "%d")
-    -- what it says, then the fine-tuning of its look last
-    a:SubHeader("What it says")
     a:Check("The zone too (Sentinel Hill, Westfall)", "zoneName", "showZone")
     a:Check("The zone's level range", "zoneName", "levels")
     a:Tip("Coloured like quests: green is easy for you, red is dangerous.")
-    a:Check("How much of the zone I've explored", "zoneName", "progress")
+    a:Check("How much of the zone you've explored", "zoneName", "progress")
     a:Check("Coloured like the zone text", "zoneName", "pvpColors")
     a:Tip("Red, green or gold for hostile, friendly or contested land, as the game's zone text.")
     a:Advanced(true)
+    -- (the fine-tuning in three small groups, for reading: the user, 2026-11-15)
+    a:SubHeader("Style and border")
+    StyleChoice(a, "Header style", "header", "zoneName", "style", HEADER_STYLES)
+    -- (the header's own border sits with the header, not in a section of its own: the user, 2026-11-15,
+    -- "Header border belongs together with header". A ready-made look sets these: by hand only with the
+    -- fine-tuning.)
+    a:Choice("Header border", "zoneName", "border", Trimmed({
+        { "auto", "The style's own" }, { "dialog", "Classic dialog" }, { "gold", "Gold" },
+        { "tooltip", "Tooltip" }, { "wood", "Wood" }, { "line", "Thin line" }, { "none", "None" },
+    }, ns.db.zoneName.border))
+    a:Choice("Header border colour", "zoneName", "borderColor", {
+        { "natural", "As drawn" }, { "gold", "Gold" }, { "bronze", "Bronze" },
+        { "silver", "Silver" }, { "dark", "Dark" }, { "class", "My class colour" },
+    })
+    a:Slider("Header border thickness", 0.5, 2, 0.05, "zoneName", "borderSize", "%.2fx")
+    a:Slider("Header border distance", -12, 20, 1, "zoneName", "borderGap", "%d px")
+    a:SubHeader("Font and width")
     a:Choice("Font", "zoneName", "font", ns.FontChoices)
     a:Tip("Morpheus is the font of the game's own zone text.", FONT_TIP)
     a:Check("As wide as the map", "zoneName", "fullWidth")
     a:Choice("Text alignment (wide)", "zoneName", "align", {
         { "CENTER", "Centre" }, { "LEFT", "Left" }, { "RIGHT", "Right" },
     })
+    a:SubHeader("Nudge")
     a:Slider("Nudge left / right", -150, 150, 1, "zoneName", "offsetX", "%d px")
-    a:Slider("Nudge down / up", -60, 60, 1, "zoneName", "offsetY", "%d px")
+    -- (down far enough to sit inside the map: "Inside, at the top" is the nudge now)
+    a:Slider("Nudge down / up", -150, 60, 1, "zoneName", "offsetY", "%d px")
+    a:Tip("Each spot in Where it sits keeps a nudge of its own.")
     a:Advanced()
     a:Requires()
 
-    local b = Column(p, HALF, 0, HALF)
-    b:Header("Map border")
-    b:Check("Show", "border", "shown")
-    b:Tip("Off: no frame round the map at all, the game's own included. Your style is kept for when you switch it back on.")
-    b:Requires("border", "shown")
-    b:Choice("Style", "border", "style", BORDER_STYLES)
-    b:Choice("Colour", "border", "color", {
+    a:Header("Border")
+    local function BorderOn()
+        return ns.db.border.shown and not (InClear() and ns.db.clearView.noFrame) and true or false
+    end
+    a:CheckWith("Show the border", BorderOn, function(v)
+        ns.db.border.shown = v and true or false
+        ns.OnSettingChanged("border", "shown")
+        if v and InClear() and ns.db.clearView.noFrame then
+            ns.db.clearView.noFrame = false
+            ns.OnSettingChanged("clearView", "noFrame")
+        end
+        ns.RefreshControls()
+    end)
+    a:Tip("Off: no frame round the map at all, the game's own included. Your style is kept for when you switch it back on.")
+    a:Requires(BorderOn, true)
+    a:Choice("Colour", "border", "color", {
         { "natural", "As drawn" }, { "gold", "Gold" }, { "bronze", "Bronze" },
         { "silver", "Silver" }, { "dark", "Dark" }, { "class", "My class colour" },
     })
-    b:Advanced(true)
-    b:Slider("Thickness", 0.5, 2, 0.05, "border", "size", "%.2fx")
-    b:Slider("Distance from the map", -12, 20, 1, "border", "gap", "%d px")
-    b:Advanced()
-    b:Requires("zoneName", "shown")
-    b:Header("Header border")
-    b:Choice("Style", "zoneName", "border", {
-        { "auto", "The style's own" }, { "dialog", "Classic dialog" }, { "gold", "Gold" },
-        { "tooltip", "Tooltip" }, { "wood", "Wood" }, { "line", "Thin line" }, { "none", "None" },
-    })
-    b:Choice("Colour", "zoneName", "borderColor", {
-        { "natural", "As drawn" }, { "gold", "Gold" }, { "bronze", "Bronze" },
-        { "silver", "Silver" }, { "dark", "Dark" }, { "class", "My class colour" },
-    })
-    b:Advanced(true)
-    b:Slider("Thickness", 0.5, 2, 0.05, "zoneName", "borderSize", "%.2fx")
-    b:Slider("Distance from the header", -12, 20, 1, "zoneName", "borderGap", "%d px")
-    b:Advanced()
-    b:Requires()
-    b:Header("Menus & questions")
-    b:Choice("Font", "menus", "font", ns.FontChoices)
-    b:Tip("Waymark's right-click menus and the box where it asks you something. Friz Quadrata, the game's own, reads best.", FONT_TIP)
+    a:Advanced(true)
+    StyleChoice(a, "Border style", "border", "border", "style", Trimmed(BORDER_STYLES, ns.db.border.style))
+    a:Slider("Thickness", 0.5, 2, 0.05, "border", "size", "%.2fx")
+    a:Slider("Distance from the map", -12, 20, 1, "border", "gap", "%d px")
+    a:Advanced()
+    a:Requires()
+
+    a:Advanced(true)
+    a:Header("See-through")
+    a:Slider("Border and header opacity", 0, 1, 0.05, "mapFrame", "frameAlpha", Percent)
+    a:Tip("How see-through the border and header are. The map's buttons fade separately, on the Buttons tab.")
+    a:Advanced()
+
 end }
 
-PAGES[#PAGES + 1] = { key = "controls", label = "Buttons & coordinates", build = function(p)
+-- Tooltips & menus (2026-11-16): what is styled and is not the map's own frame. It stood at the foot of
+-- Header & border, under the nudge sliders. The tracker's frame went to the Tracker tab's Border section.
+PAGES[#PAGES + 1] = { key = "tipsmenus", label = "Tooltips & menus", build = function(p)
+    local a = Column(p, 0, 0, CONTENT_W)
+    if ns.FramesRows then ns.FramesRows(a, "tips") end
+    a:Header("Menus & questions")
+    a:Choice("Font", "menus", "font", ns.FontChoices)
+    a:Tip("Waymark's right-click menus and the box where it asks you something. Friz Quadrata, the game's own, reads best.", FONT_TIP)
+end }
+
+PAGES[#PAGES + 1] = { key = "controls", label = "Buttons", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Map buttons")
     a:Check("Show the map's buttons", nil, "mapButtons")
-    a:Tip("All of them at once: the toggle buttons, the gear, and the town and city view buttons. Each also has its own switch: below, or for the town and city view buttons on their own pages.")
+    a:Tip("All of them at once: the toggle buttons, the gear, the magnifier, and the town and city view buttons. Each also has its own switch below.")
     a:Requires(nil, "mapButtons")
     a:Check("Toggle buttons", nil, "quickToggles")
     a:Tip("Small buttons on the map that switch layers on and off. Right-click one for its settings.")
     a:Check("Quick-options button (the gear)", nil, "quickButton")
     a:Tip("The most-used switches in a small panel. Right-click it for these settings.")
+    -- (Search.lua, out of the Lab for 1.3: only in a build that carries it)
+    if ns.RedrawSearch then
+        a:Check("Search the map (the magnifier)", nil, "searchButton")
+        a:Tip("Type a trainer, a service or an item a vendor sells: the map rings the closest one. Not shown while the map is docked.")
+    end
+    -- (the same two switches as on How it acts, In a town and In a capital city: here too, with the map's other
+    -- buttons, where the user looked for them, 2026-11-15)
+    a:Check("Town view button", nil, "townButton", nil, ns.ToggleIcon("town"))
+    a:Tip("Beside the gear: switches all of town view on or off with one click.")
+    a:Check("City view button", nil, "cityButton", nil, ns.ToggleIcon("city"))
+    a:Tip("The button with your faction's crest. Turns the whole-city zoom on or off.")
     a:Requires()
     a:Button("Put the map's buttons back", function() ns.ResetButtonPositions() end)
     a:Tip("Press and hold any button on the map to move it; right-click while holding puts that one back.")
@@ -2664,7 +3131,7 @@ PAGES[#PAGES + 1] = { key = "controls", label = "Buttons & coordinates", build =
     a:Slider("Faded to", 0, 100, 5, "toggles", "fadeAlpha", "%d%%")
     a:Check("The close button too", "toggles", "fadeClose")
     a:Check("Remember clicks per context profile", "toggles", "saveToProfile")
-    a:Tip("For layers a context profile decides. On: in a town, a click is kept in the Towns & cities profile, so it's that way every time you're in town. Off: a click lasts until you leave the context.")
+    a:Tip("On: a layer you switch with a button while in a town stays that way every time you're in a town. Off: it only lasts until you leave. The same goes for combat, dungeons and battlegrounds.")
     a:Advanced()
     a:Requires()
 
@@ -2702,7 +3169,7 @@ PAGES[#PAGES + 1] = { key = "controls", label = "Buttons & coordinates", build =
             ns.OnSettingChanged("toggles", "order")
         end,
         function(id) return ns.db.toggles.list[id] end, "toggles", "order")
-    r:Note("Drag a row to move it. The top one is the button at the starting end of the strip. Unticked buttons keep their place, greyed.")
+    r:Note("Drag a row to change the order. The top row is the first button.")
     r:Button("Default order", function()
         ns.db.toggles.order = {}
         ns.OnSettingChanged("toggles", "order")
@@ -2711,44 +3178,9 @@ PAGES[#PAGES + 1] = { key = "controls", label = "Buttons & coordinates", build =
     r:Requires()
     r:EndCard()
 
-    local c = Column(p, 0, nil, HALF)
-    c:Header("Coordinates")
-    c:Check("Show", "coords", "shown")
-    c:Requires("coords", "shown")
-    c:Advanced(true)
-    c:Slider("Text size", 4, 20, 1, "coords", "size", "%d")
-    local SPOTS = {
-        { "TOPLEFT", "Top left" }, { "TOP", "Top middle" }, { "TOPRIGHT", "Top right" },
-        { "BOTTOMLEFT", "Bottom left" }, { "BOTTOM", "Bottom middle" }, { "BOTTOMRIGHT", "Bottom right" },
-    }
-    c:Choice("Player: where", "coords", "where", SPOTS)
-    local cursorSpots = { { "beside", "Beside the player's" } }
-    for _, s in ipairs(SPOTS) do cursorSpots[#cursorSpots + 1] = s end
-    c:Choice("Cursor: where", "coords", "cursorWhere", cursorSpots)
-    c:Tip("Beside the player's: they move together. A spot of its own: placed and nudged apart from the player's.")
-    c:Advanced(true)
-    c:Color("Text colour", "coords", "color")
-    c:Choice("Player: side", "coords", "side", {
-        { "inside", "Inside the map" }, { "outside", "Outside the map" },
-    })
-    c:Choice("Cursor: side", "coords", "cursorSide", {
-        { "same", "As the player's" }, { "inside", "Inside the map" }, { "outside", "Outside the map" },
-    })
-    c:Tip("Only for a spot of its own; beside the player's it sits on the same line.")
-    c:Slider("Player: nudge left / right", -100, 100, 1, "coords", "offsetX", "%d px", "none")
-    c:Slider("Player: nudge down / up", -100, 100, 1, "coords", "offsetY", "%d px", "none")
-    c:Slider("Cursor: nudge left / right", -200, 200, 1, "coords", "cursorX", "%d px", "none")
-    c:Tip("From its own spot, or from beside the player's.")
-    c:Slider("Cursor: nudge down / up", -100, 100, 1, "coords", "cursorY", "%d px", "none")
-    c:Slider("Dark backing", 0, 100, 5, "coords", "backing", "%d%%", "none")
-    c:Check("Text shadow", "coords", "shadow")
-    c:Check("Text outline", "coords", "outline")
-    c:Tip("A dark outline round the letters: easier to read without the backing.")
-    c:Advanced()
-    c:Requires()
 end }
 
-PAGES[#PAGES + 1] = { key = "clock", label = "Clock", build = function(p)
+PAGES[#PAGES + 1] = { key = "clock", label = "Clock & coordinates", build = function(p)
     local c = Column(p, 0, 0, HALF)
     c:Header("Clock")
     c:Check("Show a clock on the map", "clock", "shown")
@@ -2757,7 +3189,7 @@ PAGES[#PAGES + 1] = { key = "clock", label = "Clock", build = function(p)
         { "plain", "Plain digits" }, { "head", "In the header" }, { "sun", "Moon dial" }, { "arc", "The day's arc" },
         { "stamp", "Stamp" }, { "ink", "In ink" },
     })
-    c:Tip("In the header: beside the zone's name, while the header shows. In ink: the hour in words, to the nearest 5 minutes.", "Drag the clock to move it. Right-click it to detach it from the map, or anchor it again.")
+    c:Tip("In the header: next to the zone name. In ink: the time written out in words, to the nearest 5 minutes.", "Drag the clock to move it. Right-click it to detach it from the map, or anchor it again.")
     c:Check("24-hour time", "clock", "h24")
     c:Advanced(true)
     c:Choice("Time from", "clock", "source", { { "realm", "The realm" }, { "computer", "My computer" } })
@@ -2766,36 +3198,80 @@ PAGES[#PAGES + 1] = { key = "clock", label = "Clock", build = function(p)
     c:Slider("Opacity", 20, 100, 5, "clock", "alpha", "%d%%")
     c:Requires(function() return ns.IsShown("clock") and (ns.db.clock.look == "sun" or ns.db.clock.look == "arc") end)
     c:Check("Hide the digits", "clock", "hideDigits")
-    c:Tip("The time is still in the clock's tooltip. Shown, drag them on the map to slide them round the art.")
+    c:Tip("The time still shows when you hover the clock. With the digits on, drag them to move them around the clock.")
     c:Requires(function() return ns.IsShown("clock") and ns.db.clock.look == "plain" end)
     c:Choice("Font", "clock", "font", ns.FontChoices)
     c:Choice("Digit colour", "clock", "tint", { { "parchment", "Parchment" }, { "gold", "Gold" }, { "white", "White" } })
     c:Slider("Background", 0, 100, 5, "clock", "backing", "%d%%", "none")
     c:Choice("Frame", "clock", "frame", {
         { "none", "None" }, { "dialog", "Classic dialog" }, { "gold", "Gold" },
-        { "tooltip", "Tooltip" }, { "wood", "Wood" }, { "line", "Thin line" },
+        { "tooltip", "Tooltip" }, { "line", "Thin line" },
     })
     c:Requires("clock", "shown")
     c:Button("Reset clock position", function() ns.ResetClock() end)
     c:Tip("Puts it under the minimap, detached from the map, with the digits back under the art.")
     c:Advanced()
     c:Requires()
+    -- (from the Buttons tab: coordinates are something shown on the map, as the clock is. "Coordiantes belong
+    -- on the map dont they?", the user 2026-11-15)
+    local d = Column(p, HALF, 0, HALF)
+    d:Header("Coordinates")
+    d:Check("Show", "coords", "shown")
+    d:Requires("coords", "shown")
+    d:Advanced(true)
+    d:Slider("Text size", 4, 20, 1, "coords", "size", "%d")
+    local SPOTS = {
+        { "TOPLEFT", "Top left" }, { "TOP", "Top middle" }, { "TOPRIGHT", "Top right" },
+        { "BOTTOMLEFT", "Bottom left" }, { "BOTTOM", "Bottom middle" }, { "BOTTOMRIGHT", "Bottom right" },
+    }
+    d:Choice("Player: where", "coords", "where", SPOTS)
+    local cursorSpots = { { "beside", "Beside the player's" } }
+    for _, s in ipairs(SPOTS) do cursorSpots[#cursorSpots + 1] = s end
+    d:Choice("Cursor: where", "coords", "cursorWhere", cursorSpots)
+    d:Tip("Beside the player's: they move together. A spot of its own: placed and nudged apart from the player's.")
+    d:Advanced(true)
+    d:Color("Text colour", "coords", "color")
+    d:Choice("Player: side", "coords", "side", {
+        { "inside", "Inside the map" }, { "outside", "Outside the map" },
+    })
+    d:Choice("Cursor: side", "coords", "cursorSide", {
+        { "same", "As the player's" }, { "inside", "Inside the map" }, { "outside", "Outside the map" },
+    })
+    d:Tip("Only for a spot of its own; beside the player's it sits on the same line.")
+    d:Slider("Player: nudge left / right", -100, 100, 1, "coords", "offsetX", "%d px", "none")
+    d:Slider("Player: nudge down / up", -100, 100, 1, "coords", "offsetY", "%d px", "none")
+    d:Slider("Cursor: nudge left / right", -200, 200, 1, "coords", "cursorX", "%d px", "none")
+    d:Tip("From its own spot, or from beside the player's.")
+    d:Slider("Cursor: nudge down / up", -100, 100, 1, "coords", "cursorY", "%d px", "none")
+    d:Slider("Dark backing", 0, 100, 5, "coords", "backing", "%d%%", "none")
+    d:Check("Text shadow", "coords", "shadow")
+    d:Check("Text outline", "coords", "outline")
+    d:Tip("A dark outline round the letters: easier to read without the backing.")
+    d:Advanced()
+    d:Requires()
 end }
 
+-- The keys, in four groups (Keys.lua's ns.KeyGroups, as in the game's own Keybindings list): the few worth
+-- having, each with a line saying what it gives; what a controller needs; the rest; and a key a layer, folded.
+-- The first row is the game's own Toggle Battlefield Map: shown and set here, not ours (the settings pass,
+-- 2026-11-14: the key that matters most was not on the page).
 PAGES[#PAGES + 1] = { key = "keys", label = "Key bindings", build = function(p)
-    -- (each column whole before the next: on the settings pages they stack)
-    local list = ns.KeyBindingList and ns.KeyBindingList() or {}
-    local a = Column(p, 0, 0, HALF)
-    a:Note("Click a key's button, then press the key: with Shift, Ctrl or Alt too if you like. Escape cancels, right-click clears it. A key already used for something else moves here.")
-    a:Note("These are the game's own key bindings, so they're also in Esc > Options > Keybindings, under Waymark.")
-    a:Header("Map")
-    for _, k in ipairs(list) do
-        if not k.layer then a:KeyBind(k[2], k[1]) end
-    end
-    local b = Column(p, HALF, 0, HALF)
-    b:Header("Show/hide")
-    for _, k in ipairs(list) do
-        if k.layer then b:KeyBind((k[2]:gsub("%s*%(.-%)$", "")), k[1]) end
+    local w = Column(p, 0, 0, CONTENT_W)
+    w:Note("Click a button, then press the key you want. Shift, Ctrl and Alt work too. Escape cancels, right-click clears. A key that was used for something else moves here.")
+    w:Note("These are the game's own key bindings, so they're also in Esc > Options > Keybindings, under Waymark.")
+    for _, g in ipairs(ns.KeyGroups and ns.KeyGroups() or {}) do
+        w:Header(g.title)
+        if g.note then w:Note(g.note) end
+        for _, k in ipairs(g) do
+            w:KeyBind(k[2], k[1])
+            if k[3] then w:Note(k[3], nil, nil, nil, 16) end
+        end
+        -- (Waymark's quest log has no key of its own: it opens on the game's quest log key, by two ticks
+        -- on its own tab. Nothing on this page said so, and the user looked for it here, 2026-11-16.)
+        if g.title == "The keys worth having" and ns.db.questlog then
+            w:Note("Waymark's quest log needs no key of its own: it opens on your quest log key (L).")
+            w:Button("Go to: Open it with the quest log key", function() ns.ShowOption("questlog", "keyL") end)
+        end
     end
 end }
 
@@ -2827,23 +3303,21 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
         rows[3] = { "Tooltips", function() return ns.db.questie.tooltip and "Questie's" or "Waymark's" end }
     end
     a:StatusBox(questie and "Showing now" or nil, rows, ns.FOREVER
-        and "Under them, the game's own ! and ? on the minimap. Addons can't hide those: Track Quests in its tracking menu does." or nil)
+        and "The game's own ! and ? still show on the minimap. Turn off Track Quests in the minimap's tracking menu to hide them." or nil)
     a:Header("Which pins")
     a:CheckWith("Quest givers", ns.QuestGiversOn, function(v)
         ns.SetQuestGivers(v)
         ns.RefreshControls()
-    end, nil, ns.ToggleIcon("questie"))
+    end, nil, ns.ToggleIcon("questie"), { { "questie", "shown" }, { "turnins", "shown" } })
     a:Tip("Where you pick quests up and hand them in.")
-    a:Advanced(true)
-    a:Check("Pick-ups", "questie", "shown", nil, ns.ToggleIcon("questie"))
-    a:Check("Turn-ins", "turnins", "shown", nil, ns.ToggleIcon("turnins"))
-    a:Tip("Where to hand in finished quests.")
-    a:Advanced()
+    -- (one tick for both: the two rows for pick-ups and turn-ins alone are out of the settings, "1 toggle is
+    -- enough for all of these right?", the user 2026-11-15. The two settings stay, and the map's own
+    -- Turn-ins button still switches that half.)
     a:CheckWith("Quest objectives", ns.ObjectivesOn, function(v)
         ns.SetObjectives(v)
         ns.RefreshControls()
     end, nil, ns.ToggleIcon("objview"))
-    a:Tip("Where your quests' monsters, items and places are.")
+    a:Tip("Where your quest mobs, items and places are.")
     local looks = {}
     looks[#looks + 1] = { "waymark", "Waymark's" }
     if ns.QuestieArt() then looks[#looks + 1] = { "questie", "Questie's" } end
@@ -2853,14 +3327,14 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
             ns.SetObjectives(ns.ObjectivesOn(), v)
             ns.RefreshControls()
         end)
-        a:Tip("Waymark's: a coloured dot a spawn, the quest at hand's camp; or pins, below. Questie's: pins in its icons, as you've set them in Questie. Blizzard's: the game's own objective markers and quest areas, ours off.", "With advanced settings on, each layer has its own switch.")
+        a:Tip("Waymark's: coloured dots where the mobs are, or icons (below). Questie's: Questie's icons, with your Questie settings. Blizzard's: the game's own markers and quest areas.", "With advanced settings on, each layer has its own switch.")
     end
     a:Requires(function() return ns.ObjectiveLook() == "waymark" end)
     a:CheckWith("Objective icons", function() return ns.db.objectivePins end, function(v)
         ns.SetObjectivePins(v)
         ns.RefreshControls()
     end, nil, ns.ToggleIcon("spots"))
-    a:Tip("Waymark's look as icons, a sword or bag on each spot, in place of the dots.")
+    a:Tip("Icons instead of dots: a sword or a bag on each spot.")
     a:Requires()
     a:Advanced(true)
     a:Advanced()
@@ -2883,13 +3357,13 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
         { "questie", "Questie's" }, { "modern", "Modern" },
     })
     if questie then
-        a:Note("Only the look. Where the pins stand and how many stay Waymark's.")
+        a:Note("Changes the icons only. The pins stay where Waymark puts them.")
     else
         a:Tip("Questie's: its round icons where Questie is installed; without it, the modern \"!\" and \"?\".")
     end
     a:Advanced()
     a:Check("Quest progress on tooltips", "questie", "unitTips")
-    a:Tip("Hovering a monster, an item or a thing in the world your quests want: the quest and how far along that objective is (Kobold Vermin slain: 3/10). Where Questie is loaded, Questie's own lines do this instead.")
+    a:Tip("Hover a mob or item your quests need to see the quest and your progress (Kobold Vermin slain: 3/10). With Questie installed, Questie shows this instead.")
     a:Requires()
     a:Advanced(true)
     -- (the pins of Waymark's look with Objective icons, and of Questie's: whose icons is the Look's to say)
@@ -2898,26 +3372,26 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     a:Slider("Opacity", 0, 1, 0.05, "spots", "alpha")
     a:Slider("Size", 0.2, 2, 0.05, "spots", "scale")
     a:Check("A colour per quest", "spots", "color")
-    a:Tip("Each quest's spots in a colour of its own, so neighbouring quests' spots tell apart.")
+    a:Tip("Each quest gets its own colour, so you can tell quests apart.")
     a:Slider("Spots of one objective at least", 0, 150, 5, "spots", "spacing", "%d yd apart", "off")
-    a:Tip("Mobs often stand in packs: one pin per pack is enough. Questie's own setting for this isn't used.")
+    a:Tip("Mobs that stand close together share one pin.")
     a:Slider("At most, per objective", 0, 40, 1, "spots", "maxPer", "%d pins", "no limit")
-    a:Tip("Above this, the most spread-out spots are kept, so the whole area is still marked. The tracker's distances still use every spawn.")
+    a:Tip("With more spots than this, only the most spread-out ones show, so the whole area is still covered.")
     a:Requires()
     a:Header("Objective dots", ns.ToggleIcon("ground"))
-    a:Tip("Where your quests' monsters, drops and things to use are, as ground on the map in each quest's colour. Hover it: what it is, what it drops and for which quest.")
+    a:Tip("Coloured areas on the map where your quest mobs and items are. Hover one to see what's there and which quest it's for.")
     a:Requires("ground", "shown")
     a:Slider("Opacity", 0, 1, 0.05, "ground", "alpha")
     a:Check("Coloured", "ground", "color")
     a:Tip("Off: every quest's ground in one red.")
     a:Requires(function() return ns.db.ground.shown and ns.db.ground.color end)
     a:Choice("Colour by", "ground", "colorBy", { { "quest", "Each quest" }, { "type", "Quest type" } })
-    a:Tip("Each quest: neighbouring quests in different colours. Quest type: by what the quest asks. Slay red, gather green, use blue, explore purple, escort teal. (Deliver and speak quests have no ground, only their ? pin.)")
+    a:Tip("Each quest: a colour per quest. Quest type: kill red, gather green, use blue, explore purple, escort teal.")
     a:Requires("ground", "shown")
     a:Check("Fade other quests while one is lit", "ground", "hush")
-    a:Tip("Hovering a quest (its tracker line, its log line or its ground) or finding it on the map lights it up in gold. With this on, the other quests' ground fades meanwhile so the lit one stands out. Off: they stay as they are, only the gold is added.")
+    a:Tip("Hovering a quest in the tracker, the log or on the map highlights it in gold. With this on, your other quests fade while it's highlighted.")
     a:Check("One dot for quests not in view", "ground", "quiet")
-    a:Tip("A quest in focus, under the mouse or open in the log: its dots, at its nearest camp. Every other quest: one dot. Off: every spawn of every quest.")
+    a:Tip("Shows all the dots only for the quest you're hovering or have open. Other quests get one dot each. Off: every dot for every quest.")
     a:Requires()
     if ns.FOREVER then
         a:Header("Blizzard's objective markers", ns.ToggleIcon("questMarkers"))
@@ -2934,16 +3408,14 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
         a:Requires()
     end
     a:Header("Pin filters")
-    a:Check("Hide quest pins outside the zone", "outside", "hideQuests")
-    a:Tip("The zone map shows bits of the zones around it; quest pins that fall there are hidden." .. (ns.FOREVER and " The blue quest areas are one picture, so they stay." or ""))
     a:Check("Objectives of tracked quests only", "outside", "trackedOnly")
     a:Tip(ns.FOREVER and "Objective spots and the game's objective markers only for the quests you track." or "Objective spots only for the quests you track.")
-    a:Note("Hiding pins in unexplored areas is on the Exploration page.")
+    a:Button("Go to: Hide pins in unexplored land", function() ns.ShowOption("explore", "hideQuests") end)
     a:Header("Quest data")
     a:Choice("Quests from", "questie", "source", {
         { "own", "Waymark's own" }, { "both", "Waymark's, filled from QuestieDB" }, { "questiedb", "QuestieDB" },
     })
-    a:Tip("Waymark's own: quest givers, turn-ins, objectives and quest ground from data built into the addon, no other addon needed. Filled from QuestieDB: Waymark's first, QuestieDB for what it lacks. QuestieDB: read from QuestieDB alone. Both need QuestieDB installed. Townsfolk follow this too. A change takes a /reload.")
+    a:Tip("Waymark's own: built in, no other addon needed. Filled from QuestieDB: Waymark's data, with QuestieDB filling the gaps. QuestieDB: QuestieDB only. The last two need QuestieDB installed. Townsfolk use the same source. Changing it needs a /reload.")
     a:Button("Reload now", function() ReloadUI() end)
 
     a:Advanced()
@@ -2955,29 +3427,98 @@ PAGES[#PAGES + 1] = { key = "quests", label = "Quests", build = function(p)
     -- which builds this page again)
     local from = ns.QuestSourceName and ns.QuestSourceName()
     local data = from == "QuestieDB" and "QuestieDB" or from == "both" and "Waymark's data and QuestieDB" or "Waymark's data"
-    b:Tip("Quest givers your characters have talked to, remembered with where they stand. Covers quests " .. data .. " lacks, such as Forever's new ones.")
+    b:Tip("Quest givers you've talked to are remembered, on all your characters. Fills in quests " .. data .. " is missing, like Forever's new ones.")
     b:Requires("learned", "shown")
     b:Advanced(true)
     b:Choice("Which quests", "learned", "mode", {
-        { "gaps", "Only ones " .. data .. " lacks" }, { "all", "All I've learned" },
+        { "gaps", "Only ones " .. data .. " lacks" }, { "all", "All you've learned" },
     })
-    b:Tip("\"Only ones " .. data .. " lacks\" fills its gaps. \"All I've learned\" shows the rest too, but never a second pin for a quest Quest givers or Turn-ins already show.")
+    b:Tip("\"Only ones " .. data .. " lacks\" fills its gaps. \"All you've learned\" shows the rest too, but never a second pin for a quest Quest givers or Turn-ins already show.")
     b:Slider("Opacity", 0, 1, 0.05, "learned", "alpha")
     b:Slider("Size", 0.2, 2, 0.05, "learned", "scale")
     b:Requires()
     b:Check("Keep learning", "learned", "record")
     b:Advanced()
-    b:Button("Your learned quests...", function() if ns.ToggleLearnedWindow then ns.ToggleLearnedWindow() end end)
-    b:Tip("What you've learned, in a window: the quests by zone and the monsters' spots. Share them or import someone's from there.", "Also: /waymark learned")
+    b:Button("Your learned quests", function() if ns.ToggleLearnedWindow then ns.ToggleLearnedWindow() end end)
+    b:Tip("A list of everything you've learned, by zone. You can share it or import someone else's from there.", "Also: /waymark learned")
     b:Live(function()
         if not ns.LearnedStats then return "" end
         local givers, quests, here, mobs = ns.LearnedStats()
-        return string.format("Known: %d quest givers, %d quests (%d on this map), %d monster spots", givers, quests, here, mobs or 0)
+        return string.format("Known: %d quest givers, %d quests (%d on this map), %d mob spots", givers, quests, here, mobs or 0)
     end)
     b:Button("Forget all of it (Shift-click)", function()
         if IsShiftKeyDown() then ns.ForgetLearned() end
     end)
-    b:Note("About 25 quests in Era have no spot for their monster, most of them brought by an event. Forever's quests are still being gathered: what you learn is very welcome (Share learned quests and monsters, Setups page).")
+    b:Note("Forever's new quests are still being gathered. If you'd like to help, share what you've learned from the Setups page.")
+end }
+
+-- As told (AsTold.lua, AsToldPanel.lua; out of the Lab for 1.3): a tab of its own among the quest pages, and a
+-- line on Start here beside the other ways to quest. The page follows its session's mock-up
+-- (mockups/as-told-settings.html): the panel, the places on the map, how the panel is worked, and the two
+-- switches that leave only the giver's words. Only in a build that carries it (BuildPanel drops it otherwise).
+PAGES[#PAGES + 1] = { key = "told", label = "As told", build = function(p)
+    local a = Column(p, 0, 0, CONTENT_W)
+    a:Note("Your quest as its giver told it: the story on a small panel, and on the map only the places they named.")
+    a:Header("As told")
+    a:Check("Show", "told", "on")
+    a:Tip("A small panel with your quest in the quest giver's own words. The map marks the places they named, and nothing else.", "Also: /told")
+    a:Requires("told", "on")
+    a:Check("The story panel", "told", "panel")
+    a:Tip("Your current quest in the giver's own words. It shows a line or two until you hover it.")
+    -- (the panel is always on its dark glass: "text only, no backdrop" removed 2026-11-15, the user: "unusable")
+    -- (the panel's own rows grey out with the panel off: the user, 2026-11-15)
+    local function PanelOn() return ns.db.told.on and ns.db.told.panel ~= false and true or false end
+    -- ("pencil" is the seen land's word now: the user, 2026-11-15)
+    a:Check("Mark the places on the map", "told", "map")
+    a:Tip("A mark for each place the giver named, and nothing more.")
+    a:Requires(function() return ns.db.told.on and ns.db.told.map ~= false and true or false end)
+    a:CheckWith("Name the places", function() return ns.db.told.names ~= false end, function(v)
+        ns.db.told.names = v and true or false
+        ns.OnSettingChanged("told", "names")
+    end)
+    a:Tip("The place's name written by its mark. Off: the marks alone.")
+    a:Requires("told", "on")
+    a:Advanced(true)
+    a:Slider("The marks' opacity", 20, 100, 5, "told", "alpha", "%d%%")
+    a:Slider("Lettering size", 8, 18, 1, "told", "size", "%d")
+    a:Advanced()
+    a:Requires()
+    a:Header("Using the panel")
+    a:Note("Hover: the full text, and what you need to do.")
+    a:Note("Click: keep it open, or shrink it again.")
+    a:Note("Wheel: your other quests; click one to read it.")
+    a:Note("Right-click: its menu. Hold a quest, hide it for now, fade it out in combat.")
+    a:Note("Drag: moves it.")
+    -- (the panel's own menu has these three; here for whoever looks in the settings first. Its place and size
+    -- are AsToldPanel.lua's: ns.ToldPanelPlace)
+    a:Requires(PanelOn)
+    a:Button("Put the panel back", function()
+        if ns.ToldCfg then ns.ToldCfg().panelAt = nil end
+        if ns.ToldPanelPlace then ns.ToldPanelPlace() end
+    end)
+    a:Tip("Where it stood before you moved it, at the right of the screen.")
+    -- (one size for letters, width and glass together: the user, 2026-11-15, "Yes, one slider")
+    a:SliderWith("Panel size", 80, 160, 5,
+        function() return (ns.ToldCfg and tonumber(ns.ToldCfg().scale)) or 100 end,
+        function(v)
+            if ns.ToldCfg then ns.ToldCfg().scale = v end
+            if ns.ToldPanelPlace then ns.ToldPanelPlace() end
+        end, "%d%%")
+    a:Tip("Makes the whole panel and its text bigger or smaller.")
+    a:Choice("In combat", nil, nil, { { "stay", "Stays" }, { "aside", "Fades out" } },
+        function() return ns.ToldCfg and ns.ToldCfg().fight == "aside" and "aside" or "stay" end,
+        function(v) if ns.ToldCfg then ns.ToldCfg().fight = v == "aside" and "aside" or nil end end)
+    a:Tip("Fades out: the panel goes faint while you are in combat and comes back after.")
+    a:Requires()
+    a:Header("Which quest it shows")
+    a:Note("The panel shows the quest for the place you're in, or else the one you picked up last. To keep one quest on it, right-click the panel and pick \"hold this quest\". It stays until you turn it in or pick \"back to automatic\".")
+    -- (a button here, "Follow the quest I'm on", did what the panel's menu does: out, the user 2026-11-15)
+    a:Header("Go by the words alone")
+    a:Note("As told is for reading your way to a quest. If that's all you want, turn these two off. They're the same switches as on their own tabs.")
+    a:CheckWith("Quest objectives on the map", function() return ns.ObjectivesOn() end,
+        function(v) ns.SetObjectives(v) ns.RefreshControls() end)
+    a:Tip("Untick to keep only what the giver named.")
+    a:Check("Quest tracker", "tracker", "shown")
 end }
 
 PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function(p)
@@ -3003,7 +3544,7 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     }, function() return T().click or "fold" end, function(v)
         T().click = v ~= "fold" and v or nil
     end)
-    a:Tip("Its details: Waymark's quest window. The game's map: the world map with the quest beside it; with a controller, its objectives fold instead.")
+    a:Tip("Its details: Waymark's quest log. The game's map: the world map with the quest beside it; with a controller, its objectives fold instead.")
     a:Check("Attach to the map", "tracker", "detached", true)  -- (ticked: not detached)
     a:Tip("Attached, it moves, fades and hides with the map. Off, it goes anywhere and stays open when the map closes.", "Off: drag its edge or zone name to move it, its corner to size it.")
     a:Requires(function() return T().shown and T().detached end)
@@ -3030,7 +3571,7 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     a:Indent(true)
     a:Check("Hide finished objectives", "tracker", "hideDoneObjectives")
     a:Check("Counts in a column at the right", "tracker", "countColumn")
-    a:Tip("\"Harvest Watcher  13/20\": the objective's name at the left (no dash, and on English clients no \"slain\"), its count lined up at the right. Off: the game's own line, \"- Harvest Watcher slain: 13/20\".")
+    a:Tip("On: \"Harvest Watcher  13/20\", with the counts lined up on the right. Off: \"- Harvest Watcher slain: 13/20\", as the game writes it.")
     a:Requires(function() return T().shown and T().countColumn ~= false end)
     a:Choice("Finished objectives", "tracker", "doneCount", {
         { "count", "Grey, count kept" }, { "tick", "Grey, a tick for the count" },
@@ -3038,7 +3579,7 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     a:Requires("tracker", "shown")
     a:Indent()
     a:Check("Name who takes a finished quest in", "tracker", "turninName")
-    a:Tip("A finished quest's line names who to hand it in to, and where (the sub-zone in this zone, else the zone), from QuestieDB. Off, or without QuestieDB: \"Ready for turn-in\".")
+    a:Tip("A finished quest shows who to turn it in to and where. Needs QuestieDB. Off: \"Ready for turn-in\".")
     a:Requires(function() return T().shown and T().turninName ~= false end)
     a:Indent(true)
     a:Choice("As", "tracker", "turninStyle", {
@@ -3063,15 +3604,15 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     b:Check("Hide elite quests", "tracker", "hideElite")
     b:Check("Hide dungeon and raid quests", "tracker", "hideDungeon")
     b:Check("Hide group quests", "tracker", "hideGroup")
-    b:Check("Only quests I track", "tracker", "onlyTracked")
-    b:Tip("The quests you watch in the quest log, plus any you track from here (hand-in only, or past the game's limit of 5). Off: every quest with something to do here.")
-    b:Check("Track quests as I accept them", "tracker", "autoTrack")
-    b:Tip("Every quest you pick up is tracked straight away; the game's list first, Waymark's once that is full or for hand-in-only quests.")
+    b:Check("Only quests you track", "tracker", "onlyTracked")
+    b:Tip("Only quests you've tracked. Off: every quest you can do in this zone.")
+    b:Check("Track quests as you accept them", "tracker", "autoTrack")
+    b:Tip("Tracks every quest as soon as you accept it.")
     b:Check("Hide it where there are none", "tracker", "hideEmpty")
     b:Choice("Quests in other zones", "tracker", "otherZones", {
         { "always", "Always" }, { "continent", "Only when the map shows a continent" }, { "off", "Never" },
     })
-    b:Tip("The quests you track in other zones (as your quest log files them), after this zone's, each zone under its name in gold. Untracked ones from other zones never show.")
+    b:Tip("Tracked quests from other zones, listed under their zone's name after this zone's quests.")
     b:Requires()
 
     -- the look, under both columns
@@ -3081,14 +3622,14 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     d:Header("Look")
     d:Requires("tracker", "shown")
     d:Check("Same text as the quest log", "tracker", "textAsLog")
-    d:Tip("Its zone name like the quest log's Zone names, its quests like Quest names in the list, its objectives like Quest details (Quest log page, Quest log text). Off: its own fonts and sizes below.")
+    d:Tip("Uses the same fonts and sizes as Waymark's quest log. Off: set them below.")
     d:Requires(function() return T().shown and not T().textAsLog end)
     d:Slider("Quest name size", 8, 20, 1, "tracker", "fontSize", "%d")
     d:Requires("tracker", "shown")
     d:TextPart("Sub-zone headings", "tracker", "textSub")
     d:Tip("The sub-zone headings over its quests (and Elsewhere). Its own either way. ", FONT_TIP)
     d:Check("Quest icons", "tracker", "icons")
-    d:Tip("A small icon for what each objective wants: kill, collect, use, an event, hand in. Questie's where it's installed, else the game's.")
+    d:Tip("A small icon for what each objective wants: kill, collect, use, an event, turn in. Questie's where it's installed, else the game's.")
     d:Check("Titles coloured by difficulty", "tracker", "levelColors")
     d:Tip("Off: every title in gold, as in the game's tracker.")
     d:Check("Levels in a column of their own", "tracker", "levelColumn")
@@ -3101,7 +3642,7 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     d:Check("Quiet sub-zone headings", "tracker", "quietHeadings")
     d:Tip("Sub-zone headings in dim capitals with a thin rule, so they stand apart from the quest titles.")
     d:Check("Flash an objective as it counts up", "tracker", "flashProgress")
-    d:Tip("A kill or a pick-up that counts: that line goes white and fades back over a second. A quest that's just finished: its turn-in line.")
+    d:Tip("A line flashes white when you get a kill or an item for it, or when the quest is done.")
     d:Advanced(true)
     d:Requires(function() return T().shown and not T().textAsLog end)
     d:Choice("Quest title font", "tracker", "titleFont", ns.FontChoices)
@@ -3136,14 +3677,18 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     -- its border: the map border's styles
     e:Header("Border")
     e:Requires("tracker", "shown")
-    e:Choice("Style", "tracker", "borderStyle", {
-        { "map", "Same as the map's" }, { "dialog", "Classic dialog" }, { "gold", "Gold" }, { "tooltip", "Tooltip" },
-        { "wood", "Wood" }, { "line", "Thin line" }, { "none", "None" },
-    })
-    e:Tip("Same as the map's: the map border's style, thickness, distance and colour (Header & border page), so the two line up. The settings below are for the other styles.")
+    if ns.FramesRows then ns.FramesRows(e, "tracker") end   -- (a frame set round it: from Header & border, 2026-11-16)
+    -- (Wood and Gold trimmed from the tracker's list, the user 2026-11-15: "Gold is just classic dialog with
+    -- a tint". Still drawn for a player who has one saved, and listed for them alone so the box is not blank)
+    local styles = { { "map", "Same as the map's" }, { "dialog", "Classic dialog" }, { "tooltip", "Tooltip" },
+                     { "line", "Thin line" }, { "none", "None" } }
+    local had = ns.db.tracker.borderStyle
+    if had == "gold" then table.insert(styles, 3, { "gold", "Gold" }) end
+    e:Choice("Style", "tracker", "borderStyle", styles)
+    e:Tip("Same as the map's: copies the map's border so the two match. The settings below are for the other styles.")
     e:Advanced(true)
     e:Check("Joined to the map's border", "tracker", "joinBorders")
-    e:Tip("Attached: no border on the side facing the map, and it hangs straight off the map's border, so the two read as one frame. (Not with the game's own map border.)")
+    e:Tip("When attached, the tracker and the map share one border. Doesn't work with the game's own map border.")
     e:Slider("Thickness", 0.5, 2, 0.05, "tracker", "borderSize", "%.2fx")
     e:Slider("Distance from the tracker", -12, 20, 1, "tracker", "borderGap", "%d px")
     e:Choice("Colour", "tracker", "borderColor", {
@@ -3160,21 +3705,21 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     local attached = function() return q().shown and not q().detached end
     local a = Column(p, 0, 0, HALF)
     a:Header("Quest log")
-    a:Check("Use the quest window", "questlog", "shown")
+    a:Check("Use Waymark's quest log", "questlog", "shown")
     a:Tip("A quest's page beside the map: objectives, description, rewards and buttons. Off: the game's quest log instead.", "Right-click a quest in the tracker: view details.")
     a:Requires("questlog", "shown")
     a:Check("Also from its pins on the map", "questlog", "fromPins")
-    a:Tip("Click an objective spot, a turn-in or a quest's ground: its page opens. (Lighting a spot's quest is then in its right-click menu.)")
+    a:Tip("Clicking a quest's pin or area on the map opens its page. Highlighting the quest moves to the right-click menu.")
     -- (with the window's own settings, not its buttons: moved here 2026-11-03)
     a:Check("Light up its spots and areas while open", "questlog", "glow")
-    a:Tip("As hovering it in the tracker does: its objective spots and turn-in glow" .. (ns.FOREVER and ", and with the Quest areas layer on, its areas." or "."))
+    a:Tip("Highlights the open quest's spots and turn-in on the map, like hovering it in the tracker.")
     a:Check("Open it with the quest log key", "questlog", "keyL")
     a:Tip("While the map shows, your quest log key (L) opens this window instead of the game's quest log.")
     a:Check("Replace the game's quest log", "questlog", "replaceGame")
     a:Tip("Your quest log key opens this window, map or not, and the game's quest log stays closed.")
     -- (your whole log at the window's top is always there now: no switch, 2026-11-03)
     a:Check("Your zone's quests first", "questlog", "listHereFirst")
-    a:Tip("Your log at the top of the window: click a zone to fold it, Shift-click it to track all its quests (again: none). Drag the line under it for more room.")
+    a:Tip("Lists your quests at the top of the window. Click a zone to fold it, Shift-click to track or untrack all its quests. Drag the line under the list to resize it.")
     a:Check("Fold other zones at first", "questlog", "listFoldOthers")
     a:Tip("The zone you're in starts open, the others folded. A zone you fold or open yourself stays that way (until you change this).")
     a:Check("Levels in difficulty colours", "questlog", "listLevelColors")
@@ -3191,7 +3736,7 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
         { "auto", "Whichever has room (right first)" }, { "right", "Right of the map" }, { "left", "Left of the map" },
     })
     a:Check("Match the map's height", "questlog", "matchHeight")
-    a:Tip("From the top of the map's border to its bottom. Off: its own height (below, or drag its bottom edge), hanging from the map's top.")
+    a:Tip("As tall as the map. Off: set its height below, or drag its bottom edge.")
     a:Requires(function() return attached() and q().matchHeight end)
     a:Indent(true)
     a:Check("Reach down past the tracker", "questlog", "pastTracker")
@@ -3230,7 +3775,13 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     b:Check("Level and type by the title", "questlog", "levelTag")
     b:Tip("[12] for its level; Elite, Dungeon, Raid or Group where it's one.")
     b:Check("Quest chain", "questlog", "chain")
-    b:Tip("From QuestieDB: every step of the quest's chain (done ones ticked, this one marked, the rest with their levels), and quests that lead into it. Click a step not in your log to read about it.")
+    b:Tip("Every step of the quest's chain, with the ones you've done ticked. Click a step you don't have yet to read about it. Needs QuestieDB.")
+    -- (QuestWords.lua, out of the Lab for 1.3: only in a build that carries it)
+    if ns.QuestWords then
+        b:Check("The giver's words for steps you don't have yet", "questlog", "chainWords")
+        b:Tip("For a chain step you don't have yet, shows what its quest giver says.")
+        b.last.bfiDep = function() return ns.db.questlog.chain and true or false end
+    end
     b:Check("Who gave it and who takes it", "questlog", "people")
     b:Tip("From QuestieDB: the names of the quest's giver and of who takes it in, with their zones.")
     b:Advanced(true)
@@ -3238,6 +3789,8 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     b:Advanced()
     b:Requires()
 
+    -- (which of the page's four buttons show: fine-tuning, all four on in every preset)
+    b:Advanced(true)
     b:Header("Buttons")
     b:Requires("questlog", "shown")
     b:Check("Abandon", "questlog", "abandon")
@@ -3245,6 +3798,7 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     b:Check("Track", "questlog", "track")
     b:Check("Focus", "questlog", "focus")
     b:Requires()
+    b:Advanced()
 
     local pct = function(v) return string.format("%d%%", v * 100 + 0.5) end
     b:Header("Look")
@@ -3272,11 +3826,10 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     -- its frame: its own, or the map border's styles
     b:Header("Border")
     b:Requires("questlog", "shown")
-    b:Choice("Style", "questlog", "borderStyle", {
-        { "own", "The quest log's own" }, { "map", "Same as the map's" }, { "dialog", "Classic dialog" },
+    b:Choice("Style", "questlog", "borderStyle", Trimmed({
+        { "own", "The quest log's own" }, { "dialog", "Classic dialog" },
         { "gold", "Gold" }, { "tooltip", "Tooltip" }, { "wood", "Wood" }, { "line", "Thin line" }, { "none", "None" },
-    })
-    b:Tip("Same as the map's: the map border's style, thickness, distance and colour, so the two line up. The settings below are for the other styles.")
+    }, ns.db.questlog.borderStyle))
     b:Advanced(true)
     b:Slider("Thickness", 0.5, 2, 0.05, "questlog", "borderSize", "%.2fx")
     b:Slider("Distance from the window", -12, 20, 1, "questlog", "borderGap", "%d px")
@@ -3332,57 +3885,138 @@ PAGES[#PAGES + 1] = { key = "people", label = "Townsfolk", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Townsfolk", ns.ToggleIcon("townsfolk"))
     a:Check("Show", "townsfolk", "shown")
-    a:Tip("Positions come from the quest data (built in, or QuestieDB: Quests page), and from the townsfolk learned as you play (below).")
+    a:Tip("Uses the same data as quests (Quests page), plus the townsfolk you've learned by talking to them.")
     a:Requires("townsfolk", "shown")
     a:Slider("Opacity", 0, 1, 0.05, "townsfolk", "alpha")
-    a:Slider("Size", 0.2, 2, 0.05, "townsfolk", "scale")
-    a:Choice("Spirit healers", "townsfolk", "graveMark", {
-        { "stone", "Headstone" }, { "game", "The game's icon" },
-    })
     a:Requires()
-    if ns.SetupTransports then   -- (Forever releases only: tools/build_era_release.py)
-        a:Header("Boats, zeppelins & the tram")
-        a:Check("Show", "transports", "shown")
-        a:Tip("Inked at each pier, tower and tram stop. Hover one to see where it goes.")
-        a:Requires("transports", "shown")
-        a:Check("Boats", "transports", "boats")
-        a:Check("Zeppelins & skyships", "transports", "zeppelins")
-        a:Check("The tram", "transports", "trams")
-        a:Check("On the continent map too", "transports", "continent")
-        a:Check("Dotted routes on the continent map", "transports", "routes")
-        a:Choice("Boat", "transports", "boat", { { "cog", "Cog" }, { "woodcut", "Woodcut" } })
-        a:Slider("Opacity", 0, 1, 0.05, "transports", "alpha")
-        a:Slider("Size", 0.2, 2, 0.05, "transports", "scale")
-        a:Requires()
+    -- which ones, and how big: by place
+    a:Header("Which townsfolk, and how big")
+    -- One list, and a switch for the place it is for: the open world, towns, capitals. It opens on the place
+    -- you stand in, so a tick changes the map in front of you. (Towns and capitals had their own lists on the
+    -- Towns page, behind advanced: a tick here did nothing in a town. "SO easily missed", the user 2026-11-15.)
+    -- ns.folkPlace: the place picked on this page (nil: where you stand).
+    local VIEW = { town = "townView", city = "cityView" }
+    local function Standing()
+        local map = BattlefieldMapFrame
+        local onCity = map and map.GetMapID and ns.CITY_MAPS and ns.CITY_MAPS[map:GetMapID()]
+        if onCity or (ns.InCityView and ns.InCityView()) then return "city" end
+        if ns.InTownView and ns.InTownView() then return "town" end
+        return "world"
     end
-    if ns.SetupFishing then
-        a:Header("Fisherman's mode")
-        a:Check("Show", "fishing", "shown")
-        a:Tip("The water washed by how your fishing does there. Sage: every fish stays on. Ochre: some get away. Red: most do. While it's on, the header shows the zone's fishing level.")
-        a:Requires("fishing", "shown")
-        a:Slider("Strength", 0.2, 1, 0.05, "fishing", "alpha")
-        a:Requires()
+    local function Place() return ns.folkPlace or Standing() end
+    local function Own() local v = VIEW[Place()] return v and ns.db[v].ownTypes and v or nil end
+    local function List() local v = Own() return v and ns.TownTownsfolk(v) or ns.db.townsfolk end
+    local function Changed(key) ns.OnSettingChanged(Own() or "townsfolk", key) end
+    -- (three tabs, not a dropdown: "Dropdown is not hitting it for me", the user 2026-11-15. The Size under
+    -- them is that place's, said by the tab: on its own above it changed with where you stood, unsaid.)
+    local here = Standing()
+    local tabs = {}
+    local function TabLook()
+        for _, b in ipairs(tabs) do
+            local on = b.place == Place()
+            if on then b.text:SetTextColor(1, 1, 1) else b.text:SetTextColor(1, 0.82, 0) end
+            b.under:SetShown(on)
+        end
     end
-    -- which ones: trainers, services and vendors side by side (a checklist)
-    a:Header("Which townsfolk")
-    a:Requires(function() return ns.db.townsfolk.shown end)
+    do
+        local tx = a:Left() + 4
+        for _, t in ipairs({ { "world", "The open world" }, { "town", "Towns" }, { "city", "Capitals" } }) do
+            local b = CreateFrame("Button", nil, p)
+            b.place = t[1]
+            b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            b.text:SetText(t[2] .. (t[1] == here and "  |cff4ddf4d(you are here)|r" or ""))
+            -- (the town view's and the city view's own icons, as on the map's buttons and the Towns tab)
+            local icon = t[1] ~= "world" and ns.ToggleIcon and ns.ToggleIcon(t[1])
+            if icon then
+                local tex = b:CreateTexture(nil, "OVERLAY")
+                tex:SetSize(16, 16)
+                tex:SetPoint("LEFT", 8, 1)
+                if not ns.SetIconArt(b, tex, icon) and icon:find("\\Icons\\", 1, true) then
+                    tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+                end
+                b.text:SetPoint("LEFT", tex, "RIGHT", 5, 0)
+                b:SetSize(b.text:GetStringWidth() + 24 + 21, 24)
+            else
+                b.text:SetPoint("CENTER", 0, 1)
+                b:SetSize(b.text:GetStringWidth() + 24, 24)
+            end
+            b:SetPoint("TOPLEFT", p, "TOPLEFT", tx, a.y)
+            b.under = b:CreateTexture(nil, "ARTWORK")
+            b.under:SetColorTexture(1, 0.82, 0, 0.9)
+            b.under:SetPoint("BOTTOMLEFT", 6, 0)
+            b.under:SetPoint("BOTTOMRIGHT", -6, 0)
+            b.under:SetHeight(2)
+            b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+            b:SetScript("OnClick", function()
+                ns.folkPlace = t[1]
+                TabLook()
+                ns.RefreshControls()
+            end)
+            tabs[#tabs + 1] = b
+            tx = tx + b:GetWidth() + 6
+        end
+        TabLook()
+        a.y = a.y - 32
+    end
+    a:SliderWith("Size", 0.2, 2, 0.05,
+        function()
+            local v = VIEW[Place()]
+            return v and ns.db[v].sizes.townsfolk or ns.db.townsfolk.scale
+        end,
+        function(value)
+            local v = VIEW[Place()]
+            if v then
+                ns.db[v].sizes.townsfolk = value
+                ns.OnSettingChanged(v, "sizes")
+            else
+                ns.db.townsfolk.scale = value
+                ns.OnSettingChanged("townsfolk", "scale")
+            end
+        end, "%.2fx")
+    a:Tip("How big townsfolk are drawn in the place picked above.")
+    a:Requires(function() return Place() ~= "world" end)
+    a:CheckWith("The same kinds as the open world", function() return VIEW[Place()] ~= nil and not Own() end, function(on)
+        local v = VIEW[Place()]
+        if not v then return end
+        ns.db[v].ownTypes = not on
+        ns.OnSettingChanged(v, "ownTypes")
+        ns.RefreshControls()
+    end)
+    a:Requires(function()
+        if VIEW[Place()] then return Own() ~= nil end
+        return ns.IsShown("townsfolk")
+    end)
+    local function Folk(label, key)
+        a:CheckWith(label, function() return List().types[key] end, function(v)
+            List().types[key] = v or nil
+            Changed("types")
+        end, true)
+    end
     a:Grid(3)
     a:SubHeader("Trainers")
-    TypeCheck(a, "Profession trainers", "professions")
+    Folk("Profession trainers", "professions")
     a:Indent(true)
-    a:Check("Only my professions", "townsfolk", "myProfessionsOnly")
+    a:CheckWith("Only your professions", function() return List().myProfessionsOnly end, function(v)
+        List().myProfessionsOnly = v and true or false
+        Changed("myProfessionsOnly")
+    end, true)
     a:Indent()
     for _, t in ipairs(types.services) do
-        if trainers[t.key] then TypeCheck(a, t.label, t.key) end
+        if trainers[t.key] then Folk(t.label, t.key) end
     end
     a:SubHeader("Services")
     for _, t in ipairs(types.services) do
-        if not trainers[t.key] then TypeCheck(a, t.label, t.key) end
+        if not trainers[t.key] then Folk(t.label, t.key) end
     end
     a:SubHeader("Vendors")
-    for _, t in ipairs(types.vendors) do TypeCheck(a, t.label, t.key) end
+    for _, t in ipairs(types.vendors) do Folk(t.label, t.key) end
     a:Grid()
+    a:Advanced(true)
     a:Requires()
+    a:Choice("A spirit healer is drawn as", "townsfolk", "graveMark", {
+        { "stone", "A headstone" }, { "game", "The game's icon" },
+    })
+    a:Advanced()
     a:Note("Food, drink and ammo follow your level: no more than 20 levels below it.")
 
     -- merging and learned townsfolk (Townsfolk.lua)
@@ -3397,9 +4031,9 @@ PAGES[#PAGES + 1] = { key = "people", label = "Townsfolk", build = function(p)
     local l = Column(p, HALF, nil, HALF)
     l:Header("Learned townsfolk")
     l:Check("Keep learning", "townsfolk", "record")
-    l:Tip("Vendors, trainers, flight masters and the like you talk to are remembered with where they stand, by every character on your account.")
+    l:Tip("Vendors, trainers and flight masters you talk to are remembered, on all your characters.")
     l:Check("Show them on the map", "townsfolk", "useLearned")
-    l:Tip("Alongside the quest data's townsfolk (the same NPC isn't shown twice), or on their own. Off until you've learned enough to be useful.")
+    l:Tip("Shows the ones you've learned too. No NPC is shown twice.")
     l:Live(function()
         if not ns.LearnedTownsfolkStats then return "" end
         local n, here = ns.LearnedTownsfolkStats()
@@ -3410,13 +4044,47 @@ PAGES[#PAGES + 1] = { key = "people", label = "Townsfolk", build = function(p)
     end)
 end }
 
+-- Boats, zeppelins and the tram (Transports.lua): a page of their own since 2026-11-13. They are ink on
+-- the map, not pins, and were on the Townsfolk page before. (Forever releases only: tools/build_era_release.py)
+PAGES[#PAGES + 1] = { key = "traversal", label = "Boats & zeppelins", build = function(p)
+    local a = Column(p, 0, 0, HALF)
+    a:Header("Boats & zeppelins")
+    a:Check("Show", "transports", "shown")
+    a:Tip("Inked on the map itself: the tram at its stops, and on a continent's map a dotted line along the way each boat and zeppelin goes.")
+    a:Requires("transports", "shown")
+    a:Check("Boats", "transports", "boats")
+    a:Check("Zeppelins & skyships", "transports", "zeppelins")
+    a:Check("The tram", "transports", "trams")
+    a:Check("On the continent map too", "transports", "continent")
+    a:Check("Dotted routes", "transports", "routes")
+    a:Tip("On a continent's map, zoomed out: the sea lanes and where they go.")
+    -- (Boats.lua, out of the Lab for 1.3: only in a build that carries it)
+    if ns.BoatsRefresh then
+        a:Check("Boats where they are", "transports", "live")
+        a:Tip("Once you have ridden a boat or zeppelin, its ship is drawn on the map where the boat is now.")
+        a:Check("A dotted wake behind them", "transports", "wake")
+        a.last.bfiDep = function() return ns.db.transports.live and true or false end
+    end
+    a:Check("Anchors & pennants", "transports", "marks")
+    a:Tip("A small anchor at each pier and a pennant at each zeppelin tower.")
+    a:Slider("Opacity", 0, 1, 0.05, "transports", "alpha")
+    a:Slider("Size", 0.2, 2, 0.05, "transports", "scale")
+    a:Requires()
+end }
+
 PAGES[#PAGES + 1] = { key = "group", label = "You & your group", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Player & group")
     a:Check("Show", "party", "shown")
     a:Tip("Hiding these also hides your own arrow: the game draws them together.")
     a:Slider("Opacity", 0, 1, 0.05, "party", "alpha")
+    -- (docked over the minimap the arrow's size does not follow this: greyed there, and said so only then.
+    -- "We know why, but they dont", the user 2026-11-15)
+    local function NotDocked() return not (ns.Docked and ns.Docked()) end
+    a:Requires(NotDocked)
     a:Slider("Player arrow", 0, 48, 1, "mapFrame", "arrowSize", "%d", "game default")
+    a:Requires()
+    if not NotDocked() then a:Note("The arrow's size can't be changed while the map is docked over the minimap.") end
     a:Check("Classic map arrow", "cave", "classicArrow")
     a:Tip("The classic world map's arrow for you, on the zone map and in caves.")
     a:Slider("Group icons", 0, 32, 1, "mapFrame", "groupSize", "%d", "game default")
@@ -3431,12 +4099,6 @@ PAGES[#PAGES + 1] = { key = "group", label = "You & your group", build = functio
     b:Requires("line", "shown")
     b:Slider("Opacity", 0.1, 1, 0.05, "line", "alpha")
     b:Slider("Thickness", 1, 8, 1, "line", "thickness", "%d")
-    b:Requires()
-    b:Header("Line aims at")
-    b:Requires("line", "shown")
-    b:Check("My target, party and raid members only", "line", "groupTarget")
-    b:Tip("The game only tells addons where group members are, so NPCs and other players can't be targeted.")
-    b:Check("The nearest objective spot", "line", "nearestSpot")
     b:Requires()
 end }
 
@@ -3457,13 +4119,13 @@ PAGES[#PAGES + 1] = { key = "rares", label = ns.GatherPulled() and "Rares & trea
     a:Advanced()
     a:Header("Rares & chests (built in)", ns.ToggleIcon("wilds"))
     a:Check("Show", "wilds", "shown")
-    a:Tip("From the addon's own data: where each rare and rare elite stands, its level and its own drops with their chances." .. (ns.WILDS_TREASURE and " And the spots random treasure chests may stand at." or "") .. " No respawn times or sightings (RareScanner has those).")
+    a:Tip("Where each rare is, its level and what it drops." .. (ns.WILDS_TREASURE and " Also where chests can spawn." or "") .. " No respawn timers; RareScanner has those.")
     a:Requires("wilds", "shown")
     a:Check("Rares", "wilds", "rares")
     a:Check("Rare elites", "wilds", "elites")
     if ns.WILDS_TREASURE then  -- (off for 1.2, Wilds.lua)
         a:Check("Treasure chest spots", "wilds", "treasure")
-        a:Tip("Every spot a random chest may stand at: a busy zone has dozens, so off at first.")
+        a:Tip("Every spot a chest can spawn. Some zones have dozens, so it's off by default.")
     end
     a:Advanced(true)
     a:Check("A rare's path while hovered", "wilds", "paths")
@@ -3478,8 +4140,18 @@ PAGES[#PAGES + 1] = { key = "rares", label = ns.GatherPulled() and "Rares & trea
     a:Requires()
     a:Advanced()
     a:Check("Boss loot: \"what they carry\" in boss menus", "wilds", "bossLoot")
-    a:Tip("A boss's own drops with their chances, greens and better first, then its quest items. Not the world drops every monster shares.")
+    a:Tip("A boss's own loot with drop chances, then its quest items. No world drops.")
 
+    -- (from the Townsfolk tab, where it sat between the pins' rows and their list: "placement?", the user
+    -- 2026-11-15. It is about what the water gives, as the nodes are.)
+    if ns.SetupFishing then
+        a:Header("Fisherman's mode")
+        a:Check("Show", "fishing", "shown")
+        a:Tip("Colours the water by how well you can fish there. Green: no fish get away. Yellow: some do. Red: most do. The header also shows the zone's fishing level.")
+        a:Requires("fishing", "shown")
+        a:Slider("Strength", 0.2, 1, 0.05, "fishing", "alpha")
+        a:Requires()
+    end
     local b = Column(p, HALF, 0, HALF)
     if ns.GatherPulled() then
         b:Header("Gathering nodes")
@@ -3504,23 +4176,23 @@ PAGES[#PAGES + 1] = { key = "rares", label = ns.GatherPulled() and "Rares & trea
         b:Choice("Look", "gather", "look", {
             { "ink", "Waymark's marks" }, { "gathermate", "GatherMate2's icons" },
         })
-        b:Tip("Waymark's marks: a small picture for each spot: the herb's own plant, a lump of ore, a chest, a fish. GatherMate2's icons: only on its nodes.")
+        b:Tip("Waymark's marks: a small drawing for each herb, ore, chest or fish. GatherMate2's icons: on its own nodes only.")
         b:Check("Follow GatherMate's own rules", "gather", "follow")
-        b:Tip("With its nodes on: a type also needs GatherMate to show it (e.g. only with the profession).")
+        b:Tip("Also hides what GatherMate2's own filters hide, like nodes for a profession you don't have.")
     else
         b:Note(ownNodes and "With GatherMate2 installed, you can show its nodes here instead of Waymark's."
             or "Needs GatherMate2: install it and its nodes show here in Waymark's marks.")
     end
-    b:Check("Only what I can gather", "gather", "canGather")
+    b:Check("Only what you can gather", "gather", "canGather")
     b:Tip("Hides herbs and ore your skill can't gather yet. Without the profession, none of its nodes show.")
     b:Advanced(true)
     b:Check("Colour by skill-up chance", "gather", "tint")
     b:Tip("Marks take the trade skill colours: orange, yellow, green and grey by your skill, red when it's too low.")
-    b:Check("Fade spots I've never gathered", "gather", "fadeUnseen")
+    b:Check("Fade spots you've never gathered", "gather", "fadeUnseen")
     b:Check("Show on the minimap", "gather", "minimap")
     b:Tip("The nearest spots, on the game's minimap. With the map as your minimap, they're on it anyway.")
     b:Slider("Ring distance", 50, 240, 5, "gather", "ringYards", "%d yards")
-    b:Tip("While you track herbs or minerals, spots this near turn into rings so the game's own blip shows inside. An empty ring: nothing there now.")
+    b:Tip("While you track herbs or ore, nearby spots become rings. A dot inside the ring means the node is up. An empty ring means it isn't.")
     b:Advanced()
     b:SubHeader("Node types")   -- (part of this section, not one of its own)
     for _, t in ipairs(ns.GATHER_TYPES or {}) do
@@ -3537,11 +4209,11 @@ PAGES[#PAGES + 1] = { key = "rares", label = ns.GatherPulled() and "Rares & trea
     end)
     b:Tip("Right-clicking a mark hides that kind of node. This brings them all back.")
     if ns.AddonPresent("GatherMate2") then
-        b:Button("Copy my GatherMate2 nodes", function()
+        b:Button("Copy your GatherMate2 nodes", function()
             local n = ns.ImportGatherMate and ns.ImportGatherMate()
             print("Waymark: " .. tostring(n or 0) .. " GatherMate2 nodes copied to your own spots.")
         end)
-        b:Tip("Adds the nodes in your GatherMate2 database to your own spots. Copy once: another copy counts them again.")
+        b:Tip("Adds your GatherMate2 nodes to Waymark's. Only do this once, or they're counted twice.")
     end
     b:Requires()
 end }
@@ -3549,7 +4221,7 @@ end }
 -- your own marks on the maps, and the found notes' book (Ink.lua, Notebook.lua)
 PAGES[#PAGES + 1] = { key = "ink", label = "The book & map ink", build = function(p)
     local a = Column(p, 0, 0, HALF)
-    a:Header("Your map ink")
+    a:Header("Your map ink", ns.ToggleIcon("quill"))
     a:Check("On the world map", "ink", "shown")
     a:Tip("Routes, marks and notes you drew on the zone maps. The ink button on the map switches it.", "Ctrl-drag a mark to move it (with the quill out, just drag); right-click it for more.")
     a:Check("Dungeons too", "ink", "dungeons")
@@ -3559,8 +4231,8 @@ PAGES[#PAGES + 1] = { key = "ink", label = "The book & map ink", build = functio
     a:Slider("Note size", 0.6, 1.6, 0.1, "ink", "textSize", "%.1f")
     a:Requires()
     a:Button("Take up the quill", function() if ns.QuillToggle then ns.QuillToggle() end end)
-    a:Tip("The quill's bar: draw routes and marks and write notes on the map, as in the found notes.", "Also: Shift-click the ink button on the map, or /waymark ink. Again: put it down.")
-    a:Header("The book")
+    a:Tip("Opens the quill's bar: draw routes and marks and write notes on the map.", "Also: Shift-click the ink button on the map, or /waymark ink. Again: put it down.")
+    a:Header("The book", ns.ToggleIcon("book"))
     a:Choice("What's in the book", "notebook", "kind", {
         { "story", "The wanderer's story" }, { "notes", "Notes only" }, { "blank", "Blank journal" },
     })
@@ -3576,26 +4248,31 @@ PAGES[#PAGES + 1] = { key = "ink", label = "The book & map ink", build = functio
     a:Button("Reset the whole book", function() if ns.AskBookReset then ns.AskBookReset() end end)
     a:Button("Bring back what was reset", function() if ns.BookBack then ns.BookBack(true) end end)
     a:Tip("A reset sets your words and ink aside. Nothing is deleted. To reset one page, use the quill's bar.")
+    -- (the book's campsites on the zone maps, Camps.lua: only in a build that carries it. On or off, and the ones
+    -- a right-click hid brought back: the user, 2026-11-14)
+    if ns.SetupCamps then
+        a:CheckWith("Campsites on the map",
+            function() return ns.db.notebook.camps ~= false end,
+            function(v) ns.db.notebook.camps = v and true or false end)
+        a:Button("Bring back hidden campsites", function() if ns.CampDev then ns.CampDev("show") end end)
+        a:Tip("A small campfire where each page was written. Click one for its page, right-click to hide it.")
+    end
     a:Tip("Pages someone left about the dungeons. Their numbered rings show on the dungeon maps.", "Click the stamp in a dungeon map's corner for its page. /waymark notes opens the book too.")
 end }
 
 PAGES[#PAGES + 1] = { key = "explore", label = "Exploration", build = function(p)
     local a = Column(p, 0, 0, HALF)
-    a:Header("Unexplored areas")
-    a:Check("Show", "explore", "shown")
-    a:Tip("The game leaves them blank. All zones of Kalimdor and the Eastern Kingdoms; the area art is the game's own.")
-    a:Requires("explore", "shown")
-    a:Choice("Look", "explore", "fogStyle", {
-        { "fog", "Fog" }, { "sepia", "Sepia" }, { "ink", "Dark ink" }, { "faded", "Faded" }, { "full", "As explored" },
-    })
-    a:Slider("Opacity", 0.1, 1, 0.05, "explore", "fogAlpha")
-    a:Tip("The unexplored areas' own opacity. The map opacity (The window) comes on top: at 0% they're gone with the rest of the map.")
-    a:Requires()
-    a:Header("Pins in unexplored areas")
+    a:Header("Unexplored land")
+    UnfoundRows(a)   -- (the same rows as on The map's look)
+    -- (its settings have no row of their own now: named here so "its settings" from the map's button, and a
+    -- reset of this page, still find the page)
+    p.bfiKeys = p.bfiKeys or {}
+    for _, k in ipairs({ { "explore", "shown" }, { "explore", "fogAlpha" }, { "pencil", "on" } }) do table.insert(p.bfiKeys, k) end
+    a:Header("Pins in unexplored land")
     a:Check("Hide quest pins there", "explore", "hideQuests")
     a:Check("Hide townsfolk, rares, nodes there", "explore", "hideOthers")
     a:Header("Discoveries")
-    a:Check("Gold flash where I discover an area", "explore", "flash")
+    a:Check("Gold flash where you discover an area", "explore", "flash")
     a:Live(function()
         local map = BattlefieldMapFrame
         local id = map and map:GetMapID()
@@ -3627,10 +4304,10 @@ PAGES[#PAGES + 1] = { key = "dungeon", label = "Caves & dungeons", build = funct
     local a = Column(p, 0, 0, HALF)
     a:Header("Caves (open world)")
     a:Check("Cave view", "cave", "enabled")
-    a:Tip("Inside a cave the map shows the cave: Blizzard's cave map, or the cave's minimap pictures round you.")
+    a:Tip("Inside a cave the map shows the cave: the game's own cave map where there is one, or a minimap-style map.")
     a:Advanced(true)
     a:Check("Switch to the game's cave maps", "dungeon", "followMaps")
-    a:Tip("Where the game itself puts you on a cave or dungeon map with art, the map switches to it.")
+    a:Tip("Switches to the game's own cave or dungeon map where it has one.")
     a:Requires("cave", "enabled")
     a:Check("Blizzard's cave maps", "cave", "blizzardMaps")
     a:Tip("Where a cave has one, the game's own map of it.")
@@ -3646,10 +4323,10 @@ PAGES[#PAGES + 1] = { key = "dungeon", label = "Caves & dungeons", build = funct
     a:Requires()
     a:Header("Dungeon entrances", ns.ToggleIcon("dungeons"))
     a:Check("On the zone map (click one: its map)", "dungeons", "shown")
-    a:Tip("Right-click the dungeon's map (not on a boss or a pin) to return to the zone. The classic dungeons and raids; the game's data has no entrance for Forever's new ones.")
+    a:Tip("Right-click the dungeon's map (not on a boss or a pin) to return to the zone.")
     a:Requires("dungeons", "shown")
     a:Check("On continent maps too", "dungeons", "continent")
-    a:Tip("Every door of the continent at once, drawn smaller. On the Battlefield map and the world map.")
+    a:Tip("Every dungeon entrance on the continent map, drawn smaller. On the world map too.")
     a:Advanced(true)
     a:Slider("Size", 0.4, 2, 0.05, "dungeons", "scale")
     a:Advanced()
@@ -3661,47 +4338,74 @@ PAGES[#PAGES + 1] = { key = "dungeon", label = "Caves & dungeons", build = funct
     b:Check("Show the dungeon's map", "dungeon", "fallback")
     b:Tip("The game's own art of the dungeon, with its bosses.", "Wheel: zoom. Drag: pan. Right-click: whole map. < >: floors.")
     b:Requires("dungeon", "fallback")
-    b:Check("Open the Battlefield Map as I go in", "dungeon", "showInside")
+    -- (the settings pass, 2026-11-15, "clean this up": it was seventeen rows in one run. Now the map itself,
+    -- then its bosses and dangers, then what else is marked inside as a short checklist in two parts.)
+    b:Check("Opens as you go in", "dungeon", "showInside")
     b:Choice("View", "dungeon", "view", {
         { "art", "Map (boss markers)" },
         { "minimap", "Minimap (your arrow)" },
     })
-    b:Tip("Map: the dungeon's map with its bosses. Minimap: your real minimap shown large in the map, with your arrow; it's back in its place when you switch, leave or close the map.")
+    b:Tip("Map: the dungeon's map with its bosses. Minimap: your minimap shown large inside the map window.")
+    b:SubHeader("Bosses and dangers")
     b:Check("Boss markers", "dungeon", "bosses")
     b:Tip("Numbered in kill order, with a red X once killed.")
     b:Check("Boss list", "dungeon", "bossList")
     b:Tip("The bosses in kill order down the map's left side, ticked as they die.", "Click a name: its floor. Click the title: fold it.")
-    b:Choice("Doors, chests, quests, NPCs", "dungeon", "objects", {
+    if ns.DangersSet then
+        b:CheckWith("What kills here", function() return ns.DangersOn() end, function(v) ns.DangersSet(v) end)
+        b:Tip("Marks on a dungeon's map and a note beside it for the pulls and casts that wipe groups. Open it from the ! tab.", "Off: the tab, the marks and the note are all gone.")
+    end
+    b:SubHeader("Also marked inside")
+    b:Choice("Shown as", "dungeon", "objects", {
         { "icons", "Icons" },
         { "hidden", "Hidden (tooltip on hover)" },
         { "off", "Off" },
     })
-    b:Tip("Doors and the keys they want, chests, switches, quest spots and friendly NPCs. Hidden: no icons, but the tooltip still shows over the spot.", "With the quill: drag a pin to move it, right-click to put it back or hide it.")
-    b:Slider("Icon size", 0.5, 2, 0.05, "dungeon", "objectScale")
-    b:Check("All chests", "dungeon", "allChests")
-    b:Tip("Also the chests that only sometimes stand in a spot (one of several, picked at random).")
+    b:Tip("Quest spots always; the rest as ticked below. Hidden: no icons, but the tooltip still shows over the spot.", "With the quill: drag a pin to move it, right-click to put it back or hide it.")
+    local function Marks() return ns.db.dungeon.fallback and ns.db.dungeon.objects ~= "off" end
+    b:Requires(Marks)
+    b:Grid(2)
+    b:SubHeader("The way through")
+    b:Check("Locked doors", "dungeon", "keyDoors")
+    b:Tip("Doors that want a key, and which key.")
+    b:Check("Doors a fight opens", "dungeon", "fightDoors")
+    b:Tip("Doors shut until the fight near them is won.")
     b:Check("Levers", "dungeon", "switches")
     b:Tip("The levers and switches that open a way.")
-    b:Check("Doors that open with a fight", "dungeon", "fightDoors")
-    b:Tip("Doors shut until the fight near them is won.")
-    b:Check("All quest pins", "dungeon", "allQuests")
-    b:Tip("Also the quest things found all over a floor. Off: only the ones that stand out.")
     b:Check("Patrols", "dungeon", "patrols")
-    b:Tip("The monsters that walk, and their way as a line of dots.")
+    b:Tip("Patrols and their paths, as dotted lines.")
+    b:SubHeader("What is in there")
+    b:Check("Chests", "dungeon", "chests")
+    b:Tip("The chests that always spawn in the same spot.")
+    b:Requires(function() return Marks() and ns.db.dungeon.chests end)
+    b:Check("The random ones too", "dungeon", "allChests")
+    b:Tip("Also the chests that only sometimes spawn in a spot (one of several, picked at random).")
+    b:Requires(Marks)
+    b:Check("Friendly NPCs", "dungeon", "npcs")
+    b:Tip("Quest givers, trainers and vendors inside.")
+    b:Check("Forges, mailboxes", "dungeon", "otherThings")
+    b:Tip("The other things marked inside: a forge, a mailbox, a rune, a machine.")
+    b:Check("Every quest spot", "dungeon", "allQuests")
+    b:Tip("Also the quest things found all over a floor. Off: only the ones that stand out.")
+    b:Grid()
+    b:Advanced(true)
+    b:Slider("Icon size", 0.5, 2, 0.05, "dungeon", "objectScale")
+    b:Advanced()
+    b:Requires("dungeon", "fallback")
     if ns.DungeonMobs then                                 -- (dev only: not shipped, tools\build_era_release.py)
-        b:Check("Monster dots (dev)", "dungeon", "devMobs")
-        b:Tip("A small dot where each monster stands. Hover: its name and level.", "Hold Shift: what to watch for, and what it casts.")
+        b:Check("Mob dots (dev)", "dungeon", "devMobs")
+        b:Tip("A small dot where each mob is. Hover: its name and level.", "Hold Shift: what to watch for, and what it casts.")
     end
     if ns.DungeonWhere then                                -- (not on Forever: the names it needs are hidden there, DungeonWhere.lua)
         b:Check("Where you are (a guess)", "dungeon", "where")
-        b:Tip("The game gives no position inside, so the part of the floor whose monsters you've been seeing and fighting lights up softly.")
+        b:Tip("The game doesn't tell addons where you are in a dungeon. Waymark guesses from the mobs you've fought and lights up that part of the map.")
     end
     b:Requires()
 end }
 
 -- when each context is on (Profiles.lua's Matches)
 local PROFILE_WHEN = {
-    combat = "While you're in a fight.",
+    combat = "While you're in combat.",
     battleground = "Inside a battleground or an arena.",
     dungeon = "Inside a dungeon or a raid.",
     city = "In a capital, or a town while town view is on (else where you rest).",
@@ -3716,13 +4420,13 @@ PAGES[#PAGES + 1] = { key = "profiles", label = "Context profiles", advancedOnly
         { "learned", "Learned quest givers" }, { "tracker", "Quest tracker" },
         { "townsfolk", "Townsfolk" }, { "dungeons", "Dungeon entrances" }, { "party", "Player & group" },
         { "rares", "Rares & treasures" }, { "gather", "Gathering nodes" }, { "line", "Line to party member" },
-        { "explore", "Unexplored areas" }, { "detail", "Close-up detail" }, { "zoneName", "Header" },
+        { "explore", "Unexplored land" }, { "detail", "Close-up detail" }, { "zoneName", "Header" },
         { "coords", "Coordinates" }, { "clock", "Clock" },
     }
     ns.DropNoGameLayers(LAYERS, 1)
     local order = ns.PROFILE_ORDER or {}
     local w = Column(p, 0, 0, CONTENT_W)
-    w:Note("While a context is on, its column overrides the layers: Show or Hide, or - to leave the layer as you set it. Where two contexts are on, the one further left wins. Your own settings aren't changed.")
+    w:Note("In combat, a dungeon, a battleground or a town, each layer can be shown, hidden or left alone (-). If two apply at once, the one further left wins. Your normal settings don't change.")
     w:Live(function()
         local k = ns.ActiveProfileKey and ns.ActiveProfileKey()
         return "Active now: " .. (k and ns.PROFILE_LABELS[k] or "none")
@@ -3841,10 +4545,32 @@ PAGES[#PAGES + 1] = { key = "profiles", label = "Context profiles", advancedOnly
     end
 end }
 
+-- A button that replaces or removes something for good asks once: the first click turns it into "Sure?",
+-- the second does it; the pointer leaving takes the question back. For Forget. (Load and Copy replace every
+-- setting of the character in one click: they keep a backup first, Setups.lua, and do not ask.)
+local function AskTwice(b, label, fn)
+    b:SetText(label)
+    local sure
+    b:SetScript("OnClick", function()
+        if not sure then
+            sure = true
+            b:SetText("Sure?")
+            return
+        end
+        sure = nil
+        b:SetText(label)
+        fn()
+    end)
+    b:HookScript("OnLeave", function()
+        sure = nil
+        b:SetText(label)
+    end)
+end
+
 PAGES[#PAGES + 1] = { key = "setups", label = "Your presets & sharing", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Save as a preset")
-    a:Note("Your settings are always kept on this character, as you leave them. A preset of your own is a copy of them under a name, positions and sizes too. It's a card on Start here as well.")
+    a:Note("Your settings are saved per character. A preset of your own is a named copy of them, including positions and sizes. It also shows as a card on Start here.")
     local nameBox = CreateFrame("EditBox", nil, p, "InputBoxTemplate")
     nameBox:SetSize(170, 20)
     nameBox:SetPoint("TOPLEFT", a:Left() + 6, a.y - 4)
@@ -3877,12 +4603,26 @@ PAGES[#PAGES + 1] = { key = "setups", label = "Your presets & sharing", build = 
             b:SetScript("OnClick", function() fn(r.name) end)
             return b
         end
+        -- (no question: what you had is kept as a backup first, Setups.lua)
         r.load = Btn("Load", 50, r.text, function(n) ns.LoadSetup(n) ns.RefreshControls() end)
         r.export = Btn("Export", 56, r.load, function(n) ns.ShowExport(n) end)
+        -- (two clicks, as on Start here: one click took a preset for good, the user 2026-11-16. The
+        -- pointer leaving the button takes the question back.)
         r.delete = Btn("Delete", 56, r.export, function(n)
+            if r.sure ~= n then
+                r.sure = n
+                r.delete:SetText("Sure?")
+                return
+            end
+            r.sure = nil
             ns.DeleteSetup(n)
+            if ns.lastSetup == n then ns.lastSetup = nil end
             ns.RefreshControls()
             ns.RebuildOptionsPages()
+        end)
+        r.delete:HookScript("OnLeave", function()
+            r.sure = nil
+            r.delete:SetText("Delete")
         end)
         rows[i] = r
     end
@@ -3896,6 +4636,8 @@ PAGES[#PAGES + 1] = { key = "setups", label = "Your presets & sharing", build = 
         local names = ns.SetupNames()
         for i, r in ipairs(rows) do
             r.name = names[i]
+            r.sure = nil
+            r.delete:SetText("Delete")
             r:SetShown(names[i] ~= nil)
             -- (the one loaded last, as other addons mark the current profile)
             if names[i] then
@@ -3939,8 +4681,7 @@ PAGES[#PAGES + 1] = { key = "setups", label = "Your presets & sharing", build = 
         r.forget = RedButton(r)
         r.forget:SetSize(56, 20)
         r.forget:SetPoint("LEFT", r.copy, "RIGHT", 4, 0)
-        r.forget:SetText("Forget")
-        r.forget:SetScript("OnClick", function() ns.ForgetCharacter(r.name) ns.RefreshControls() end)
+        AskTwice(r.forget, "Forget", function() ns.ForgetCharacter(r.name) ns.RefreshControls() end)
         chars[i] = r
     end
     b.y = b.y - CHAR_ROWS * 24
@@ -3960,11 +4701,11 @@ PAGES[#PAGES + 1] = { key = "setups", label = "Your presets & sharing", build = 
     end
     controls[#controls + 1] = charList
     b:Header("Import and export")
-    b:Button("Import...", function() ns.ShowImport() end)
+    b:Button("Import", function() ns.ShowImport() end)
     b:Button("Export the settings in use", function() ns.ShowExport() end)
-    b:Button("Share learned quests and monsters", function() if ns.ShowLearnedExport then ns.ShowLearnedExport() end end)
-    b:Tip("The quest givers, quests and monster spots learned as you play, as a string. Whoever imports it (Import...) adds them to theirs.")
-    b:Note("A setup travels as a string of text, like other addons' profiles: Export, copy it (Ctrl+C) and paste it in Discord, a forum or a note. Import opens a box to paste one into; it's saved under its name.")
+    b:Button("Share learned quests and mobs", function() if ns.ShowLearnedExport then ns.ShowLearnedExport() end end)
+    b:Tip("The quest givers, quests and mob spots learned as you play, as a string. Whoever imports it (Import...) adds them to theirs.")
+    b:Note("Export gives you a text string to copy and paste anywhere, like other addons' profiles. Import lets you paste one in.")
     b:Note("Your boss notes, placed boss spots and map markings stay yours: they're not part of a setup.")
 end }
 
@@ -4008,7 +4749,13 @@ PAGES[#PAGES + 1] = { key = "dev", label = "Dev", build = function(p)
 end }
 
 -- the Lab's pages (Lab\Lab.lua, never in a release): what's held for 1.3, in one place
-for _, page in ipairs({ { "lab", "What's in here" }, { "labminimap", "Minimap look" }, { "labhorizon", "The Horizon" }, { "labframes", "Frames & themes" } }) do
+-- Themes and the unfinished frames (Frames.lua builds it; a Lab page since 2026-11-15, the finished frames are
+-- rows on Header & borders)
+PAGES[#PAGES + 1] = { key = "labframes", label = "Themes (not done)", build = function(p)
+    if ns.FramesLabPage then ns.FramesLabPage(Column(p, 0, 0, CONTENT_W)) end
+end }
+
+for _, page in ipairs({ { "lab", "What's in here" }, { "labminimap", "Minimap look" }, { "labhorizon", "The ground" } }) do
     PAGES[#PAGES + 1] = { key = page[1], label = page[2], build = function(p)
         ns.LabPage(page[1], Column(p, 0, 0, CONTENT_W))
     end }
@@ -4019,11 +4766,16 @@ end
 local panel, content
 local pageFrames, navButtons = {}, {}
 local currentPage
--- the title bar over the page (it doesn't scroll): the page's name, after the
--- group it's in (pageGroup[key], from the category list)
+-- the title bar over the page (it doesn't scroll): the name of the list entry the page is under, the
+-- page's own name after it in grey, and under them the entry's pages as tabs (navItems.Tabs)
 local pageTitle, pageCrumb
 local pageFold  -- (before the title: folds every section on the page, or opens them)
-local pageGroup = {}
+-- The list on the left: a few entries, each a name and a line saying what's in it (the user, 2026-11-14, of
+-- five folded group names: "If I didn't know the addon, this wouldn't tell me anything"). An entry's pages
+-- are tabs over the page. An entry: { title, line, pages = { def, ... }, button, head, shows = { [page key]
+-- = in the tabs now }, found = { [page key] = search matches }, first = its first page showing, last = the
+-- tab last open }. navItems.of[page key] = its entry.
+local navItems = { of = {} }
 
 local query = ""  -- the search box's text, lower case ("" = not searching)
 
@@ -4065,16 +4817,15 @@ local function MinimalScrollBar(bar)
         ns.SetArtPart(foot, "minimal-scrollbar-thumb-bottom", 0, 1, 28 / 36, 1)
         foot:SetSize(8, 8)
         foot:SetPoint("BOTTOM", thumb, "BOTTOM")
+        bar.bfiThumbEnds = { cap, foot }   -- (hidden where a page draws its own thumb: BuildPage)
     end
-    local function Arrow(b, dir)
+    -- No arrows (2026-11-15): the 17 x 11 arrow art came out big and soft on the old scroll buttons whatever
+    -- was tried ("Scrollbar still looks bad", the user). A track and a thumb: the wheel, the drag and a
+    -- page's section marks do the rest. The buttons stay, unseen and unclickable (the template wants them).
+    local function Arrow(b)
         if not b then return end
-        local name = "minimal-scrollbar-arrow-" .. dir
-        b:SetSize(17, 11)
-        StateArt(b, "Normal", name)
-        StateArt(b, "Pushed", name .. "-down")
-        StateArt(b, "Highlight", name .. "-over")
-        local off = StateArt(b, "Disabled", name)
-        if off then off:SetAlpha(0.35) end
+        b:SetAlpha(0)
+        b:EnableMouse(false)
     end
     Arrow(bar.ScrollUpButton, "top")
     Arrow(bar.ScrollDownButton, "bottom")
@@ -4109,12 +4860,129 @@ local function BuildPage(def)
     end
     f:SetHeight(math.max(10, -f.bfiLowest + 12))
     local bar = scroll.ScrollBar
-    if bar then MinimalScrollBar(bar) end
+    if bar then
+        MinimalScrollBar(bar)
+        -- (the track takes the room the arrows had)
+        bar:ClearAllPoints()
+        bar:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 6, -3)
+        bar:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 6, 3)
+    end
     scroll:HookScript("OnScrollRangeChanged", function(self, _, yRange)
         if bar then bar:SetShown((yRange or self:GetVerticalScrollRange()) > 1) end
         if (yRange or 0) < 1 then self:SetVerticalScroll(0) end
     end)
     if bar then bar:SetShown(f:GetHeight() > content:GetHeight() + 1) end
+    -- The sections of a page that scrolls, as gold marks along its scroll bar: each where its heading is.
+    -- Point at one: its name. Click: there, unfolded. (The user's sketch, 2026-11-15: the names written by
+    -- the bar; marks with the name on hover, since two-column pages run right up to the bar.)
+    if bar and f.bfiHeads and #f.bfiHeads > 1 then
+        local heads = {}
+        for _, h in ipairs(f.bfiHeads) do heads[#heads + 1] = h end
+        table.sort(heads, function(x, y) return x.y > y.y end)
+        -- (headings level with each other, one in each column: one mark, both names)
+        local groups = {}
+        for _, h in ipairs(heads) do
+            local g = groups[#groups]
+            if g and g.y - h.y < 24 then g.text = g.text .. "\n" .. h.text else groups[#groups + 1] = { y = h.y, text = h.text, key = h.key } end
+        end
+        local marks = {}
+        for _, g in ipairs(groups) do
+            local m = CreateFrame("Button", nil, bar)
+            m:SetSize(14, 9)
+            m:SetFrameLevel((tonumber(bar:GetFrameLevel()) or 1) + 5)
+            local t = m:CreateTexture(nil, "OVERLAY")
+            t:SetColorTexture(1, 0.82, 0, 0.85)
+            t:SetSize(9, 2)
+            t:SetPoint("RIGHT", -1, 0)
+            m:SetScript("OnEnter", function(self)
+                t:SetColorTexture(1, 1, 1, 1)
+                GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+                GameTooltip:SetText(g.text, 1, 0.82, 0)
+                GameTooltip:Show()
+            end)
+            m:SetScript("OnLeave", function()
+                t:SetColorTexture(1, 0.82, 0, 0.85)
+                GameTooltip:Hide()
+            end)
+            m:SetScript("OnClick", function()
+                local function Go(page)
+                    local sc = page and page.bfiScroll
+                    if not sc then return end
+                    local y = g.y
+                    for _, h in ipairs(page.bfiHeads or {}) do
+                        if h.key == g.key then y = h.y end
+                    end
+                    sc:SetVerticalScroll(math.max(0, math.min(-y - 6, sc:GetVerticalScrollRange())))
+                end
+                if SectionFolded(g.key) and ns.ToggleOptionSection then
+                    ns.ToggleOptionSection(g.key)   -- (the pages are laid out again: the new one, a moment on)
+                    C_Timer.After(0, function() Go(pageFrames[def.key]) end)
+                else
+                    Go(f)
+                end
+            end)
+            m.g = g
+            marks[#marks + 1] = m
+        end
+        local function Place()
+            local H = tonumber(bar:GetHeight()) or 0
+            local range = (tonumber(f:GetHeight()) or 0) - (tonumber(scroll:GetHeight()) or 0)
+            if H < 60 or range < 1 then
+                for _, m in ipairs(marks) do m:Hide() end
+                return
+            end
+            -- The thumb as long as the share of the page in view, so it is a window that slides over the
+            -- marks: a mark inside it is a section on screen. (It was 40 px whatever the page: "Tiny scroller
+            -- for a scrollbar with 3 steps", the user 2026-11-15.)
+            local page = tonumber(f:GetHeight()) or 1
+            local th = math.max(30, math.min(H, H * (page - range) / page))
+            -- (drawn here, not the slider's own: a slider keeps its thumb's middle on the bar, so a long one
+            -- stuck out past both ends, over the arrows. The slider's own stays, unseen, for the drag.)
+            local thumb = bar:GetThumbTexture()
+            if thumb then
+                thumb:SetSize(8, th)
+                thumb:SetAlpha(0)
+            end
+            for _, e in ipairs(bar.bfiThumbEnds or {}) do e:Hide() end
+            if not bar.bfiOwn then
+                local o = {}
+                o.top = bar:CreateTexture(nil, "OVERLAY", nil, 7)
+                ns.SetArt(o.top, "minimal-scrollbar-thumb-top")
+                o.top:SetSize(8, 8)
+                o.bot = bar:CreateTexture(nil, "OVERLAY", nil, 7)
+                ns.SetArtPart(o.bot, "minimal-scrollbar-thumb-bottom", 0, 1, 28 / 36, 1)
+                o.bot:SetSize(8, 8)
+                o.mid = bar:CreateTexture(nil, "OVERLAY", nil, 6)
+                o.mid:SetPoint("TOPLEFT", o.top, "BOTTOMLEFT")
+                o.mid:SetPoint("BOTTOMRIGHT", o.bot, "TOPRIGHT")
+                bar.bfiOwn = o
+                scroll:HookScript("OnVerticalScroll", function() if bar.bfiDraw then bar.bfiDraw() end end)
+            end
+            bar.bfiDraw = function()
+                local o = bar.bfiOwn
+                local r = tonumber(scroll:GetVerticalScrollRange()) or 0
+                local at = r > 0 and math.max(0, math.min(1, (tonumber(scroll:GetVerticalScroll()) or 0) / r)) or 0
+                local y = at * (H - th)
+                ns.SetArtPart(o.mid, "minimal-scrollbar-thumb-middle", 0, 1, 0, math.min(1, math.max(1, th - 16) / 715))
+                o.top:ClearAllPoints()
+                o.top:SetPoint("TOP", bar, "TOP", 0, -y)
+                o.bot:ClearAllPoints()
+                o.bot:SetPoint("TOP", bar, "TOP", 0, -(y + th - 8))
+            end
+            bar.bfiDraw()
+            for _, m in ipairs(marks) do
+                -- (the heading's place down the page, on the bar; at the top of the view the thumb's top is on it)
+                local frac = math.max(0, math.min(1, -m.g.y / range))
+                m:ClearAllPoints()
+                m:SetPoint("RIGHT", bar, "TOPLEFT", 1, -(frac * (H - th) + 5))
+                m:Show()
+            end
+        end
+        bar:HookScript("OnShow", Place)
+        bar:HookScript("OnSizeChanged", Place)
+        scroll:HookScript("OnScrollRangeChanged", Place)
+        Place()
+    end
     pageFrames[def.key] = f
     return f
 end
@@ -4150,9 +5018,13 @@ local function ResetKeys(keys)
     ns.RefreshControls()
 end
 
+-- ns.PageResets[page key]: what a file of the addon puts back besides the page's own settings when its page is
+-- reset (Pencil.lua: the form its one switch stands for). The Lab's pages have their own (ns.LabReset).
+ns.PageResets = ns.PageResets or {}
 local function ResetPage(key)
     local f = pageFrames[key]
     if f and f.bfiKeys then ResetKeys(f.bfiKeys) end
+    if ns.PageResets[key] then ns.PageResets[key]() end
     if ns.LabReset then ns.LabReset(key) end
 end
 
@@ -4258,26 +5130,40 @@ local function SelectPage(key)
             local first = Matches(def)[1]  -- (searching: the first match in view)
             if first then ScrollTo(f, first.y) end
             if pageTitle then
-                pageTitle:SetText(def.label)
-                pageCrumb:SetText(pageGroup[key] or "")
+                local it = navItems.of[key]
+                pageTitle:SetText(it and it.title or def.label)
+                pageCrumb:SetText(it and #it.pages > 1 and def.label ~= it.title and def.label or "")
                 -- (not while searching: every section is open then)
                 pageFold:SetShown(f.bfiSections ~= nil and not foldsOpen)
                 pageFold.Look()
             end
         end
     end
+    -- (the way back: the pages you came through, newest last; the arrow left of the search box. "Go to:"
+    -- buttons jump between pages, so there has to be a way back. The user, 2026-11-15. Kept on navItems:
+    -- this file is near its limit of names.)
+    navItems.trail = navItems.trail or {}
+    if currentPage and currentPage ~= key and not navItems.goingBack then
+        local t = navItems.trail
+        t[#t + 1] = currentPage
+        if #t > 30 then table.remove(t, 1) end
+    end
+    if navItems.backButton then navItems.backButton:SetEnabled(#navItems.trail > 0) end
     currentPage = key
+    local entry = navItems.of[key]
+    if entry then entry.last = key end
+    for _, it in ipairs(navItems) do
+        it.button.selected:SetShown(it == entry)
+        it.Color()
+    end
+    if navItems.Tabs then navItems.Tabs() end
     ns.db.optionsWindow.page = key  -- (opens there again next time, after a reload too)
     if ns.HideOptionShadow then ns.HideOptionShadow() end  -- (a mark belongs to its page)
     ns.RefreshControls()
 end
 
--- the category list: everything, grouped; or, while searching, only the pages
--- with matches (the page's name counts too), each with how many.
--- a group: { title, box = its heading's bar, head = fontstring, button = the
--- heading, fold = its +/- button, def = its summary page or nil }; a page:
--- { def, button, text, group }
-local navItems = {}
+-- the list: every entry; or, while searching, only the entries with a page that matches (a page's name
+-- counts too), each with how many. Returns the first page showing.
 local noMatches
 local nav, navScroll  -- (the list, and the scroll frame it sits in)
 local NAV_TOP = -2
@@ -4285,57 +5171,31 @@ local NAV_W = 186  -- (options_list_active's width, near enough: the column's)
 local NAV_BAR = 14  -- (narrower by this while the list's scroll bar shows)
 local PANEL_W, PANEL_H = 900, 700  -- (the window, BuildPanel)
 
--- a group's pages folded away in the list (kept by its title)
-local function Collapsed(title) return ns.db.optionsWindow.collapsed[title] == true end
-
 local function LayoutNav()
-    -- which show: everything, or (searching) the pages with matches or a
-    -- matching name, and the groups they're in
+    local y, first = NAV_TOP, nil
     for _, it in ipairs(navItems) do
-        if it.title then
-            it.n = (query ~= "" and it.def) and #Matches(it.def) or 0
-            it.any = false
-        else
-            it.n = query ~= "" and #Matches(it.def) or 0
-            it.show = query == "" or it.n > 0 or it.def.label:lower():find(query, 1, true) ~= nil
-            if query == "" and it.def.advancedOnly and not advancedShown then it.show = false end
-            if it.show and it.group then it.group.any = true end
-        end
-    end
-    local y, first, open = NAV_TOP, nil, nil
-    -- a gap after a group's last page
-    local function Close()
-        if not open then return end
-        y = y - 10
-        open = nil
-    end
-    local function Count(n) return n > 0 and ("  |cff999999(" .. n .. ")|r") or "" end
-    for _, it in ipairs(navItems) do
-        if it.title then
-            Close()
-            it.shown = query == "" or it.n > 0 or it.any
-            it.box:SetShown(it.shown)
-            if it.shown then
-                it.box:SetPoint("TOPLEFT", 0, y)
-                open = { box = it.box, top = y }
-                it.folded = query == "" and Collapsed(it.title)
-                it.fold:SetShown(query == "")
-                it.fold.Look()
-                it.head:SetText((it.def and it.def.label or it.title) .. Count(it.n))
-                y = y - 28
-                if it.def and (query == "" or it.n > 0) then first = first or it.def.key end
+        local n, firstPage = 0, nil
+        for _, def in ipairs(it.pages) do
+            local m = query ~= "" and #Matches(def) or 0
+            local show
+            if query == "" then
+                show = not (def.advancedOnly and not advancedShown)
+            else
+                show = m > 0 or def.label:lower():find(query, 1, true) ~= nil
             end
-        elseif it.group and (not it.group.shown or it.group.folded) or not it.show then
-            it.button:Hide()
-        else
-            it.button:Show()
-            it.button:SetPoint("TOPLEFT", it.group and 1 or 0, y)
-            it.text:SetText(it.def.label .. (query ~= "" and Count(it.n) or ""))
-            y = y - (it.group and 21 or 25)
-            first = first or it.def.key
+            it.found[def.key], it.shows[def.key] = m, show
+            if show then firstPage = firstPage or def.key end
+            n = n + m
+        end
+        it.first = firstPage
+        it.button:SetShown(firstPage ~= nil)
+        if firstPage then
+            it.button:SetPoint("TOPLEFT", 0, y)
+            it.head:SetText(it.title .. (n > 0 and ("  |cff999999(" .. n .. ")|r") or ""))
+            y = y - it.button:GetHeight() - 2
+            first = first or firstPage
         end
     end
-    Close()
     noMatches:SetShown(query ~= "" and not first)
     noMatches:SetPoint("TOPLEFT", 10, NAV_TOP - 6)
     -- longer than the column: it scrolls, its rows narrowed for the bar
@@ -4343,17 +5203,11 @@ local function LayoutNav()
     if view < 1 then view = PANEL_H - 64 - 46 - 16 end  -- (not laid out yet)
     local over = -y > view + 1
     local w = over and NAV_W - NAV_BAR or NAV_W
-    for _, it in ipairs(navItems) do
-        if it.title then
-            it.box:SetWidth(w)
-            it.button:SetWidth(w)
-        else
-            it.button:SetWidth(it.group and w - 2 or w)
-        end
-    end
+    for _, it in ipairs(navItems) do it.button:SetWidth(w) end
     nav:SetHeight(math.max(1, -y))
     if navScroll.ScrollBar then navScroll.ScrollBar:SetShown(over) end
     if not over then navScroll:SetVerticalScroll(0) end
+    if navItems.Tabs then navItems.Tabs() end
     return first
 end
 -- throw every built page away; each is built again the next time it's needed
@@ -4377,6 +5231,43 @@ end
 -- for their text's size). Waits until you let go of the mouse, so a slider
 -- you're dragging isn't swapped out under the cursor.
 local rebuildWaiting = false
+-- A page built again, back where it was scrolled to, with no look at its top on the way: the scroll range is
+-- asked for at once (UpdateScrollChildRect), and where the client still has none the page is unseen for the
+-- one frame until it has. (Opening a section far down showed the top of the page for a blink, the user
+-- 2026-11-15.)
+-- Before a page is thrown away: the heading its view hangs on (the last one above the view's middle) and how
+-- far the view's top is from it. Built again, the view is set from that heading, so what you were looking at
+-- stays under your eyes when something higher up grew or shrank. (A tick on Start here changed the presets'
+-- box at the page's top and everything below slid 90 px: the user's two screenshots, 2026-11-15.)
+function navItems.Anchor(f, at)
+    if not (f and f.bfiHeads) then return end
+    local mid = at + (f.bfiScroll:GetHeight() or 0) / 2
+    local best
+    for _, h in ipairs(f.bfiHeads) do
+        if -h.y <= mid and (not best or h.y < best.y) then best = h end
+    end
+    return best and { key = best.key, off = at + best.y }
+end
+
+function navItems.KeepScroll(f, at, anchor)
+    if not (f and at) then return end
+    for _, h in ipairs(anchor and f.bfiHeads or {}) do
+        if h.key == anchor.key then at = math.max(0, -h.y + anchor.off) end
+    end
+    if at <= 0 then return end
+    local sc = f.bfiScroll
+    -- (how far it can scroll, from the page's own height: the frame's answer comes a frame late. A page made
+    -- shorter, a section closed, ends at its new foot.)
+    local want = math.min(at, math.max(0, (f:GetHeight() or 0) - (sc:GetHeight() or 0)))
+    if sc.UpdateScrollChildRect then sc:UpdateScrollChildRect() end
+    sc:SetVerticalScroll(want)
+    local there = math.abs((sc:GetVerticalScroll() or 0) - want) < 1
+    if not there then sc:SetAlpha(0) end   -- (only where the client would not take it yet)
+    C_Timer.After(0, function()
+        if math.abs((sc:GetVerticalScroll() or 0) - want) >= 1 then sc:SetVerticalScroll(want) end
+        sc:SetAlpha(1)
+    end)
+end
 local function RebuildPages()
     if IsMouseButtonDown("LeftButton") then
         C_Timer.After(0.2, RebuildPages)
@@ -4384,9 +5275,16 @@ local function RebuildPages()
     end
     rebuildWaiting = false
     if not panel then return end
+    -- (the page stays where it was scrolled to: built again it sprang to its top, on a tick on Start here
+    -- and on a resize, the user 2026-11-15)
+    local old = currentPage and pageFrames[currentPage]
+    local at = old and old.bfiScroll:GetVerticalScroll() or 0
+    local anchor = old and at > 0 and navItems.Anchor(old, at)
     DropPages()
     if currentPage then SelectPage(currentPage) end
     if query ~= "" then LayoutNav() end
+    local f = currentPage and pageFrames[currentPage]
+    navItems.KeepScroll(f, at, anchor)
 end
 
 function ns.RebuildOptionsPages()
@@ -4413,15 +5311,10 @@ local function RelayoutPage()
     if not currentPage then return end
     local old = pageFrames[currentPage]
     local at = old and old.bfiScroll:GetVerticalScroll() or 0
+    local anchor = old and at > 0 and navItems.Anchor(old, at)
     DropPages()
     SelectPage(currentPage)
-    local f = pageFrames[currentPage]
-    if not f then return end
-    local function Scroll()
-        f.bfiScroll:SetVerticalScroll(math.min(at, f.bfiScroll:GetVerticalScrollRange()))
-    end
-    Scroll()
-    C_Timer.After(0, Scroll)  -- (the range is known once the new page is laid out)
+    navItems.KeepScroll(pageFrames[currentPage], at, anchor)
 end
 
 function ns.ToggleOptionSection(key)
@@ -4453,7 +5346,8 @@ local function Search(text)
     if MatchAdvanced() and currentPage then SelectPage(currentPage) end
     local first = LayoutNav()
     -- stay on the page you're on if it still matches, else the first that does
-    local stay = currentPage and navButtons[currentPage] and navButtons[currentPage]:IsShown()
+    local entry = currentPage and navItems.of[currentPage]
+    local stay = entry and entry.shows[currentPage]
     if stay or not first then
         for _, def in ipairs(PAGES) do
             if def.key == currentPage then MarkMatches(def) end
@@ -4563,10 +5457,39 @@ local function SearchLook(box)
     m:SetPoint("BOTTOMRIGHT", r, "BOTTOMLEFT")
 end
 
+-- A small window of ours in the settings window's dress: its metal frame and ground, a title in the bar,
+-- the red X in the corner, and the settings' backdrop tint (Frames.lua). The gear's quick panel builds the
+-- same by hand; the welcome page takes it from here (the user, 2026-11-16: "Give same as quickpanel").
+function ns.MetalWindow(f, titleText)
+    MetalFrame(f)
+    f:SetHitRectInsets(-4, -4, -8, -4)
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOP", 0, ns.FOREVER and 1 or -4)
+    title:SetText(titleText or "Waymark")
+    local x = CreateFrame("Button", nil, f)
+    x:SetSize(24, 24)
+    x:SetPoint("TOPRIGHT", ns.FOREVER and -2 or -5, ns.FOREVER and 4 or 1)
+    if ns.UsingSubstitutes() then
+        x:SetSize(21, 21)
+        x:SetPoint("TOPRIGHT", -2, 3)
+    end
+    x:SetFrameLevel(f:GetFrameLevel() + 5)
+    StateArt(x, "Normal", "redbutton-exit-c60-2x", "Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
+    StateArt(x, "Pushed", "redbutton-exit-pressed-c60-2x", "Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
+    local glow = StateArt(x, "Highlight", "redbutton-highlight-c60-2x", "Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
+    if glow then glow:SetBlendMode("ADD") end
+    x:SetScript("OnClick", function() f:Hide() end)
+    ns.tintWindows = ns.tintWindows or {}
+    ns.tintWindows[#ns.tintWindows + 1] = f
+    if ns.FramesRefresh then pcall(ns.FramesRefresh) end
+    return f
+end
+
 local function BuildPanel()
     advancedShown = ns.db.optionsWindow.advanced and true or false
     panel = CreateFrame("Frame", "WaymarkOptions", UIParent)
-    ns.AddonWindow(panel)
+    -- (not an ns.AddonWindow: the settings keep their size whatever "Waymark size" says, the user 2026-11-15.
+    -- Their own text size is the box at the foot of the window.)
     panel:SetSize(PANEL_W, ns.db.optionsWindow.height or PANEL_H)
     panel:SetScale(ns.db.optionsWindow.scale or 1)
     -- (the metal frame is drawn a little past the window: clicks there went into the world)
@@ -4612,7 +5535,7 @@ local function BuildPanel()
     -- (pages are built CONTENT_W across, so it can't widen), the rest goes to its height
     local grip = CreateFrame("Button", nil, panel)
     grip:SetSize(16, 16)
-    grip:SetPoint("BOTTOMRIGHT", -2, 2)
+    grip:SetPoint("BOTTOMRIGHT", 3, 2)   -- (5 px further right: it sat short of the frame's corner, the user 2026-11-15)
     grip:SetFrameLevel(panel:GetFrameLevel() + 30)
     grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
     grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
@@ -4683,8 +5606,8 @@ local function BuildPanel()
     if navBar then
         MinimalScrollBar(navBar)
         navBar:ClearAllPoints()
-        navBar:SetPoint("TOPRIGHT", navScroll, "TOPRIGHT", 2, -12)
-        navBar:SetPoint("BOTTOMRIGHT", navScroll, "BOTTOMRIGHT", 2, 12)
+        navBar:SetPoint("TOPRIGHT", navScroll, "TOPRIGHT", 2, -2)
+        navBar:SetPoint("BOTTOMRIGHT", navScroll, "BOTTOMRIGHT", 2, 2)
         navBar:SetWidth(10)
         navBar:Hide()
         navScroll:HookScript("OnScrollRangeChanged", function(self, _, yRange)
@@ -4692,28 +5615,19 @@ local function BuildPanel()
         end)
     end
 
-    -- the pages grouped: "#" entries are group headings. The window itself; how
-    -- it moves with you and where you are; what's drawn on it; and your own setup.
-    -- "#Heading>key": the heading opens that page (the group's own summary)
-    local NAV = {
-        "overview", "performance",
-        "#The window", "window", "clearview", "minimap", "header", "controls",
-        "#Getting around", "behaviour", "browse", "town", "city", "dungeon",
-        "#What's shown>shownhome", "quests", "people", "group", "rares", "explore",
-        "#Extras>extrashome", "tracker", "questlog", "clock", "ink",
-        "#Your setup", "profiles", "setups", "keys",
-    }
     -- (Combat's page only with its addon switched on, the Lab's only where Lab\ is, Dev only where
     -- DevBar.lua is: releases leave it out)
     for i = #PAGES, 1, -1 do
         local key = PAGES[i].key
-        if (key == "combat" and not WaymarkCombat) or (key == "dev" and not ns.DevCommands) or (key:find("^lab") and not ns.LabPage) then table.remove(PAGES, i) end
+        if (key == "combat" and not WaymarkCombat) or (key == "dev" and not ns.DevCommands) or (key == "traversal" and not ns.SetupTransports) or (key == "told" and not ns.ToldNow) or (key:find("^lab") and not ns.LabPage) then table.remove(PAGES, i) end
     end
-    if ns.DevCommands then NAV[#NAV + 1] = "#Development"; NAV[#NAV + 1] = "dev" end
-    if ns.LabPage then
-        for _, key in ipairs({ "#Lab, for 1.3", "lab", "labminimap", "labhorizon", "labframes", "combat" }) do NAV[#NAV + 1] = key end
-    else
-        NAV[#NAV + 1] = "combat"
+    -- ("What the map does by itself" last: a map button's right-click goes to the first page with its
+    -- setting (ns.ShowOption), and that should be the setting's own page where it has one)
+    for i, def in ipairs(PAGES) do
+        if def.key == "acts" then
+            table.insert(PAGES, table.remove(PAGES, i))
+            break
+        end
     end
     local byKey = {}
     for _, def in ipairs(PAGES) do byKey[def.key] = def end
@@ -4733,103 +5647,193 @@ local function BuildPanel()
         return b
     end
 
-    -- A group: the heading's dark bar over an outline round its pages
-    -- (options_categoryheader_1), a +/- at the bar's end that folds the pages
-    -- away and back. A heading with a page of its own (def) opens it when
-    -- clicked; a plain one folds when clicked anywhere.
-    local function GroupHeading(title, def)
-        -- (just the bar of options_categoryheader_1: the outline under it,
-        -- meant to run round the pages, stuck out past the list's edges)
-        local box = CreateFrame("Frame", nil, nav)
-        box:SetSize(NAV_W, 26)
-        box:SetFrameLevel(nav:GetFrameLevel() + 1)
-        ns.SliceArt(box, "options_categoryheader_1", 8 / 197, 8 / 197, 0, 0, 6, 6, 0, 0,
-            nil, nil, { 1 / 199, 198 / 199, 3 / 144, 28 / 144 })
-        local b = NavButton(box, NAV_W, 26)
-        b:SetPoint("TOPLEFT")
-        local h = b:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        h:SetPoint("LEFT", 10, 0)
-        h:SetShadowColor(0, 0, 0, 1)
-        h:SetShadowOffset(1, -1)
+    -- The entries: { name, the line under it, its pages in tab order }. A page that isn't in this build
+    -- (Traversal, Frames, the Lab's, Dev, Combat's) is left out; an entry with none left is too.
+    local ENTRIES = {
+        { "Start here", "Presets, and all Waymark can do", "overview" },
+        { "How it looks", "Shaded land, frame, clear view, buttons", "look", "header", "clearview", "window", "controls", "tipsmenus" },
+        { "How it acts", "Follows you, zooms in towns, folds", "acts", "town", "browse" },
+        { "On the map", "Townsfolk, rares, herbs and ore, boats", "shownhome", "people", "group", "rares", "explore", "traversal", "clock" },
+        { "Quests", ns.ToldNow and "Givers, their words, tracker, quest log" or "Givers, tracker, quest log", "quests", "told", "tracker", "questlog" },
+        { "Dungeons & the book", "Dungeon maps, the found notes, your ink", "dungeon", "ink" },
+        { "As your minimap", "The map in the minimap's place", "minimap" },
+        { "Keys", "Three worth having", "keys" },
+        { "Your setups", "Save, share, weaker PCs", "setups", "performance", "profiles" },
+        { "Development", "Dev commands and the Lab", "dev", "lab", "labminimap", "labhorizon", "labframes" },
+        { "Combat bars", "Waymark: Combat", "combat" },
+    }
+    -- (a tab's name where the page's own is too long for a row of tabs, or says the entry's name again;
+    -- the page's own name stays beside the title)
+    local TAB = { look = "The map", labframes = "Themes", controls = "Buttons",
+                  acts = "All of it", browse = "Zoom & other zones", shownhome = "Layers",
+                  group = "Group", rares = "Rares & nodes", quests = "Quest pins", tracker = "Tracker",
+                  setups = "Your presets", clock = "Clock & coords" }
+    local TAB_ICON = { dungeon = "dungeons", ink = "book" }
+    -- the tabs' row, between the title and the divider; an entry of one page has its line there instead
+    local strip = CreateFrame("Frame", nil, inner)
+    strip:SetPoint("TOPLEFT", inner, "TOPLEFT", 212, -40)
+    strip:SetPoint("RIGHT", inner, "RIGHT", -12, 0)
+    strip:SetHeight(24)
+    local stripLine = strip:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+    stripLine:SetPoint("LEFT", 20, 0)
+    stripLine:SetTextColor(0.6, 0.6, 0.6)
 
-        local it = { title = title, box = box, head = h, button = b, def = def }
-        local function Toggle()
-            ns.db.optionsWindow.collapsed[title] = not Collapsed(title)
-            LayoutNav()
+    for _, e in ipairs(ENTRIES) do
+        local it = { title = e[1], line = e[2], pages = {}, shows = {}, found = {} }
+        for i = 3, #e do
+            local def = byKey[e[i]]
+            if def then
+                it.pages[#it.pages + 1] = def
+                navItems.of[def.key] = it
+                local b = NavButton(strip, 60, 22)
+                local text = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                text:SetPoint("CENTER")
+                b.text, b.label = text, TAB[def.key] or def.label
+                -- (the icon the thing has on the map, before its tab's name: the user, 2026-11-15)
+                local icon = TAB_ICON[def.key] and ns.ToggleIcon and ns.ToggleIcon(TAB_ICON[def.key])
+                if icon then
+                    local tex = b:CreateTexture(nil, "OVERLAY")
+                    tex:SetSize(16, 16)
+                    tex:SetPoint("RIGHT", text, "LEFT", -4, 0)
+                    ns.SetIconArt(b, tex, icon)
+                    text:SetPoint("CENTER", 10, 0)
+                    b.iconW = 20
+                end
+                -- (greyed: the addon it needs isn't installed)
+                local missing = def.needs and not ns.AddonPresent(def.needs)
+                -- (underlines, as the tabs on the pages themselves (Townsfolk, Header & border): a thin dim
+                -- line under a tab not picked, white words and a bright line under the picked one, and no
+                -- glow behind it. As plain gold words the row read as a caption; with a backing each, as
+                -- grey slabs. The user, 2026-11-15: "People will find these tabs, right?", "This looks bad".)
+                b.selected:SetAlpha(0)   -- (still what says which is picked)
+                local under = b:CreateTexture(nil, "ARTWORK")
+                under:SetPoint("BOTTOMLEFT", 4, 0)
+                under:SetPoint("BOTTOMRIGHT", -4, 0)
+                b.Color = function()
+                    local picked, over = b.selected:IsShown(), b:IsMouseOver()
+                    if missing then text:SetTextColor(0.55, 0.5, 0.45)
+                    elseif picked or over then text:SetTextColor(1, 1, 1)
+                    else text:SetTextColor(1, 0.82, 0) end
+                    under:SetHeight(picked and 2 or 1)
+                    under:SetColorTexture(1, 0.82, 0, picked and 0.9 or missing and 0.12 or over and 0.6 or 0.28)
+                end
+                b:SetScript("OnEnter", function()
+                    b.Color()
+                    if missing then
+                        GameTooltip:SetOwner(b, "ANCHOR_BOTTOM")
+                        GameTooltip:SetText("Needs " .. def.needs, 1, 0.5, 0.3)
+                        GameTooltip:Show()
+                    end
+                end)
+                b:SetScript("OnLeave", function()
+                    b.Color()
+                    GameTooltip:Hide()
+                end)
+                b.Color()
+                b:SetScript("OnClick", function() SelectPage(def.key) end)
+                b:Hide()
+                navButtons[def.key] = b
+            end
         end
-        local fold = FoldButton(b, function() return it.folded end, Toggle)
-        fold:SetPoint("RIGHT", -6, 0)
-        fold:SetScript("OnEnter", function()
-            GameTooltip:SetOwner(fold, "ANCHOR_RIGHT")
-            GameTooltip:SetText(Collapsed(title) and "Show this group's pages" or "Hide this group's pages")
-            GameTooltip:Show()
-        end)
-        fold:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        it.fold = fold
-
-        if def then
-            b:SetScript("OnClick", function() SelectPage(def.key) end)
-            -- (gold under the mouse; no tooltip: it covered the page)
-            b:SetScript("OnEnter", function() h:SetTextColor(1, 0.82, 0) end)
-            b:SetScript("OnLeave", function() h:SetTextColor(1, 1, 1) end)
-            navButtons[def.key] = b
-        else
-            b:SetScript("OnClick", Toggle)
+        if #it.pages > 0 then
+            local b = NavButton(nav, NAV_W, 40)
+            b:SetFrameLevel(nav:GetFrameLevel() + 4)
+            local head = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            head:SetPoint("TOPLEFT", 10, -6)
+            head:SetWidth(NAV_W - 16)
+            head:SetJustifyH("LEFT")
+            head:SetWordWrap(false)
+            head:SetText(it.title)
+            local sub = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            sub:SetPoint("TOPLEFT", head, "BOTTOMLEFT", 0, -2)
+            sub:SetWidth(NAV_W - 30)  -- (room for the list's scroll bar, when it shows)
+            sub:SetJustifyH("LEFT")
+            sub:SetTextColor(0.62, 0.6, 0.56)
+            sub:SetText(it.line)
+            b:SetHeight(math.max(38, 6 + head:GetStringHeight() + 2 + sub:GetStringHeight() + 7))
+            it.Color = function()
+                if b.selected:IsShown() or b:IsMouseOver() then head:SetTextColor(1, 1, 1)
+                else head:SetTextColor(1, 0.82, 0) end
+            end
+            b:SetScript("OnEnter", it.Color)
+            b:SetScript("OnLeave", it.Color)
+            -- (back to the tab you had open in it; searching: its first page with a match)
+            b:SetScript("OnClick", function()
+                SelectPage((it.last and it.shows[it.last] and it.last) or it.first or it.pages[1].key)
+            end)
+            it.Color()
+            it.button, it.head = b, head
+            navItems[#navItems + 1] = it
         end
-        return it
     end
 
-    local group  -- (the heading the pages below are under)
-    for _, entry in ipairs(NAV) do
-        local title, pageKey = entry:match("^#(.-)>(.+)$")
-        if title and byKey[pageKey] then
-            group = GroupHeading(title, byKey[pageKey])
-            navItems[#navItems + 1] = group
-        elseif entry:sub(1, 1) == "#" then
-            group = GroupHeading(entry:sub(2))
-            navItems[#navItems + 1] = group
-        elseif byKey[entry] then
-            pageGroup[entry] = group and group.title
-            local def = byKey[entry]
-            local b = NavButton(nav, group and NAV_W - 2 or NAV_W, group and 21 or 23)
-            b:SetFrameLevel(nav:GetFrameLevel() + 4)
-            local text = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            text:SetPoint("LEFT", group and 16 or 10, 0)
-            text:SetPoint("RIGHT", -6, 0)
-            text:SetJustifyH("LEFT")
-            text:SetWordWrap(false)
-            text:SetText(def.label)
-            -- (greyed: the addon it needs isn't installed)
-            local missing = def.needs and not ns.AddonPresent(def.needs)
-            b.Color = function()
-                if missing then text:SetTextColor(0.55, 0.5, 0.45)
-                elseif b.selected:IsShown() or b:IsMouseOver() then text:SetTextColor(1, 1, 1)
-                else text:SetTextColor(1, 0.82, 0) end
-            end
-            b:SetScript("OnEnter", function()
-                b.Color()
-                if missing then
-                    GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-                    GameTooltip:SetText("Needs " .. def.needs, 1, 0.5, 0.3)
-                    GameTooltip:Show()
-                end
-            end)
-            b:SetScript("OnLeave", function()
-                b.Color()
-                GameTooltip:Hide()
-            end)
+    -- the open page's entry: its pages as tabs, left to right (searching: those with a match, each with
+    -- how many, and the open one); pressed together when they'd run past the row
+    navItems.Tabs = function()
+        for _, b in pairs(navButtons) do b:Hide() end
+        local it = currentPage and navItems.of[currentPage]
+        local tabs = {}
+        for _, def in ipairs(it and it.pages or {}) do
+            if it.shows[def.key] ~= false or def.key == currentPage then tabs[#tabs + 1] = def end
+        end
+        stripLine:SetShown(#tabs < 2)
+        stripLine:SetText(it and it.line or "")
+        if #tabs < 2 then return end
+        local total = 0
+        for _, def in ipairs(tabs) do
+            local b = navButtons[def.key]
+            local n = query ~= "" and it.found[def.key] or 0
+            b.text:SetText(b.label .. (n > 0 and ("  |cff999999(" .. n .. ")|r") or ""))
+            total = total + b.text:GetStringWidth() + (b.iconW or 0)
+        end
+        local room = strip:GetWidth()
+        if room < 1 then room = PANEL_W - 24 - 212 - 12 end  -- (not laid out yet)
+        local pad = math.max(8, math.min(24, (room - 20 - total) / #tabs - 2))
+        local x = 16
+        for _, def in ipairs(tabs) do
+            local b = navButtons[def.key]
+            b:SetWidth(b.text:GetStringWidth() + (b.iconW or 0) + pad)
+            b:ClearAllPoints()
+            b:SetPoint("LEFT", strip, "LEFT", x, 0)
+            b:Show()
             b.Color()
-            b:SetScript("OnClick", function() SelectPage(def.key) end)
-            navButtons[def.key] = b
-            navItems[#navItems + 1] = { def = def, button = b, text = text, group = group }
+            x = x + b:GetWidth() + 2
         end
     end
 
     -- the search box, under the title (the game's search box look)
     local ok, box = pcall(CreateFrame, "EditBox", nil, panel, "SearchBoxTemplate")
     if not ok then box = CreateFrame("EditBox", nil, panel, "InputBoxTemplate") end
-    box:SetSize(180, 22)
-    box:SetPoint("TOPLEFT", 24, -32)
+    box:SetSize(154, 22)
+    box:SetPoint("TOPLEFT", 50, -32)
+    -- back to the page you were on (the game's own page arrow)
+    local back = CreateFrame("Button", nil, panel)
+    back:SetSize(24, 24)
+    back:SetPoint("RIGHT", box, "LEFT", -8, 0)
+    back:SetNormalTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Up")
+    back:SetPushedTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Down")
+    back:SetDisabledTexture("Interface\\Buttons\\UI-SpellbookIcon-PrevPage-Disabled")
+    back:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+    back:SetScript("OnClick", function()
+        local t = navItems.trail or {}
+        local key = table.remove(t)
+        -- (a page that has gone since: the one before it)
+        while key and not navItems.of[key] do key = table.remove(t) end
+        if not key then back:SetEnabled(false) return end
+        navItems.goingBack = true
+        local ok, err = pcall(ns.OpenOptionsPage, key)
+        navItems.goingBack = nil
+        if not ok and ns.Log then ns.Log("Back:", tostring(err)) end
+        back:SetEnabled(#t > 0)
+    end)
+    back:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Back to the page you were on")
+        GameTooltip:Show()
+    end)
+    back:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    back:SetEnabled(#(navItems.trail or {}) > 0)
+    navItems.backButton = back
     SearchLook(box)
     box:SetAutoFocus(false)
     box:HookScript("OnTextChanged", function(self) Search(self:GetText()) end)
@@ -4863,14 +5867,14 @@ local function BuildPanel()
     pageCrumb:SetPoint("BOTTOMLEFT", pageTitle, "BOTTOMRIGHT", 10, 1)
     pageCrumb:SetTextColor(0.6, 0.6, 0.6)
     local divider = inner:CreateTexture(nil, "ARTWORK")
-    divider:SetPoint("TOPLEFT", inner, "TOPLEFT", 212, -44)
+    divider:SetPoint("TOPLEFT", inner, "TOPLEFT", 212, -68)
     divider:SetPoint("RIGHT", inner, "RIGHT", -12, 0)
     divider:SetHeight(1)
     ns.SetArt(divider, "options_horizontaldivider")
 
     -- the page, right of the list (room for the scroll bar on its right)
     content = CreateFrame("Frame", nil, inner)
-    content:SetPoint("TOPLEFT", inner, "TOPLEFT", 214, -52)
+    content:SetPoint("TOPLEFT", inner, "TOPLEFT", 214, -76)
     content:SetPoint("BOTTOMRIGHT", inner, "BOTTOMRIGHT", -26, 6)
 
     -- footer, right: put this page's settings back to how the addon comes
@@ -4908,7 +5912,7 @@ local function BuildPanel()
     adv:HookScript("OnEnter", function()
         GameTooltip:SetOwner(adv, "ANCHOR_TOP")
         GameTooltip:SetText("Show advanced settings")
-        GameTooltip:AddLine("Fine-tuning on every page: nudges, thicknesses, fonts, spacing, exact thresholds. Off keeps the pages to their main choices; searching finds the hidden ones anyway.", 1, 1, 1, true)
+        GameTooltip:AddLine("Adds the fine-tuning to every page: nudges, thicknesses, fonts, spacing. Search finds these settings even when this is off.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
     adv:HookScript("OnLeave", function() GameTooltip:Hide() end)
@@ -4955,7 +5959,8 @@ function ns.ToggleOptions(page)
         -- the page you had open last, even before a reload
         local last = ns.db.optionsWindow.page
         local known = false
-        for _, def in ipairs(PAGES) do if def.key == last then known = true end end
+        -- (a page the list no longer holds, the old Extras summary: Start here)
+        for _, def in ipairs(PAGES) do if def.key == last and navItems.of[last] then known = true end end
         SelectPage(known and last or PAGES[1].key)
     end
     panel:SetShown(not panel:IsShown())
@@ -4974,9 +5979,10 @@ end
 
 -- a page's name in the list, lit as if hovered (on) or back to normal
 function ns.GlowNavPage(key, on)
-    local b = navButtons[key]
-    if not b then return end
-    if on then b:LockHighlight() else b:UnlockHighlight() end
+    local it = navItems.of[key]
+    local tab, entry = navButtons[key], it and it.button
+    if tab then if on then tab:LockHighlight() else tab:UnlockHighlight() end end
+    if entry then if on then entry:LockHighlight() else entry:UnlockHighlight() end end
 end
 
 -- Open the page a setting lives on and put a soft shadow behind it (until you
@@ -5039,6 +6045,25 @@ function ns.ShowOption(group, key)
     shaded = f
 end
 
+-- A page opened for one setting (the ">" on a layer's row): that setting's section unfolded and in view. The
+-- page alone when the setting has no row of its own there. (Unexplored land and Area names opened their tab
+-- with every section shut, the user 2026-11-15.)
+function ns.OpenOptionAt(page, group, key)
+    local def
+    for _, d in ipairs(PAGES) do
+        if d.key == page then def = d end
+    end
+    local id = tostring(group) .. "/" .. tostring(key)
+    local m = def and not def.summary and (BuildPage(def).bfiMarks or {})[id]
+    if m and m.sec and SectionFolded(m.sec) then
+        ns.db.optionsWindow.folded[m.sec] = false
+        DropPages()
+        m = (BuildPage(def).bfiMarks or {})[id] or m
+    end
+    ns.OpenOptionsPage(page)
+    if m and pageFrames[page] then ScrollTo(pageFrames[page], m.y) end
+end
+
 function ns.HideOptionShadow()
     if shaded then
         shaded.bfiShade:Hide()
@@ -5078,34 +6103,58 @@ local dockButton              -- minimap replacement on/off, left of those
 local function BuildQuickPanel(map)
     -- parented to UIParent, not the map, so it keeps a normal size on a scaled-up
     -- map; anchors work across scales, so it still hangs off the gear button
-    quickPanel = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    quickPanel = CreateFrame("Frame", nil, UIParent)
     ns.AddonWindow(quickPanel)
-    quickPanel:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 },
-    })
-    quickPanel:SetBackdropColor(0, 0, 0, 0.9)
+    -- (the settings window's own frame and ground, its title in the bar: it had a tooltip's border, and
+    -- "doesnt match our settings frame", the user 2026-11-16)
+    MetalFrame(quickPanel)
+    quickPanel:SetHitRectInsets(-4, -4, -8, -4)
+    ns.quickPanelFrame = quickPanel   -- (Frames.lua: the settings window's backdrop choice tints it too)
+    if ns.FramesRefresh then pcall(ns.FramesRefresh) end
+    do
+        local title = quickPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", 0, ns.FOREVER and 1 or -4)
+        title:SetText("Waymark")
+    end
     quickPanel:SetFrameStrata("DIALOG")
     quickPanel:EnableMouse(true)
     -- beside the map, not over it: to its left, or to its right when the left
     -- side of the screen hasn't room (decided each time it opens)
+    -- Then it is pinned to the screen at that spot. It hung on the map (docked: on the minimap), so it
+    -- jumped about while the docked map was dragged, and landed oddly when the map was docked from the
+    -- panel's own buttons: the user, 2026-11-15. Now it stays where it opened, whatever the map does, and
+    -- a drag moves it for as long as it is open.
     local function Place(self)
         self:ClearAllPoints()
         self:SetClampedToScreen(true)
-        -- (docked: left of the square, which sits where the minimap is)
-        if ns.Docked and ns.Docked() and Minimap then
-            self:SetPoint("TOPRIGHT", Minimap, "TOPLEFT", -14, 0)
-            return
-        end
-        local left = map:GetLeft() and map:GetLeft() * map:GetEffectiveScale() / UIParent:GetEffectiveScale()
-        if left and left < self:GetWidth() + 4 then
-            self:SetPoint("TOPLEFT", map, "TOPRIGHT", 4, 0)
+        -- (docked: beside the square, which sits where the minimap is. To its left, or to its right when
+        -- the square has been moved to the left of the screen: it opened over the map there, the user,
+        -- 2026-11-16)
+        -- (always by the map itself, clear of the metal frame, which reaches past the panel. Docked it hung
+        -- on the minimap, but the live dots shrink the real minimap and lay it on your arrow, so the panel
+        -- opened from the middle of the map: the user's shot, 2026-11-16)
+        local by, pad = map, 18
+        local left = by:GetLeft() and by:GetLeft() * by:GetEffectiveScale() / self:GetEffectiveScale()
+        if left and left < self:GetWidth() + pad then
+            self:SetPoint("TOPLEFT", by, "TOPRIGHT", pad, 0)
         else
-            self:SetPoint("TOPRIGHT", map, "TOPLEFT", -4, 0)
+            self:SetPoint("TOPRIGHT", by, "TOPLEFT", -pad, 0)
+        end
+        local l, t = self:GetLeft(), self:GetTop()
+        if l and t then
+            -- (kept on the screen: a pinned spot past the edge would be pushed back by the clamp each frame)
+            local sw = UIParent:GetWidth() * UIParent:GetEffectiveScale() / self:GetEffectiveScale()
+            local sh = UIParent:GetHeight() * UIParent:GetEffectiveScale() / self:GetEffectiveScale()
+            l = math.max(0, math.min(l, sw - self:GetWidth()))
+            t = math.max(self:GetHeight(), math.min(t, sh))
+            self:ClearAllPoints()
+            self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l, t)
         end
     end
+    quickPanel:SetMovable(true)
+    quickPanel:RegisterForDrag("LeftButton")
+    quickPanel:SetScript("OnDragStart", quickPanel.StartMoving)
+    quickPanel:SetScript("OnDragStop", quickPanel.StopMovingOrSizing)
 
     -- (mockups\quick-options.html, round 2: only what you switch as you play;
     -- set-once switches stay in the settings window)
@@ -5177,7 +6226,7 @@ local function BuildQuickPanel(map)
     end
 
     -- the map: a window, clear view, or over the minimap (as on Start here)
-    local top = Column(quickPanel, 10, -4, FULL)
+    local top = Column(quickPanel, 10, -22, FULL)   -- (under the frame's title bar)
     top:Header("The map")
     local roles, prev = {}, nil
     for _, r in ipairs({ { "window", "Window" }, { "clear", "Clear view" }, { "dock", "Minimap" } }) do
@@ -5186,17 +6235,16 @@ local function BuildQuickPanel(map)
         if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0) else b:SetPoint("TOPLEFT", 12, top.y - 2) end
         b:SetText(r[2])
         b:SetScript("OnClick", function()
+            -- (the panel stays where it is on the screen: these buttons are under the pointer)
             SetMapRole(r[1])
             ns.RefreshControls()
-            -- (docking moves the map: the panel follows once it has)
-            C_Timer.After(0.2, function() if quickPanel:IsShown() then Place(quickPanel) end end)
         end)
         b.role = r[1]
         roles[#roles + 1] = b
         prev = b
     end
-    Tip(roles[1], "The map", "Window: the Battlefield Map where you put it. Clear view: the map without its frame, laid over the world. Minimap: it replaces your minimap, and every map feature still works there.")
-    for i = 2, 3 do Tip(roles[i], "The map", "Window: the Battlefield Map where you put it. Clear view: the map without its frame, laid over the world. Minimap: it replaces your minimap, and every map feature still works there.") end
+    Tip(roles[1], "The map", "Window: a map you can move. Clear view: no frame, just the map over the world. Minimap: the map replaces your minimap.")
+    for i = 2, 3 do Tip(roles[i], "The map", "Window: a map you can move. Clear view: no frame, just the map over the world. Minimap: the map replaces your minimap.") end
     top.y = top.y - 30
 
     -- the preset you're on, and a way to the presets (Start here)
@@ -5208,7 +6256,7 @@ local function BuildQuickPanel(map)
     local presets = RedButton(quickPanel)
     presets:SetSize(96, 22)
     presets:SetPoint("RIGHT", quickPanel, "TOPLEFT", 10 + FULL, top.y - 11)
-    presets:SetText("Presets...")
+    presets:SetText("Presets")
     presets:SetScript("OnClick", function()
         quickPanel:Hide()
         ns.ToggleOptions("overview")
@@ -5321,11 +6369,16 @@ local function BuildQuickPanel(map)
     a:Tip("Where you pick quests up and hand them in.")
     SettingsMenu(a.last, "questie", "shown")
     Context(a.last.text, { "questie", "turnins" })
-    CycleRow(a, "Quest objectives", OBJECTIVES, "Where your quests' monsters and items are. Questie's: in its icons, where it's installed. Waymark's: in its own. Yours: Waymark leaves them alone, and the game's own show.",
+    CycleRow(a, "Objectives", OBJECTIVES, "Where your quest mobs and items are. Questie's: Questie's icons. Waymark's: Waymark's own. Yours: Waymark shows none, and the game's own show.",
         { "spots" }, { "spots", "shown" })
     a:CheckWith("Low-level (grey) quests", ns.GetTrivialQuests, ns.SetTrivialQuests)
     a:Tip("Quest givers far below your level.")
     SettingsMenu(a.last, "questie", "color")
+    if ns.ToldNow then
+        a:Check("As told", "told", "on")
+        a:Tip("A small panel with what the quest giver said. The map marks only the places they named.")
+        SettingsMenu(a.last, "told", "on")
+    end
     Layer(a, "Quest tracker", "tracker")
     Context(a.last.text, { "tracker" })
     a:Header("Places")
@@ -5338,36 +6391,79 @@ local function BuildQuickPanel(map)
         Context(a.last.text, { "gather" })
         a:Tip("Herbs, ore, treasure and fishing spots.")
     end
-    a:Header("On the map")
-    Layer(a, "Unexplored areas", "explore")
-    Context(a.last.text, { "explore" })
-    Layer(a, "Close-up detail", "detail")
+    -- (the way to the buttons' own settings from the buttons: their tab is the fifth under How it looks,
+    -- and a player who wants one off the map starts here, not there. The user, 2026-11-15: "a bit hidden?")
+    -- (the button itself: the panel's foot, where Close was. Here, what nothing said: every row's
+    -- right-click opens its own settings)
+    a.y = a.y - 6
+    a:Note("Right-click a row: its settings.")
+    -- The right column (the settings pass, 2026-11-14): how the map is drawn, then what it does by itself,
+    -- in the words of the settings' own page for that ("What the map does by itself"), so the player who
+    -- just saw the map do something finds its switch one click from the gear. It had three ticks before.
+    local b = Column(quickPanel, 10 + W + 6, top.y, W)
+    b:Header("On the map")
+    if ns.ReliefSetting then
+        b:Check("The lie of the land", "relief", "on")
+        b:Tip("Hills, valleys and shadows from the game's real terrain.")
+        SettingsMenu(b.last, "relief", "on")
+    end
+    Layer(b, "Unexplored land", "explore")
+    Context(b.last.text, { "explore" })
+    Layer(b, "Close-up detail", "detail")
     if ns.SetupFishing then
-        Layer(a, "Fisherman's mode", "fishing")
-        a:Tip("The water washed by your fishing there: sage, every fish stays on; ochre, some get away; red, most do.")
+        Layer(b, "Fisherman's mode", "fishing")
+        b:Tip("The water washed by your fishing there: sage, every fish stays on; ochre, some get away; red, most do.")
     end
 
     -- what moves, switches or hides the map on its own: quick to turn off when
     -- it acts up or doesn't suit the moment
-    local b = Column(quickPanel, 10 + W + 6, top.y, W)
-    b:Header("Automatic")
-    b:Check("Keep centred on me", "mapFrame", "center")
+    b:Header("By itself")
+    b:Check("Follows you", "mapFrame", "center")
     SettingsMenu(b.last, "mapFrame", "center")
-    b:Check("Fade while I move", "fade", "moving")
+    b:Check("Changes shape per zone", "mapFrame", "autoWidth")
+    b:Tip("A tall zone gets a taller map, a wide one a wider map, at about your size.")
+    SettingsMenu(b.last, "mapFrame", "autoWidth")
+    b:Check("Zooms in on towns", "townView", "zoom")
+    SettingsMenu(b.last, "townView", "zoom")
+    b:Check("Fades while you move", "fade", "moving")
     SettingsMenu(b.last, "fade", "moving")
-    b:Check("Fade in combat", "fade", "combat")
+    b:Check("Fades in combat", "fade", "combat")
     SettingsMenu(b.last, "fade", "combat")
+    b:Check("Folds in combat", "collapse", "combat")
+    SettingsMenu(b.last, "collapse", "combat")
+    b:Button("All it does by itself", function()
+        quickPanel:Hide()
+        ns.ToggleOptions("acts")
+    end)
 
     local bottom = math.min(a.y, b.y)
+    -- (the red X in the frame's corner closes it, as on the settings window; Close's place at the foot
+    -- goes to something of use. The user, 2026-11-16: "we can replace close with something useful")
+    local x = CreateFrame("Button", nil, quickPanel)
+    x:SetSize(24, 24)
+    x:SetPoint("TOPRIGHT", ns.FOREVER and -2 or -5, ns.FOREVER and 4 or 1)
+    if ns.UsingSubstitutes() then
+        x:SetSize(21, 21)
+        x:SetPoint("TOPRIGHT", -2, 3)
+    end
+    x:SetFrameLevel(quickPanel:GetFrameLevel() + 5)
+    StateArt(x, "Normal", "redbutton-exit-c60-2x", "Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
+    StateArt(x, "Pushed", "redbutton-exit-pressed-c60-2x", "Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
+    local xGlow = StateArt(x, "Highlight", "redbutton-highlight-c60-2x", "Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
+    if xGlow then xGlow:SetBlendMode("ADD") end
+    x:SetScript("OnClick", function() quickPanel:Hide() end)
     local close = RedButton(quickPanel)
-    close:SetSize(90, 22)
+    close:SetSize(160, 22)
     close:SetPoint("TOPLEFT", 12, bottom - 6)
-    close:SetText("Close")
-    close:SetScript("OnClick", function() quickPanel:Hide() end)
+    close:SetText("Which buttons show")
+    close:SetScript("OnClick", function()
+        quickPanel:Hide()
+        ns.ToggleOptions("controls")
+    end)
     local more = RedButton(quickPanel)
     more:SetSize(120, 22)
     more:SetPoint("TOPRIGHT", quickPanel, "TOPLEFT", 10 + FULL, bottom - 6)
-    more:SetText("Settings...")
+    more:SetText("Settings")
     more:SetScript("OnClick", function()
         quickPanel:Hide()
         ns.ToggleOptions()
@@ -5406,7 +6502,7 @@ local TOGGLES = {
     { "dungeons",  "shown",    "dungeon",                                        "Dungeon entrances" },
     { "detail",    "shown",    "cursor_inspect_128",                             "Close-up detail" },
     { "detailAll", "always",   "Interface\\WorldMap\\UI-World-Icon",             "Full detail at every zoom", "detail" },
-    { "zoom",      "center",   "Interface\\Minimap\\UI-Minimap-ZoomInButton-Up",  "Keep centered", "mapFrame" },  -- (id "zoom" kept for your saved order; Shift-click: auto-zoom)
+    { "zoom",      "center",   "Interface\\Minimap\\UI-Minimap-ZoomInButton-Up",  "Follows you", "mapFrame" },  -- (id "zoom" kept for your saved order; Shift-click: auto-zoom)
     { "ink",       "shown",    "cursor_palette_128",                             "Your ink on the world map" },
     -- (not a layer: the quill taken up or put down, lit while it's in hand; Notebook.lua)
     { "quill",     "shown",    ns.MEDIA .. "Quill",                              "The quill (write and draw)", "ink" },
@@ -5440,6 +6536,13 @@ end
 -- for the settings window's headings (col:Header's icon), with "town" and
 -- "city" for the town view button and City view (the player's faction's crest).
 local VIEW_ICONS = { town = "poi-town", dock = "Interface\\Icons\\INV_Misc_Map_01" }
+-- the icon of the map button that switches a setting (nil: it has none)
+function ns.LayerIcon(group, key)
+    for _, t in ipairs(TOGGLES) do
+        if (t[5] or t[1]) == group and t[2] == key then return t[3] end
+    end
+end
+
 function ns.ToggleIcon(id)
     if id == "city" then return UnitFactionGroup("player") == "Horde" and "poi-horde" or "poi-alliance" end
     if VIEW_ICONS[id] then return VIEW_ICONS[id] end
@@ -5828,7 +6931,7 @@ local function GroupItems(name)
     local items = {}
     if name == "Trainers" then
         items[#items + 1] = { "Profession trainers", PROFESSION_ICON, "professions" }
-        items[#items + 1] = { "   only my professions", nil, nil, "myProfessionsOnly" }
+        items[#items + 1] = { "   only your professions", nil, nil, "myProfessionsOnly" }
         for _, t in ipairs(types.services) do
             if TF_TRAINERS[t.key] then items[#items + 1] = { t.label, t.icon, t.key } end
         end
@@ -6054,7 +7157,9 @@ local function BuildToggleStrip(map)
         -- (clear view: only with the mouse on the map, ClearView.lua)
         local cv = ns.ClearViewButtonAlpha and ns.db.clearView.on and ns.db.clearView.buttons == "hover"
                    and ns.ClearViewButtonAlpha() or 1
-        local a = alpha * ns.FrameAlpha() * cv
+        -- (not the border's and header's opacity any more: the buttons have a fading of their own, "Fade when
+        -- the mouse isn't on the map", and two dimmers on one button was a setting twice. 2026-11-15)
+        local a = alpha * cv
         if a ~= shown then
             shown = a
             toggleStrip:SetAlpha(a)
@@ -6095,8 +7200,13 @@ function ns.ApplyButtonLevels()
     local map = BattlefieldMapFrame
     if not map then return end
     local level = ns.ButtonLevel(map)
-    -- (the border's strata, not the map's: the border is the higher one, and the X under it went)
-    local strata = not (ns.Docked and ns.Docked()) and (map.BorderFrame or map):GetFrameStrata()
+    -- (the border's strata, not the map's: the border is the higher one, and the X under it went.
+    -- Docked too, the higher of the two: the map is raised over the minimap there, and the border
+    -- (HIGH, takes the mouse) lay over a strip moved out past the map's left edge, the user 2026-11-14)
+    local ORDER = { BACKGROUND = 1, LOW = 2, MEDIUM = 3, HIGH = 4, DIALOG = 5, FULLSCREEN = 6,
+                    FULLSCREEN_DIALOG = 7, TOOLTIP = 8 }
+    local strata = (map.BorderFrame or map):GetFrameStrata()
+    if (ORDER[map:GetFrameStrata()] or 0) > (ORDER[strata] or 0) then strata = map:GetFrameStrata() end
     local d = ns.debugFrames
     local close = map.BorderFrame and map.BorderFrame.CloseButton
     for _, f in ipairs({ close, ns.bigMapButton, quickButton, townButton, cityButton, dockButton,
@@ -6141,9 +7251,9 @@ local VIEW_BUTTONS = {
              active = function() return ns.Docked and ns.Docked() end,
              status = function()
                  if ns.db.dock.on then
-                     return (ns.Docked and ns.Docked()) and "Docked over the minimap" or "Docks when the fight ends"
+                     return (ns.Docked and ns.Docked()) and "Docked over the minimap" or "Docks when combat ends"
                  end
-                 return (ns.Docked and ns.Docked()) and "Undocks when the fight ends" or "Not docked"
+                 return (ns.Docked and ns.Docked()) and "Undocks when combat ends" or "Not docked"
              end },
 }
 local function BuildViewButton(map, id)

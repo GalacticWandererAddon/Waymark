@@ -253,7 +253,7 @@ local function Hover()
         local n = 0
         for _, d in ipairs(drawn) do if d[4] == hit[4] then n = n + 1 end end
         GameTooltip:AddLine(row[1], 1, 1, 1)
-        GameTooltip:AddLine(n > 1 and string.format("May stand at one of %d spots here", n) or "May stand here",
+        GameTooltip:AddLine(n > 1 and string.format("May spawn in one of these %d spots", n) or "May spawn here",
             0.6, 0.6, 0.6)
         if pathFor then ClearPath() pathFor = nil end
     else
@@ -261,7 +261,7 @@ local function Hover()
         GameTooltip:AddDoubleLine(row[1], hit[3] == "elite" and "Rare Elite" or "Rare", 1, 1, 1, 0.6, 0.6, 0.6)
         -- (its drops only while Shift is held, "(Hold Shift)" until then, as our other tooltips)
         local drops, chances = row[7] or {}, row[8] or {}
-        GameTooltip:AddDoubleLine("Level " .. level .. (row[6] and ", walks a path" or "")
+        GameTooltip:AddDoubleLine("Level " .. level .. (row[6] and ", patrols" or "")
             .. (hit[6] > 1 and string.format(", one of %d spots", hit[6]) or ""),
             (drops[1] and not shift) and "(Hold Shift)" or "", 0.6, 0.6, 0.6, 0.43, 0.43, 0.43)
         if drops[1] and shift then GameTooltip:AddLine(" ") end

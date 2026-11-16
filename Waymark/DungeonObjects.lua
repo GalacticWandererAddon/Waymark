@@ -10,6 +10,10 @@ local _, ns = ...
 --  dungeon.objectScale: the icons' size.
 --  dungeon.allChests / allQuests: also the lesser chests (only sometimes there) and the quest things
 --                    found all over a floor; patrols: the monsters that walk, their way in dots.
+--  Only the QUEST pins show unless asked for (the user, 2026-11-14: "I want only Q pins showing on default"):
+--  keyDoors (locked doors), chests, npcs (quest givers, trainers, vendors) and otherThings (a forge, a
+--  mailbox, a rune, a machine) are each a switch that is off until ticked, as levers and fight doors were.
+--  They have no line in the defaults or the presets: unset is off.
 -- The lesser ones (a door that opens with the fight, a chest that's only sometimes there) are
 -- smaller and fainter; several of the same thing close together are one icon with a count;
 -- an icon that would sit on a boss marker moves aside.
@@ -32,6 +36,9 @@ local DOT_GAP = 9                                              -- ...px between 
 local SIZE = 24                                                -- on the 1002 x 668 picture
 local MINOR = 0.72                                             -- the lesser ones' size and...
 local MINOR_ALPHA = 0.7                                        -- ...strength
+-- the round pins at rest: a little fainter and a touch off their full colour, so they sit in the map; full
+-- under the pointer (the user, 2026-11-14: "they stand out more than they need to". The pins, never the ink)
+local REST_ALPHA, REST_TINT = 0.74, { 0.88, 0.85, 0.78 }
 local BOSS_CLEAR = 20                                          -- px kept between an icon and a boss marker
 
 local layer, sig
@@ -55,16 +62,22 @@ local function Pin(i)
     p.count:SetTextColor(1, 0.9, 0.6)
     p:EnableMouse(true)
     p:SetScript("OnEnter", function(self)
+        self.tex:SetAlpha(self.full or 1)
+        self.tex:SetVertexColor(1, 1, 1)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine(self.name .. (self.n and ("  (" .. self.n .. ")") or ""), 1, 0.82, 0.3)
         for line in (self.note or ""):gmatch("[^\n]+") do GameTooltip:AddLine(line, 1, 1, 1, true) end
-        if self.hidden then GameTooltip:AddLine("Hidden: shown only while the quill's out.", 0.6, 0.8, 1, true) end
+        if self.hidden then GameTooltip:AddLine("Hidden. Only shows while the quill is out.", 0.6, 0.8, 1, true) end
         local quill = ns.QuillOut()
         ns.Hints({ { quill and "Drag" or "Ctrl-drag", "move it" },
                    { "Right-click", self.hidden and "show it again" or "put it back, or hide it" } })
         GameTooltip:Show()
     end)
-    p:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    p:SetScript("OnLeave", function(self)
+        self.tex:SetAlpha((self.full or 1) * REST_ALPHA)
+        self.tex:SetVertexColor(REST_TINT[1], REST_TINT[2], REST_TINT[3])
+        GameTooltip:Hide()
+    end)
     -- (Controls.lua) picked up with Ctrl, or the quill out; right-click: its menu, quill or not;
     -- any other press is the map's under it (the quill's catcher, else the dungeon map: a drag pans)
     p:SetScript("OnMouseDown", function(self, button)
@@ -99,7 +112,7 @@ local function Pin(i)
                 items[#items + 1] = { "show it again", function() Hide(false) end }
             else
                 if spots[fk] and spots[fk][k] then
-                    items[#items + 1] = { "back to its place", function() spots[fk][k] = nil; sig = nil end }
+                    items[#items + 1] = { "reset position", function() spots[fk][k] = nil; sig = nil end }
                 end
                 items[#items + 1] = { "hide this pin", function() Hide(true) end }
             end
@@ -169,7 +182,9 @@ local function Shown(c, list, patrols)
     for _, o in ipairs(list or {}) do
         local minor = Minor(o)
         local k = o[1]
-        if (k == "chest" and minor and not c.allChests) or ((k == "quest" or k == "mob") and minor and not c.allQuests)
+        if (k == "locked" and not c.keyDoors) or (k == "chest" and not c.chests) or (k == "npc" and not c.npcs)
+           or ((k == "postbox" or k == "fire" or k == "rune" or k == "gear") and not c.otherThings)
+           or (k == "chest" and minor and not c.allChests) or ((k == "quest" or k == "mob") and minor and not c.allQuests)
            or k == "danger" or (k == "patrol" and c.patrols == false)
            or (k == "switch" and not c.switches) or (k == "event" and not c.fightDoors) then  -- (off at first: start small, the user)  -- ("danger": easy pulls, gone)
             -- (left out)
@@ -253,7 +268,7 @@ local function Update()
     local writing = ns.Quill and ns.Quill() and true or false
     for _, p in ipairs(pins) do if p.dragging then return end end  -- (not while one's being moved)
     local s = key .. ":" .. mode .. ":" .. scale .. ":" .. tostring(writing) .. ":" .. tostring(c.allChests) .. tostring(c.allQuests)
-              .. tostring(c.switches) .. tostring(c.fightDoors)
+              .. tostring(c.switches) .. tostring(c.fightDoors) .. tostring(c.keyDoors) .. tostring(c.chests) .. tostring(c.npcs) .. tostring(c.otherThings)
               .. tostring(c.patrols)
     if s ~= sig then
         sig = s
@@ -283,7 +298,10 @@ local function Update()
             p.tex:SetTexCoord(cell / CELLS, (cell + 1) / CELLS, 0, 1)
             p.hidden = hidden[p.key] and true or nil
             p.tex:SetShown(mode == "icons" or writing)
-            p.tex:SetAlpha((minor and MINOR_ALPHA or 1) * ((mode ~= "icons") and 0.5 or 1) * (p.hidden and 0.35 or 1))
+            p.full = (minor and MINOR_ALPHA or 1) * ((mode ~= "icons") and 0.5 or 1) * (p.hidden and 0.35 or 1)
+            local over = p.IsMouseOver and p:IsMouseOver()
+            p.tex:SetAlpha(p.full * (over and 1 or REST_ALPHA))
+            if over then p.tex:SetVertexColor(1, 1, 1) else p.tex:SetVertexColor(REST_TINT[1], REST_TINT[2], REST_TINT[3]) end
             p.count:SetText(o[6] and o[6] > 1 and o[6] or "")
             p.count:SetShown(mode == "icons" or writing)
             p.name, p.note, p.n = o[4], o[5], o[6]

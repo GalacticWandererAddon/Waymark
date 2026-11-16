@@ -69,9 +69,13 @@ local function PlaceTab(map)
     tab:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", map:GetLeft() * s, map:GetTop() * s)
 end
 
+-- pos.w: the width (UIParent units) pos.x was saved for; pos.right: the map stood in the right half
+-- of the screen, so a change of shape keeps its right edge (SetShape). Both are saved: after a load
+-- the frame has the game's own size and the screen's size isn't final, so neither can be read then.
 local function SavePosition(map)
     local x, y = TopLeftUI(map)
-    Cfg().pos = { kind = "topleft", x = x, y = y }
+    local w = map:GetWidth() * map:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    Cfg().pos = { kind = "topleft", x = x, y = y, w = w, right = x + w / 2 > UIParent:GetWidth() / 2 }
 end
 
 local function RestorePosition(map)
@@ -192,6 +196,7 @@ end
 -- Centering ---------------------------------------------------------------
 
 local pauseUntil = 0  -- a short settle after the view is restored
+local ribbon          -- the map as a band round you (Collapse.lua's ribbon; ns.MapRibbon below)
 local anim            -- an auto-zoom animation in progress (Zoom section)
 
 -- After you pan or zoom yourself the view stays where you put it until you
@@ -277,7 +282,7 @@ end
 
 -- The world map always opens on its continents, even with the map kept on you
 local function Follows(sc)
-    return Cfg().center and not IsWorld(sc.mapID)
+    return (Cfg().center or ribbon) and not IsWorld(sc.mapID)
 end
 
 -- The scale at which the zone's own bounds (ns.ZoneBounds) fill the view, and
@@ -818,7 +823,7 @@ local classicApplied = false
 local function ApplyArrowTexture(gm)
     if not (ns.db.cave and ns.db.cave.classicArrow) then
         if classicApplied then
-            ns.Log("The zone map's arrow goes back to the game's own after a /reload.")
+            ns.Log("The zone map's arrow changes back after a /reload.")
             classicApplied = false
         end
         return
@@ -1220,10 +1225,17 @@ local function BigSize(map)
     return FitScreen(map, c.bigWidth, c.bigHeight, 1)
 end
 
+local RIBBON_MIN = 40  -- the band's least height, map units
+
 local function WantedSize(map)
     if ns.DockedSize then
         local w, h = ns.DockedSize(map)
         if w then return w, h end
+    end
+    if ribbon then
+        local w, h
+        if Cfg().big then w, h = BigSize(map) else w, h = NormalSize(map) end
+        return w, math.max(RIBBON_MIN, h * Clamp(ns.db.collapse.ribbonHeight or 0.25, 0.1, 0.6))
     end
     if Cfg().big then return BigSize(map) end
     return NormalSize(map)
@@ -1262,6 +1274,7 @@ local function RefitZoom(map)
 end
 
 local growCorner  -- { right, bottom }: the edges kept still while the big map glides
+local settleAt    -- GetTime() from which the screen's size is taken as final (SetupMapControls)
 
 -- a moved map in the right half of the screen keeps its right edge (gliding
 -- to or from big: the edges in growCorner)
@@ -1270,23 +1283,39 @@ local function SetShape(map, w, h)
     if math.abs(oldW - w) < 0.5 and math.abs(oldH - h) < 0.5 then return end
     local pos = Cfg().pos
     local moved = pos and pos.kind == "topleft"
+    local docked = ns.Docked and ns.Docked()
+    -- (the first seconds after a load the screen's size isn't final: nothing about the place is
+    -- decided or written down from it then)
+    local settled = settleAt and GetTime() > settleAt
     local keepRight, keepBottom
     if growCorner then
         keepRight, keepBottom = growCorner[1], growCorner[2]
-    else
-        keepRight = moved
-            and map:GetCenter() * map:GetEffectiveScale() > UIParent:GetWidth() * UIParent:GetEffectiveScale() / 2
+    elseif moved and not docked then
+        -- (from the saved place, not from where the frame is: undocking shapes the map while it still
+        -- lies on the docked spot, and a map of the left half was marked as the right half's)
+        if pos.right == nil and settled then
+            local sw = pos.w or oldW * map:GetEffectiveScale() / UIParent:GetEffectiveScale()
+            pos.right = pos.x + sw / 2 > UIParent:GetWidth() / 2
+        end
+        -- (not under the corner grip: it's the bottom-right corner, so the left edge stays and the
+        -- corner follows the cursor. With the right edge kept the drag went the wrong way, as if the
+        -- grip were still in the docked map's left corner; the user, 2026-11-14)
+        keepRight = pos.right and not shapeDragging
     end
     map:SetSize(w, h)
-    -- docked: centred on the minimap; undocking: your saved place as it was,
-    -- not shifted by the square's size (Dock.lua)
-    if ns.DockShaping and ns.DockShaping(map) then return end
-    if moved and (keepRight or keepBottom) then
-        local k = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
-        if keepRight then pos.x = pos.x + (oldW - w) * k end
-        if keepBottom then pos.y = pos.y + (h - oldH) * k end
-        RestorePosition(map)
-    end
+    -- docked: centred on the minimap (Dock.lua); your own place and its width stay as saved
+    if ns.DockShaping and ns.DockShaping(map) and docked then return end
+    if not moved or (ns.Docked and ns.Docked()) then return end
+    -- The right edge is kept from the width the place was saved for (pos.w), never from the width
+    -- the frame happened to have: after a load that's the game's own size, after undocking the
+    -- square's, and the difference went into the saved place at every /reload (a map in the right
+    -- half walked sideways, a narrow one to the right; the user, 2026-11-14). A place saved without
+    -- its width keeps its left edge this once.
+    local k = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    if keepRight and pos.w then pos.x = pos.x + pos.w - w * k end
+    if pos.w or settled then pos.w = w * k end
+    if keepBottom then pos.y = pos.y + (h - oldH) * k end
+    if keepRight or keepBottom then RestorePosition(map) end
     -- (the zoom is refitted from the scroll area's OnSizeChanged: its size only
     -- updates on the next layout pass, so reading it here gets the old one)
 end
@@ -1325,6 +1354,66 @@ local function UpdateShape(instant, force, time)
     end)
 end
 ns.UpdateMapShape = UpdateShape
+
+-- The ribbon (Collapse.lua): folded, the map is a band of the ground round you.
+-- The frame keeps its width and goes down to a share of its height (WantedSize),
+-- the view goes closer (collapse.ribbonZoom times the zone fully out, or your own
+-- zoom if that was closer) and follows you whatever Keep me centred says. Opening
+-- puts the size, the zoom and (not following) the spot back as they were.
+-- false: no ribbon here (docked, browsing another map, no place for you on this
+-- map), and the caller folds the map away as before.
+local function GoView(map, s, x, y)
+    if map:IsVisible() then
+        ns.GlideView(map, s, x, y, SHAPE_TIME)
+    else
+        pcall(ApplyView, map.ScrollContainer, s, x, y)
+    end
+end
+
+function ns.MapRibbon(on)
+    local map = BattlefieldMapFrame
+    local sc = map and map.ScrollContainer
+    if not (sc and defaultW) then return false end
+    if on then
+        if ribbon then return true end
+        if (ns.Docked and ns.Docked()) or (ns.Browsing and ns.Browsing()) then return false end
+        local px, py = PlayerPos(map)
+        if not px then return false end
+        local s = sc.targetScale or sc:GetCanvasScale()
+        local lo = sc.zoomLevels and sc.zoomLevels[1] and sc.zoomLevels[1].scale
+        if not (s and s > 0) then return false end
+        local x, y = ViewCenter(sc)
+        ribbon = { scale = s, x = x, y = y, held = heldAt, lo = lo or s }
+        heldAt = nil
+        GoView(map, math.max(s, ribbon.lo * Clamp(ns.db.collapse.ribbonZoom or 2.5, 1, 8)), px, py)
+        UpdateShape(not map:IsVisible(), true)
+        return true
+    end
+    local r = ribbon
+    if not r then return false end
+    ribbon = nil
+    local x, y = r.x, r.y
+    if Cfg().center then
+        local px, py = PlayerPos(map)
+        if px then x, y = px, py end
+    end
+    heldAt = r.held
+    GoView(map, r.scale, x, y)
+    UpdateShape(not map:IsVisible(), true)
+    return true
+end
+
+function ns.MapIsRibbon() return ribbon ~= nil end
+
+-- (collapse.ribbonHeight or ribbonZoom changed while it's a ribbon)
+function ns.MapRibbonRefresh()
+    local map = BattlefieldMapFrame
+    local sc = map and map.ScrollContainer
+    if not (ribbon and sc) then return end
+    UpdateShape(false, true)
+    local px, py = PlayerPos(map)
+    if px then GoView(map, math.max(ribbon.scale, ribbon.lo * Clamp(ns.db.collapse.ribbonZoom or 2.5, 1, 8)), px, py) end
+end
 
 -- for /bfi check: the map's shape and zoom, to see why a view doesn't fill
 function ns.ViewInfo()
@@ -1415,6 +1504,9 @@ function ns.SetMapSize(w, h, dragging)
         StopGlide()
         ns.Safe("MapControls SetShape", SetShape, map, w, h)
     else
+        -- (let go: which half of the screen it stands in now, from the place and the width just dragged)
+        local pos = c.pos
+        if pos and pos.kind == "topleft" and pos.w then pos.right = pos.x + pos.w / 2 > UIParent:GetWidth() / 2 end
         UpdateShape()
     end
 end
@@ -1832,6 +1924,7 @@ end
 
 function ns.SetupMapControls(map)
     defaultW, defaultH = map:GetSize()
+    settleAt = GetTime() + 10
     SetupMover(map)
     RestorePosition(map)  -- (also puts the tab in its holder if hidden: PlaceTab)
     map:HookScript("OnShow", function()
@@ -1918,7 +2011,7 @@ function ns.SetupMapControls(map)
             -- (Keep centred alone decides: docked and in town it used to follow regardless, so the
             -- button did nothing there. On the minimap face Dock.lua keeps it on you itself, and
             -- the two pulling a little differently made it flicker)
-            if Cfg().center and not (ns.Browsing and ns.Browsing()) and not (ns.DockMinimapFace and ns.DockMinimapFace()) then
+            if (Cfg().center or ribbon) and not (ns.Browsing and ns.Browsing()) and not (ns.DockMinimapFace and ns.DockMinimapFace()) then
                 ns.Safe("MapControls CenterOnPlayer", CenterOnPlayer, map)
             end
             sinceTip = sinceTip + dt

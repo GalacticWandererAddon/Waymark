@@ -399,7 +399,7 @@ function BFIGatherPinMixin:OnEnter()
         local line = s.seen == 1 and "You gathered here once" or ("You gathered here " .. s.seen .. " times")
         GameTooltip:AddLine(s.last and (line .. ", last " .. WhenSeen(s.last)) or line, 0.75, 0.75, 0.8)
     else
-        GameTooltip:AddLine("Not gathered by you yet", 0.6, 0.6, 0.65)
+        GameTooltip:AddLine("You haven't gathered this node yet.", 0.6, 0.6, 0.65)
     end
     ns.PinHints()
     GameTooltip:Show()

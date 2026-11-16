@@ -17,6 +17,37 @@ function ns.Known(v)
     return v
 end
 
+-- Where a unit (you, if none is named) stands in world yards: x (larger is north), y (larger is west),
+-- the continent's map id, and the height where the game gives one. nil inside an instance and wherever the
+-- game gives no place. The order is UnitPosition's own, as documented and as C_Map's world calls take it:
+-- a constant, never a guess. The one copy: Cave.lua, the Horizon, Landmarks and Still warm all ask here.
+function ns.WorldPos(unit)
+    if IsInInstance and IsInInstance() then return end
+    local ok, x, y, z, cont = pcall(UnitPosition, unit or "player")
+    if not ok then return end
+    x, y, cont = ns.Known(x), ns.Known(y), ns.Known(cont)
+    if not (type(x) == "number" and type(y) == "number" and type(cont) == "number") then return end
+    z = ns.Known(z)
+    return x, y, cont, type(z) == "number" and z or nil
+end
+
+-- A world point's place on a map: 0..1 across, 0..1 down (outside that: off the map's sheet), or nil
+-- where the game can't say. cont: the continent's map id; yours if left out.
+function ns.WorldToMap(mapID, x, y, cont)
+    if not (mapID and type(x) == "number" and type(y) == "number") then return end
+    if not (C_Map and C_Map.GetMapPosFromWorldPos and CreateVector2D) then return end
+    if not cont then
+        local _, _, c = ns.WorldPos()
+        cont = c
+    end
+    if not cont then return end
+    local ok, _, pos = pcall(C_Map.GetMapPosFromWorldPos, cont, CreateVector2D(x, y), mapID)
+    if not (ok and pos) then return end
+    local mx, my = pos:GetXY()
+    if type(mx) ~= "number" or type(my) ~= "number" then return end
+    return mx, my
+end
+
 -- Calls live Forever took away from the globals. Each file that uses one starts with
 -- `local GetItemInfo = GetItemInfo or ns.GetItemInfo`. (Not put back as globals: that
 -- would be ours in the game's own code. /waymark check lists any other that goes.)

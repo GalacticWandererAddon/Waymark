@@ -108,9 +108,9 @@ function BFIQuestPOIPinMixin:OnMouseUp(button)
         local items = {}
         if ns.OpenQuest then items[#items + 1] = { "quest details", function() ns.OpenQuest(id) end } end
         if ns.ToggleFocus then
-            items[#items + 1] = { ns.IsFocused and ns.IsFocused(id) and "out of focus" or "focus quest", function() ns.ToggleFocus(id) end }
+            items[#items + 1] = { ns.IsFocused and ns.IsFocused(id) and "unfocus quest" or "focus quest", function() ns.ToggleFocus(id) end }
         end
-        if ns.ToggleQuestGlow then items[#items + 1] = { "its spots lit (again: off)", function() ns.ToggleQuestGlow(id) end } end
+        if ns.ToggleQuestGlow then items[#items + 1] = { "highlight its spots on/off", function() ns.ToggleQuestGlow(id) end } end
         if #items > 0 then ns.QuillMenu(items) end
     end
 end

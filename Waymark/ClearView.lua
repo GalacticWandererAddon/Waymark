@@ -89,11 +89,15 @@ ns.clearViewCut = nil  -- (what's done, for /bfi check)
 -- for a dungeon floor, ns.CutName); false: none for this client
 local CUTS = ns.MEDIA .. "ZoneCut\\"
 function ns.CutEdition() return ns.MapEdition() end
--- maps whose outline isn't used (the user: Stormwind's own map uncut)
+-- maps whose outline isn't used (the user: Stormwind's own map uncut. 2026-11-14, their reason: that
+-- outline was made on Classic Era's art and Forever's differs. Forever has one of its own now, made on
+-- its art (tools\zone_cut_city_hand.py), so there it is used; Classic Era stays as it was)
 local NO_CUT = { [1453] = true }
+-- zone maps the game does not file as zones (Forever's Darkspear Islands is an "orphan"): cut like a zone
+local ZONE_LIKE = { [2524] = true }
 function ns.CutFile(name)
-    if NO_CUT[name] then return false end
     local edition = ns.CutEdition()
+    if NO_CUT[name] and edition ~= "Forever" then return false end
     local list = ns.ZoneCut and ns.ZoneCut[edition]
     return name and list and list[name] and (CUTS .. edition .. "\\" .. name) or false
 end
@@ -149,7 +153,7 @@ local function ZoneShape(id)
     if not info then return nil end
     if ns.CITY_MAPS and ns.CITY_MAPS[id] then
         if not (Cfg().cities or Editing()) then return nil end
-    elseif not (Enum.UIMapType and info.mapType == Enum.UIMapType.Zone) then
+    elseif not (ZONE_LIKE[id] or (Enum.UIMapType and info.mapType == Enum.UIMapType.Zone)) then
         return nil
     end
     return ViewFile(id)
@@ -204,10 +208,16 @@ local function Cut(map)
         end
         m:Show()
         EachTexture(f, function(r)
-            if masked[r] ~= m then
-                if masked[r] then r:RemoveMaskTexture(masked[r]) end
-                r:AddMaskTexture(m)
-                masked[r] = m
+            -- (A texture takes three masks at most. The pencil's own are cut to this outline already,
+            -- Pencil.lua's zMask, and its hatching carries three: ours on top was refused, and the error
+            -- stopped the cut halfway, the dungeon floor and the ghosts with it. Seen on the clean client
+            -- with Simple, 2026-11-16: "Texture already has the maximum number of mask textures (3)".
+            -- So: not on what is outlined already, and a refusal anywhere else skips that one texture.)
+            if r.zMask then
+                if masked[r] then r:RemoveMaskTexture(masked[r]) masked[r] = nil end
+            elseif masked[r] ~= m then
+                if masked[r] then r:RemoveMaskTexture(masked[r]) masked[r] = nil end
+                if pcall(r.AddMaskTexture, r, m) then masked[r] = m end
             end
             n = n + 1
         end)

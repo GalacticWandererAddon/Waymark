@@ -228,7 +228,7 @@ ns.DungeonBosses = {
 		["Meshlok the Harvester"] = { 1, 0.2426, 0.6357 },
 	},
 	[389] = { -- Ragefire Chasm
-		["Oggleflint"] = { 1, 0.6858, 0.6424 },
+		["Oggleflint"] = { 1, 0.5662, 0.3870 },
 		["Taragaman the Hungerer"] = { 1, 0.4068, 0.5768 },
 		["Jergosh the Invoker"] = { 1, 0.3435, 0.8154 },
 		["Bazzalan"] = { 1, 0.4170, 0.8670 },

@@ -142,7 +142,7 @@ end
 function ns.PinMenu(pin, items, title)
     items = items or {}
     if TomTom and TomTom.AddWaypoint and pin.normalizedX then
-        items[#items + 1] = { "a TomTom arrow to it", function() ns.PinArrow(pin, title) end }
+        items[#items + 1] = { "TomTom arrow here", function() ns.PinArrow(pin, title) end }
     end
     if #items > 0 and ns.QuillMenu then ns.QuillMenu(items) end
 end
@@ -911,21 +911,21 @@ function BFIQuestiePinMixin:OnMouseUp(button)
             items[#items + 1] = { "quest details", function() ns.OpenQuest(self.questId) end }
         end
         if self.bfiGroup == "spots" and self.questId and ns.ToggleFocus then
-            items[#items + 1] = { ns.IsFocused(self.questId) and "out of focus" or "focus quest", function() ns.ToggleFocus(self.questId) end }
+            items[#items + 1] = { ns.IsFocused(self.questId) and "unfocus quest" or "focus quest", function() ns.ToggleFocus(self.questId) end }
         end
         if self.bfiGroup == "spots" and self.questId and ns.ToggleQuestGlow then
-            items[#items + 1] = { "its spots lit (again: off)", function() ns.ToggleQuestGlow(self.questId) end }
+            items[#items + 1] = { "highlight its spots on/off", function() ns.ToggleQuestGlow(self.questId) end }
         end
         if self.bfiGroup == "questie" then
             local what = #quests == 1 and ("\"" .. (self.questName or "") .. "\"") or (#quests .. " quests")
             items[#items + 1] = { #quests == 1 and "hide this quest" or "hide these quests", function()
-                ns.Ask({ text = "Hide " .. what .. " from the map?", sub = "/waymark unhide shows them again",
+                ns.Ask({ text = "Hide " .. what .. " from the map?", sub = "Type /waymark unhide to show them again.",
                          ok = "Hide", cancel = "Keep them",
                          onAccept = function() if ns.HideQuests then ns.HideQuests(quests) end end })
             end }
         end
         if TomTom and TomTom.AddWaypoint and icon.x then
-            items[#items + 1] = { "a TomTom arrow to it", function() QuestArrow(self) end }
+            items[#items + 1] = { "TomTom arrow here", function() QuestArrow(self) end }
         end
         -- (the Lab's route, while it's on: this first, the rest planned from here)
         if ns.RouteGoTo and ns.RouteIsOn and ns.RouteIsOn() and self.questId then

@@ -176,10 +176,13 @@ function ns.DockPatchOff()
     for _, p in ipairs(h.points) do mm:SetPoint(p[1], p[2], p[3], p[4], p[5]) end
     -- (the game keeps drawing the picture at the patch's small size until a zoom change: the big map
     -- opened from the patch left a small minimap in the square's corner, the user 2026-11-08)
+    -- (size, then the docked shape's mask, then the redraw, as the dock does when it squares the minimap.
+    -- With the mask set after the redraw, a tall shape's picture stayed at the patch's size, a few
+    -- percent small and off to one side in its frame beside the big map, the user 2026-11-14)
     local resized = math.abs(mm:GetWidth() - h.w) > 0.5
     mm:SetSize(h.w, h.h)
-    if resized and ns.DockRedraw then ns.DockRedraw() end
     if ns.DockPatchMask then ns.DockPatchMask(false) end
+    if resized and ns.DockRedraw then ns.DockRedraw() end
     mm:Show()
     -- (going to the minimap side, the map stays under and the land off: put back and redone a moment
     -- later, the real minimap flashed up between)

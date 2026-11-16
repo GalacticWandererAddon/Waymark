@@ -1893,6 +1893,7 @@ end)
 --     (food, drink and ammo for your level: required level within 20 below yours)
 --   mailboxes: the objects called "Mailbox"
 local folk, folkState, folkLevel = {}, nil, nil
+local questieStock  -- [npc] = { item, ... } (BuildFolk)
 
 local FLAG_KEYS = {
     Repair = "REPAIR", Innkeeper = "INNKEEPER", ["Flight Master"] = "FLIGHT_MASTER",
@@ -2023,8 +2024,21 @@ local function BuildFolk()
         end
     end
     local function ForLevel(req) return req == 0 or (req <= level and req >= level - 20) end
+    -- (Forever: each vendor's items as QuestieDB knows them, for "what they sell" where our own list has
+    -- none; VendorList.lua asks ns.QuestieStock)
+    local ownSells = ns.FOREVER and (ns.VendorStock and ns.VendorStock.sells or {})
+    local stock = ownSells and {}
     for _, id in ipairs(lib.Item.GetAllIds() or {}) do
         local list = lib.Item.vendors(id)
+        if list and stock then
+            for _, v in ipairs(list) do
+                if not ownSells[v] then
+                    local l = stock[v]
+                    if not l then l = {} stock[v] = l end
+                    l[#l + 1] = id
+                end
+            end
+        end
         if list then
             local class, foodType, req = lib.Item.class(id), lib.Item.foodType(id), lib.Item.requiredLevel(id)
             if class == 6 then
@@ -2079,6 +2093,12 @@ local function BuildFolk()
         for v in pairs(set) do Put(key, v) end
     end
     folk.isVendor = nil
+    if stock then questieStock = stock end
+end
+
+-- a vendor's items by QuestieDB (Forever only, vendors our own list lacks; nil: none known or not built yet)
+function ns.QuestieStock(npc)
+    return questieStock and questieStock[npc]
 end
 
 local function EnsureFolk()

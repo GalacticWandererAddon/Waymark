@@ -36,6 +36,38 @@ function ns.Trail(text)
     e.t, e.text, e.n = now, text, 1
 end
 
+-- Of note: the few things a ticker would push out of the trail within a second (a command typed,
+-- a window of ours taking the keyboard, a fight, a new zone). The last 14, with who had the keyboard.
+local NOTES = 14
+local notes, noteHead = {}, 0
+local function Keyboard()
+    local f = GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus()
+    if not f then return "" end
+    local name = f.GetName and f:GetName() or ""
+    if name:find("^ChatFrame%d+EditBox") then return " (the chat box had the keyboard)" end
+    if name:find("^Waymark") or name:find("^BFI") then return " (a Waymark box had the keyboard)" end
+    return " (another box had the keyboard)"
+end
+function ns.Note(text)
+    if not text then return end
+    noteHead = noteHead % NOTES + 1
+    local e = notes[noteHead] or {}
+    notes[noteHead] = e
+    e.t, e.text = GetTime(), text .. Keyboard()
+    ns.Trail(text)
+end
+local function NoteLines(Add, t0)
+    local any
+    for k = 1, NOTES do
+        local e = notes[(noteHead + k - 1) % NOTES + 1]
+        if e and e.text then
+            Add(string.format("  %+.1f  %s", e.t - t0, e.text))
+            any = true
+        end
+    end
+    if not any then Add("  nothing") end
+end
+
 -- the trail as lines, times counted from t0
 local function TrailLines(Add, t0)
     for k = 1, N do
@@ -112,7 +144,25 @@ end
 -- five cheap questions, and the frame the first turns ours is kept with what the world map did
 -- last and the trail up to then. Once: the watch ends there. Reads only, nothing of the game's
 -- hooked or written.
+-- Since 1.2.9's first report (2026-11-14: the world map clean, the controller's focus manager and
+-- its bindings ours) those are asked too: they turn ours when the chat box loses the keyboard in
+-- our code (a /waymark command typed, a window of ours taking the keyboard).
 local WATCH = { "mapID", "zoomLevels", "baseScale", "targetScale", "edgePanDistance" }
+local function PadWatch()
+    local out
+    local fcm = GamepadMode and GamepadMode.FrameControlsManager
+    local ibm = GamepadSharedUtility and GamepadSharedUtility.BindingStack
+        and GamepadSharedUtility.BindingStack.InputBindingManager
+    for _, w in ipairs({ { fcm, "focusedFrame", "the controller's focused frame" },
+                         { fcm, "fallThroughCatcherActive", "the controller's focus catcher" },
+                         { ibm, "currentCoreBindingActive", "the controller's bindings" } }) do
+        if type(w[1]) == "table" then
+            local ok, secure, by = pcall(issecurevariable, w[1], w[2])
+            if ok and not secure and by == addonName then out = (out and (out .. ", ") or "") .. w[3] end
+        end
+    end
+    return out
+end
 do
     local watcher = CreateFrame("Frame")
     local started, since, on = GetTime(), 0, false
@@ -144,17 +194,21 @@ do
         local found
         for _, k in ipairs(WATCH) do
             local secure, by = issecurevariable(sc, k)
-            if not secure and by == addonName then found = (found and (found .. ", ") or "") .. k end
+            if not secure and by == addonName then found = (found and (found .. ", ") or "") .. "the world map's " .. k end
         end
+        local pad = PadWatch()
+        if pad then found = (found and (found .. ", ") or "") .. pad end
         if not found then return end
         self:SetScript("OnUpdate", nil)
         local L = {}
         local function Add(...) L[#L + 1] = table.concat({ ... }) end
-        Add("First touched: the world map's ", found, " (", date("%H:%M:%S"), ", ",
+        Add("First touched: ", found, " (", date("%H:%M:%S"), ", ",
             string.format("%.0f", now - started), " s after loading). World map ", shown and "open" or "closed",
             ", ", shown and "opened " or "closed ", Ago(shownAt, now), "; its map (", tostring(id), ") changed ",
             Ago(mapAt, now), "; its size changed ", Ago(sizeAt, now),
             InCombatLockdown() and ". In a fight" or "", ".")
+        Add("Of note before that:")
+        NoteLines(Add, now)
         Add("What Waymark did just before that:")
         TrailLines(Add, now)
         ns.FirstTouch = L
@@ -162,6 +216,60 @@ do
         WaymarkDB.firstTouch = table.concat(L, "\n")
         WaymarkDB.firstTouchWhen = date("%Y-%m-%d %H:%M")
         if ns.DevCommands and ns.Log then ns.Log("the world map's values turned ours: /waymark report") end
+    end)
+end
+
+-- The first write -----------------------------------------------------------------------------
+-- The watch above says when a value turned ours; this says how. The game's own functions that
+-- write the controller's focus and bindings get a hooksecurefunc each, and after every call the
+-- values are asked. The first call that leaves one ours is kept with its stack: the call path at
+-- the marking itself, with our line in it if our code is why (2026-11-14: on a clean client with
+-- a player's other addons the focused frame turned ours 32 s after loading, no block event at all).
+-- Once; a hook costs a function call and three questions per focus change.
+do
+    local caught, already
+    local function Caught(what)
+        if caught or not issecurevariable then return end
+        local found = PadWatch()
+        if not found then return end
+        caught = true
+        local L = { "Marked as Waymark's: " .. found .. " (" .. date("%H:%M:%S") .. "), in the game's " .. what
+            .. (already and ", but already so when the hooks went in" or "") .. ". Called from:" }
+        local s = debugstack and debugstack(3, 40, 0) or ""
+        for line in s:gmatch("[^\n]+") do
+            if line:find("^Locals") or line:find("^%(%*temporary") then break end
+            L[#L + 1] = "  " .. line:gsub("^%s+", ""):gsub("Interface/AddOns/", ""):sub(1, 150)
+            if #L > 34 then break end
+        end
+        L[#L + 1] = "Of note before that:"
+        NoteLines(function(...) L[#L + 1] = table.concat({ ... }) end, GetTime())
+        ns.FirstWrite = L
+        WaymarkDB = WaymarkDB or {}
+        WaymarkDB.firstWrite = table.concat(L, "\n")
+        if ns.DevCommands and ns.Log then ns.Log("the controller's focus was marked as ours: /waymark report") end
+    end
+    local function Hook(t, name, label)
+        if type(t) == "table" and type(t[name]) == "function" then
+            pcall(hooksecurefunc, t, name, function() Caught(label .. ":" .. name) end)
+        end
+    end
+    local at = CreateFrame("Frame")
+    at:RegisterEvent("PLAYER_LOGIN")
+    at:SetScript("OnEvent", function()
+        -- (dev copy only: the user, 2026-11-15, left them out of 1.3; ns.DevCommands is DevBar.lua's)
+        if not (ns.DevCommands and ns.FOREVER and GamepadMode and GamepadSharedUtility and hooksecurefunc) then return end
+        already = PadWatch() ~= nil
+        local fcm = GamepadMode.FrameControlsManager
+        for _, name in ipairs({ "FrameShown", "FrameHidden", "FocusFrame", "FocusNextFrame", "FocusPreviousFrame",
+                                "FocusFirstFrameShown", "SetUIFocusState", "SetFallThroughCatcherActive",
+                                "SuspendFrame", "UnsuspendFrame", "HideActiveFrames" }) do
+            Hook(fcm, name, "FrameControlsManager")
+        end
+        local ibm = GamepadSharedUtility.BindingStack and GamepadSharedUtility.BindingStack.InputBindingManager
+        for _, name in ipairs({ "AddBindingSet", "RemoveSet", "SetCoreBindingSet", "ClearBindings",
+                                "AssumeCoreBindingsAreUsable" }) do
+            Hook(ibm, name, "InputBindingManager")
+        end
     end)
 end
 
@@ -190,7 +298,11 @@ local function OtherAddons()
     return #list > 0 and table.concat(list, ", ") or "none"
 end
 
+-- Every block of the session stays listed, and the trail and the sweep are the first block's:
+-- a later block is often our own doing (1.2.9: opening this report with the controller UI on),
+-- and rebuilding from it threw the first one's evidence away.
 local blocks, building = {}, false
+local firstTrail, firstSweep
 
 local function Build()
     building = false
@@ -215,32 +327,74 @@ local function Build()
         ". Instance: ", tostring(kind or "none"),
         WorldMapFrame and WorldMapFrame:IsShown() and ". World map open" or "")
     Add("")
-    Add("What Waymark did just before (seconds before the first block):")
     local t0 = blocks[1] and blocks[1].t or GetTime()
-    TrailLines(Add, t0)
+    for i, b in ipairs(blocks) do
+        if b.stack and #b.stack > 0 then
+            Add(i == 1 and "Where the first block's call came from:" or "Where the second block's call came from:")
+            for _, line in ipairs(b.stack) do Add(line) end
+            Add("")
+        end
+    end
+    Add("Of note (seconds from the first block):")
+    NoteLines(Add, t0)
+    Add("")
+    Add("What Waymark did just before (seconds before the first block):")
+    if not firstTrail then
+        firstTrail = {}
+        TrailLines(function(...) firstTrail[#firstTrail + 1] = table.concat({ ... }) end, t0)
+    end
+    for _, line in ipairs(firstTrail) do Add(line) end
     if ns.FirstTouch then
         Add("")
         for _, line in ipairs(ns.FirstTouch) do Add(line) end
     end
-    if pad then
+    if ns.FirstWrite then
         Add("")
-        local found, visits = ns.TaintSweep(80000, 30)
-        Add("Game values Waymark had touched (", tostring(visits or 0), " checked):")
-        if #found == 0 then Add("  none") end
-        for _, f in ipairs(found) do Add("  ", f) end
+        for _, line in ipairs(ns.FirstWrite) do Add(line) end
+    end
+    if pad then
+        if not firstSweep then
+            local found, visits = ns.TaintSweep(80000, 30)
+            firstSweep = { "Game values Waymark had touched at the first controller block ("
+                .. tostring(visits or 0) .. " checked):" }
+            if #found == 0 then firstSweep[2] = "  none" end
+            for _, f in ipairs(found) do firstSweep[#firstSweep + 1] = "  " .. f end
+        end
+        Add("")
+        for _, line in ipairs(firstSweep) do Add(line) end
     end
     Add("")
     Add("Other addons: ", OtherAddons())
-    wipe(blocks)
     WaymarkDB = WaymarkDB or {}
     WaymarkDB.report = table.concat(L, "\n")
     WaymarkDB.reportWhen = date("%Y-%m-%d %H:%M")
 end
 
+-- Where the blocked call came from: the game sends the block's event from inside the call it
+-- blocked, so the stack here runs down through that call to whatever began it: a line of ours
+-- (our code made the call happen, there and then), or only the game's own (its code ran on values
+-- of ours touched earlier). Three readings of the client could not tell those apart (2026-11-14);
+-- the stack can. File names and line numbers only. The first two blocks' are kept.
+local function Stack()
+    local s = debugstack and debugstack(2, 30, 0) or ""
+    local out, all, began = {}, {}, false
+    for line in s:gmatch("[^\n]+") do
+        if line:find("^Locals") or line:find("^%(%*temporary") then break end
+        line = line:gsub("^%s+", ""):gsub("Interface/AddOns/", "")
+        all[#all + 1] = "  " .. line:sub(1, 150)
+        -- (from the refused call down: what's above it is our own way here from the event. Seen in
+        -- game 2026-11-14 with /waymark blocktest: two lines of the block watch, then "[C]: in
+        -- function 'TargetUnit'")
+        if not began and line:find("^%[C%]") then began = true end
+        if began and #out < 26 then out[#out + 1] = all[#all] end
+    end
+    return began and out or all
+end
+
 function ns.NoteBlock(event, func)
     blocks[#blocks + 1] = { event = tostring(event), func = tostring(func), combat = InCombatLockdown(),
-                            when = date("%H:%M:%S"), t = GetTime() }
-    if #blocks > 6 then table.remove(blocks, 2) end
+                            when = date("%H:%M:%S"), t = GetTime(), stack = #blocks < 2 and Stack() or nil }
+    if #blocks > 8 then table.remove(blocks, 2) end  -- (the first stays: the times count from it)
     -- (next frame: our hooks run after the call the game blocked, and their lines belong in it)
     if not building then
         building = true
@@ -275,6 +429,26 @@ local HOWTO = "The game stopped something Waymark did. To get it fixed, copy the
     .. "in a comment on Waymark's CurseForge page (Waymark: Battlefield Map, the Comments tab). "
     .. "A line on what you were doing helps too."
 local KEYS = "It's selected already: Ctrl+C copies it. No names in it, only what Waymark was doing."
+local KEYS_PAD = "Press Select all, then Ctrl+C. No names in it, only what Waymark was doing."
+local KEYS_BUSY = "|cffffd100Leave the chat box first (B or Escape), then press Select all.|r"
+
+-- With the controller UI on, the game's chat box clears the controller's focus as it loses the
+-- keyboard, and when our code took the keyboard that ran as ours: the controller's focus and
+-- bindings marked, SetPreferredGamepadInteractTarget blocked from then on (floatingchatframe.lua,
+-- chatframeeditbox.lua OnEditFocusLost; the 1.2.9 report). So there the window takes the keyboard
+-- only when no other box has it.
+local function TakeKeyboard(f)
+    local e = f.edit
+    local has = GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus()
+    if PadUI() and has and has ~= e then
+        f.keys:SetText(KEYS_BUSY)
+        return false
+    end
+    e:SetFocus()
+    e:HighlightText()
+    f.keys:SetText(KEYS)
+    return true
+end
 
 local function Make()
     local f = CreateFrame("Frame", "WaymarkReportFrame", UIParent, "BackdropTemplate")
@@ -345,7 +519,7 @@ local function Make()
     f.edit = e
     -- (a click anywhere in the well: into the text)
     well:EnableMouse(true)
-    well:SetScript("OnMouseDown", function() e:SetFocus() end)
+    well:SetScript("OnMouseDown", function() TakeKeyboard(f) end)
 
     local function Button(label, gold)
         local b = CreateFrame("Button", nil, f)
@@ -361,10 +535,7 @@ local function Make()
     end
     f.select = Button("Select all", true)
     f.select:SetPoint("BOTTOMRIGHT", -14, 12)
-    f.select:SetScript("OnClick", function()
-        e:SetFocus()
-        e:HighlightText()
-    end)
+    f.select:SetScript("OnClick", function() TakeKeyboard(f) end)
     f.done = Button("Close")
     f.done:SetPoint("RIGHT", f.select, "LEFT", -12, 0)
     f.done:SetScript("OnClick", function() f:Hide() end)
@@ -377,7 +548,10 @@ end
 function ns.ShowReport()
     local text = WaymarkDB and WaymarkDB.report
     -- (nothing blocked, but the first touch seen this session: that alone)
-    if not text and ns.FirstTouch then text = table.concat(ns.FirstTouch, "\n") end
+    if not text and (ns.FirstWrite or ns.FirstTouch) then
+        text = (ns.FirstWrite and (table.concat(ns.FirstWrite, "\n") .. "\n\n") or "")
+            .. (ns.FirstTouch and table.concat(ns.FirstTouch, "\n") or "")
+    end
     if not text then
         print("|cff33ff99Waymark:|r nothing has been blocked yet, so there's no report.")
         return
@@ -391,9 +565,14 @@ function ns.ShowReport()
     win.when:SetText(WaymarkDB.reportWhen and ("From " .. WaymarkDB.reportWhen) or "")
     win:Show()
     win:Raise()
-    win.edit:SetFocus()
     win.edit:SetCursorPosition(0)
-    win.edit:HighlightText()
+    if PadUI() then
+        win.keys:SetText(KEYS_PAD)
+        ns.Note("report window opened, keyboard left alone")
+    else
+        TakeKeyboard(win)
+        ns.Note("report window opened")
+    end
 end
 
 -- Hooks ------------------------------------------------------------------------------------------
@@ -404,7 +583,7 @@ do
                   PLAYER_ENTERING_WORLD = "a loading screen ends", ZONE_CHANGED_NEW_AREA = "a new zone",
                   ZONE_CHANGED_INDOORS = "indoors/outdoors", PLAYER_DEAD = "you died" }
     for e in pairs(SAY) do ev:RegisterEvent(e) end
-    ev:SetScript("OnEvent", function(_, e) ns.Trail(SAY[e]) end)
+    ev:SetScript("OnEvent", function(_, e) ns.Note(SAY[e]) end)
 end
 
 -- On our map (BattlefieldInfo.lua Setup): its changes, its showing, and in a fight the game's own

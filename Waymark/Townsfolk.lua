@@ -97,6 +97,26 @@ local function Add(index, entry)
     end
 end
 
+-- One person, one pin: the data lists some NPCs at several spawn points close together (a fisherman on an
+-- islet south of Southshore had four, and four pins: the user, 2026-11-16). Spawns of the same NPC within
+-- SAME of each other on a map (a share of the map's width) become one pin at their middle. Far apart they
+-- stay apart: one id can be many people (every Spirit Healer). Objects are never merged (mailboxes).
+local SAME = 0.04
+local function AddNpc(index, entry)
+    return function(uiMapID, x, y)
+        local list = index[uiMapID]
+        if not list then list = {} index[uiMapID] = list end
+        for _, e in ipairs(list) do
+            if e.id == entry.id and math.abs(e.x - x) < SAME and math.abs(e.y - y) < SAME then
+                e.n = (e.n or 1) + 1
+                e.x, e.y = e.x + (x - e.x) / e.n, e.y + (y - e.y) / e.n
+                return
+            end
+        end
+        list[#list + 1] = { x = x, y = y, id = entry.id, name = entry.name, sub = entry.sub }
+    end
+end
+
 local function BuildKey(key)
     local L = ns.QuestSource and ns.QuestSource()
     local ids = L and ns.TownsfolkIds(key)
@@ -111,7 +131,7 @@ local function BuildKey(key)
             local entry = { id = id, name = L.Npc.name(id), sub = L.Npc.subName(id) }
             local spawns = L.Npc.spawns(id)
             if spawns and next(spawns) then
-                ns.EachSpawnOnMap(spawns, Add(index, entry))
+                ns.EachSpawnOnMap(spawns, AddNpc(index, entry))
             else
                 -- NPCs that only walk a path: its first point
                 for areaID, paths in pairs(L.Npc.waypoints(id) or {}) do
@@ -623,6 +643,12 @@ function BFITownsfolkPinMixin:OnEnter()
     GameTooltip:Show()
 end
 
+-- the types that sell or teach: on Forever their right-click always opens the window, a sentence in it
+-- when no list is known (a dead right-click looks broken)
+local SELLS = { Food = true, Ammo = true, Reagents = true, Poisons = true, General = true, ["Trade Goods"] = true,
+    Potions = true, Repair = true, Innkeeper = true }
+local TEACHES = { ["Weapon Master"] = true, professions = true, ["Class Trainer"] = true, ["Portal Trainer"] = true }
+
 -- the menu's "what they sell" / "what they teach" (VendorList.lua): one row per person here with a list
 function StockRows(pin)
     if not ns.StockKinds then return nil end
@@ -631,11 +657,18 @@ function StockRows(pin)
     local info = map and map:GetMapID() and C_Map.GetMapInfo(map:GetMapID())
     for _, p in ipairs(members) do
         local object = p.kind and p.kind.t and p.kind.t.object
-        for _, kind in ipairs(object and {} or ns.StockKinds(p.id)) do
+        local kinds = object and {} or ns.StockKinds(p.id)
+        local key = p.kind and p.kind.t and p.kind.t.key
+        if type(key) == "number" then key = "professions" end
+        if ns.FOREVER and not object and p.id and #kinds == 0 then
+            if SELLS[key] then kinds = { "sell" } elseif TEACHES[key] then kinds = { "teach" } end
+        end
+        for _, kind in ipairs(kinds) do
             local text = #members == 1 and ("what they " .. kind)
                 or ("what %s %ss"):format(p.name and (p.name:find("^Innkeeper ") and p.name or p.name:match("^(%S+)")) or "?",
                     kind)  -- (the first name: "Brog"; innkeepers both: "Innkeeper Farley", not "Innkeeper")
-            out[#out + 1] = { text, function() ns.OpenStock(p.id, p.name, p.sub, info and info.name, kind) end }
+            out[#out + 1] = { text, function() ns.OpenStock(p.id, p.name, p.sub, info and info.name, kind,
+                key == "Class Trainer" or key == "Portal Trainer") end }
         end
     end
     return out

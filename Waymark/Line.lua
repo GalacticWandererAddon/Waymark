@@ -1,12 +1,13 @@
 local _, ns = ...
 
 -- A line from you to a target on the Battlefield Map, with the distance.
--- Target, first that applies:
--- (pins don't pick it: no Alt-click or menu row, 2026-11-01; ns.LineTargetClick
--- is still there for anything that wants to set one)
---   1. your target, if it's in your group (the game only gives positions of
---      group members, so not of NPCs or other players)
---   2. the nearest Questie objective spot (if switched on)
+-- Its target: your target, if it's in your group (the game only gives positions of group members, so not
+-- of NPCs or other players).
+-- (pins don't pick it: no Alt-click or menu row, 2026-11-01; ns.LineTargetClick is still there for anything
+-- that wants to set one)
+-- (2026-11-15, the user: the line to "the nearest objective spot" is out of the addon, and with it the
+-- "Line aims at" settings. line.groupTarget and line.nearestSpot are no longer read: the line shown is the
+-- line to your group target.)
 
 local function Cfg() return ns.db.line end
 
@@ -28,26 +29,12 @@ function ns.LineTargetClick(pin)
     return true
 end
 
-local function NearestSpot(map, px, py)
-    local best, bestD
-    ns.EachPin(map, function(pin, template)
-        if template == "BFIQuestiePinTemplate" and pin.bfiGroup == "spots" and pin:IsShown() and pin.normalizedX then
-            local dx, dy = pin.normalizedX - px, pin.normalizedY - py
-            local d = dx * dx + dy * dy
-            if not bestD or d < bestD then best, bestD = pin, d end
-        end
-    end)
-    return best and best.normalizedX, best and best.normalizedY, best and best.questName
-end
-
-local function FindTarget(map, mapID, px, py)
+local function FindTarget(map, mapID)
     if locked and locked.mapID == mapID then return locked.x, locked.y, locked.name end
-    local c = Cfg()
-    if c.groupTarget and UnitExists("target") and (UnitInParty("target") or UnitInRaid("target")) then
+    if UnitExists("target") and (UnitInParty("target") or UnitInRaid("target")) then
         local pos = C_Map.GetPlayerMapPosition(mapID, "target")
         if pos and pos.x and (pos.x > 0 or pos.y > 0) then return pos.x, pos.y, UnitName("target") end
     end
-    if c.nearestSpot then return NearestSpot(map, px, py) end
 end
 
 -- yards between two points on the map, from the game's world positions

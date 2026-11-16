@@ -7,6 +7,7 @@ local DEFAULTS = {
     -- automatic UI scale is 0.64 at 1440p; Waymark was drawn at 0.8, so 1.25 there
     addonScale = ns.FOREVER and 1.25 or 1,
     quickButton = true,
+    searchButton = true,  -- the magnifier on the map (Search.lua): the closest trainer, service or vendor for an item
     townButton = true,    -- town view on/off, beside the quick-options gear (Options.lua)
     cityButton = true,    -- city view's zoom on/off, beside the town view button
     dockButton = true,    -- minimap replacement on/off, beside the city view button
@@ -50,8 +51,12 @@ local DEFAULTS = {
     -- the whole map fades while you move / in combat, to these opacities (%);
     -- hover: full again under the mouse
     fade       = { moving = false, movingAlpha = 40, combat = false, combatAlpha = 40, hover = true },
-    -- the map folded up to its header in combat (Collapse.lua; also a key)
-    collapse   = { combat = false },
+    -- the map folded up to its header in combat, or while a window you opened
+    -- lies on it (Collapse.lua; also a key)
+    -- ribbon: folded leaves a band of the ground round you, ribbonHeight of the
+    -- map's height, drawn ribbonZoom times closer than the zone fully out
+    -- (windows: off since 2026-11-14 at the user's word, "some cases we havent considered yet")
+    collapse   = { combat = false, windows = false, ribbon = false, ribbonHeight = 0.25, ribbonZoom = 2.5 },
     -- just the map over the world (ClearView.lua; also a key): noFrame hides the
     -- border; header / buttons "shown", "hover" (header also "hidden"); opacity:
     -- the map picture's, in place of mapFrame.opacity; zoneOnly: the neighbours cut away
@@ -96,7 +101,8 @@ local DEFAULTS = {
                    cursorWhere = "beside", cursorSide = "same", cursorX = 0, cursorY = 0,
                    color = { 1, 1, 1 } },
     waypoints  = { shown = false, alpha = 1, scale = 1, clickToAdd = true },  -- TomTom
-    transports = { shown = true, alpha = 1, scale = 1, boats = true, zeppelins = true, trams = true, continent = true, routes = true, boat = "cog" },  -- Transports.lua
+    transports = { shown = true, alpha = 1, scale = 1, boats = true, zeppelins = true, trams = true, continent = true, routes = true, marks = false,
+                   live = true, wake = true },  -- Transports.lua (ink on the map, not pins); live, wake: Boats.lua (a ship where its boat is, once ridden; its dotted wake)
     rares      = { shown = false, alpha = 1, scale = 1, rsIcons = false },  -- RareScanner
     fishing    = { shown = false, alpha = 0.55 },  -- Fisherman's mode (FishingMap.lua)
     -- quest givers learned as you play (Learn.lua): mode "gaps" = only quests
@@ -162,6 +168,7 @@ local DEFAULTS = {
     -- borderGap, borderColor.
     -- replaceGame: the quest log key opens it map or not, the game's closes as it opens
     questlog   = { shown = true, fromPins = false, keyL = false, replaceGame = false,
+                   chainWords = true,  -- (QuestWords.lua: a chain step you do not hold shows the giver's words)
                    listHereFirst = true, listFoldOthers = true, listLevelColors = true, listShare = 0.27, logStyle = "leather",
                    listGoldTitles = false,
                    textHeadFont = "morpheus", textHeadSize = 14, textHeadOutline = true,
@@ -228,6 +235,19 @@ local DEFAULTS = {
     -- Performance mode (ns.Perf), for handhelds and older PCs: on, and items[k] false for the
     -- things the player wants kept as they are. Not part of a setup or preset (Setups.lua EXCLUDE)
     perf       = { on = false, items = {} },
+    -- The lie of the land (Relief.lua): the map shaded from the game's real heights. Players set on, hour, cast
+    -- and shadeAlpha (The map's look); the rest are its own switches (/relief, the test bench)
+    relief     = { on = true, shade = true, shadeAlpha = 100, hour = true, cast = true, continent = true, rim = false, rimAlpha = 100,
+                   ink = false, inkAlpha = 85, edition = 5 },
+    -- Frames and themes (Frames.lua, FrameSets.lua): a look for the map's border and header, the tracker, tooltips,
+    -- the quest log and the settings window. "keep" leaves a part as Waymark has it: nothing changes until chosen
+    frames     = { theme = "none", border = "keep", fold = false, header = "keep", tracker = "keep", tip = "keep", log = "keep",
+                   panel = "keep", watch = false },
+    -- As told (AsTold.lua, AsToldPanel.lua): the giver's words in a small panel, their places pencilled on the map.
+    -- Players set on, panel and map (Quests); the rest are its own (/told, the panel's menu)
+    told       = { on = true, map = true, alpha = 90, size = 12, panel = true, backdrop = true, scale = 100 },
+    -- The pencilled map (Pencil.lua): players set on; the rest is the form the user cleared for 1.3
+    pencil     = { on = true, whole = false, walk = true, outline = true, sight = true },
     -- line from you to: a pin you Alt-click, your target if in your group, or the
     -- nearest objective spot
     line       = { shown = false, alpha = 0.9, thickness = 3, groupTarget = true, nearestSpot = false },
@@ -388,6 +408,49 @@ function ns.ClockFirstTime(db)
         -- (settings from before the clock: an update never takes the game's own clock away)
         db.clock = { hideGame = false }
     end
+    ns.NoWood(db)
+    ns.QuestLogBorderOwn(db)
+    -- (docked, our map under the minimap's dots: its settings row is gone, so a tick left off has no way
+    -- back on. On for everyone, but for a player who typed /waymark blips to switch it off. The user was
+    -- left at off themself, 2026-11-16.)
+    if type(db.dock) == "table" and db.dock.ourGround == false and not db.dock.blipsOff then db.dock.ourGround = true end
+end
+
+-- The Wood border is gone (the user, 2026-11-15: "its not working right and its ugly"): settings, setups and
+-- characters that had it on the map, the header, the tracker, the quest log or the clock get Classic dialog.
+-- Called with ClockFirstTime, so wherever saved settings come in.
+function ns.NoWood(db)
+    for _, gk in ipairs({ { "border", "style" }, { "zoneName", "border" }, { "tracker", "borderStyle" },
+                          { "questlog", "borderStyle" }, { "clock", "frame" } }) do
+        local g = db[gk[1]]
+        if type(g) == "table" and g[gk[2]] == "wood" then g[gk[2]] = "dialog" end
+    end
+end
+
+-- The quest log's border no longer has "Same as the map's" (the user, 2026-11-16: "Not all of them
+-- translate": the map's frame sets and the game's own border have no like on the quest log). A saved one
+-- becomes what it showed: the map border's style, thickness, distance and colour where the style is one the
+-- quest log has, else the quest log's own frame. The presets and the defaults carry "map" in their files:
+-- they are settled the same way, once, each by its own map border, so a preset still reads as unaltered.
+local LOG_STYLES = { dialog = true, tooltip = true, line = true, gold = true }
+local function LogBorderOwn(db)
+    local q = type(db) == "table" and db.questlog
+    if type(q) ~= "table" or q.borderStyle ~= "map" then return end
+    local b = db.border
+    if type(b) == "table" and b.shown ~= false and LOG_STYLES[b.style] then
+        q.borderStyle, q.borderSize, q.borderGap, q.borderColor = b.style, b.size or q.borderSize, b.gap or q.borderGap, b.color or q.borderColor
+    else
+        q.borderStyle = "own"
+    end
+end
+local presetsSettled
+function ns.QuestLogBorderOwn(db)
+    if not presetsSettled then
+        presetsSettled = true
+        for _, t in pairs(ns.PRESET_SETTINGS or {}) do LogBorderOwn(t) end
+        LogBorderOwn(ns.DEFAULTS)
+    end
+    LogBorderOwn(db)
 end
 
 local function CopyDefaults(dst, src)
@@ -664,9 +727,10 @@ end
 -- each item the player left ticked runs lighter; their own settings stay as they are, so turning
 -- it off brings everything back. Items: art (painted continents), warm (map art loaded ahead),
 -- detail (close-up tiles), ground (quest areas: objective spots instead), effects (time of day,
--- soft edges, clear view), ticks (the map's checks 4 a second, not 10). ns.IsShown stays the
+-- soft edges, clear view), ticks (the map's checks 4 a second, not 10), relief (the lie of the land:
+-- off) and reliefHour (kept, its light stands still). ns.IsShown stays the
 -- player's choice (the settings and toggle buttons show and switch that): it's applied where drawn
-ns.PERF_ITEMS = { "art", "warm", "detail", "ground", "effects", "ticks" }
+ns.PERF_ITEMS = { "art", "warm", "detail", "ground", "effects", "ticks", "relief", "reliefHour" }
 function ns.Perf(item)
     local p = ns.db and ns.db.perf
     return p and p.on and p.items[item] ~= false or false
@@ -784,6 +848,34 @@ function ns.SetObjectives(on, look)
     end
 end
 
+-- Questie's look without Questie. A player who had Questie when the objectives were switched on has the
+-- pins in Questie's icons; with Questie switched off after, the pins stayed, in our own icons, the Look row
+-- read "Waymark's" with its dots off and Objective icons unticked, and nothing said how to get the dots (the
+-- user on a clean install, 2026-11-16: "no obvious way to turn the dots on"). So at login: Questie's look
+-- with no Questie becomes Waymark's own (its dots, or its icons where those were chosen), and is remembered,
+-- so the day Questie is back its look is too.
+do
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("PLAYER_LOGIN")
+    f:SetScript("OnEvent", function() C_Timer.After(2, function()   -- (once the layers are set up)
+        local db = ns.db
+        if not (db and db.spots and ns.QuestieArt) then return end
+        local questie = ns.QuestieArt()
+        local ok, err = pcall(function()
+            if not questie and (db.objectiveLook == "questie" or (db.spots.questieIcons and ns.IsShown("spots") and not db.objectivePins)) then
+                local on = ns.ObjectivesOn()
+                db.spots.questieIcons = false
+                ns.SetObjectives(on, "waymark")
+                db.questieLookWas = true
+            elseif questie and db.questieLookWas then
+                db.questieLookWas = nil
+                ns.SetObjectives(ns.ObjectivesOn(), "questie")
+            end
+        end)
+        if not ok and ns.Log then ns.Log("Objectives look:", tostring(err)) end
+    end) end)
+end
+
 -- Waymark's look as pins (true) or dots
 function ns.SetObjectivePins(v)
     ns.db.objectivePins = v and true or false
@@ -883,7 +975,18 @@ end
 -- A level for something we draw over the map art (unexplored areas, detail
 -- tiles, the day tint): `above` levels over the explored-area art, but always
 -- under every pin, whatever levels this client gives them
+-- The map's art layers by name, lowest first: ns.ArtLevel(map, "ground"). All sit above the explored-area
+-- art and under every pin. Same number: no order promised between them.
+--   fog     the unexplored pieces (Explore.lua)
+--   ground  what the land is: the close-up tiles, the steep-ground print, the map's wear
+--   wash    a see-through sheet over the ground: the Fisherman's wash, the land's light
+--   flash   the discovery flash, the hour's lamp
+--   ink     the player's own ink
+--   marks   places printed or pencilled on the map: landmark signs, told rings, stains (the Lab)
+ns.ART_LEVELS = { fog = 0, ground = 1, wash = 2, flash = 3, ink = 4, marks = 5 }
+
 function ns.ArtLevel(map, above)
+    if type(above) == "string" then above = ns.ART_LEVELS[above] or 0 end
     local explore, _, bottom = ns.CanvasLevels(map)
     local want = (explore or (map:GetCanvas():GetFrameLevel() + 1997)) + (above or 0)
     if bottom and want > bottom - 1 then
@@ -902,7 +1005,6 @@ local TEMPLATE_GROUPS = {
     BFIQuestBlobPinTemplate = "areas",
     GroupMembersPinTemplate = "party",
     BFIWaypointPinTemplate  = "waypoints",
-    BFITransportPinTemplate = "transports",
     BFIRarePinTemplate      = "rares",
     BFITownsfolkPinTemplate = "townsfolk",
     BFIGatherPinTemplate    = "gather",
@@ -921,7 +1023,7 @@ ns.PinGroupOf = GroupOf  -- (for /bfi check)
 -- (townsfolk, rares, nodes...) each by their own setting (explore.hideQuests /
 -- hideOthers; Explore.lua knows which areas you've found)
 local QUEST_PIN_GROUPS = { questie = true, turnins = true, spots = true, objectives = true, learned = true }
-local OTHER_PIN_GROUPS = { townsfolk = true, rares = true, gather = true, waypoints = true, transports = true, dungeons = true }
+local OTHER_PIN_GROUPS = { townsfolk = true, rares = true, gather = true, waypoints = true, dungeons = true }
 
 local function HiddenUnexplored(pin, group, mapID)
     local e = ns.db.explore
@@ -1078,13 +1180,18 @@ end
 -- down below pins.minMapScale, pins keep the size they'd have at that scale,
 -- so they stay readable.
 -- (view: "townView" or "cityView", the same for a capital in city view)
+-- The place's one slider (pinScale, "Pin size in towns") is on top of every pin there, always. It used to
+-- skip a layer with a size of its own there (view.sizes), so "All pins" did not move all pins: "the sliders
+-- for pinsize are confusing", the user 2026-11-15. The sizes of their own stay as data (the presets' look in
+-- towns, and what a layer's own Size slider moves while you stand in one); their fourteen sliders are gone.
 function ns.TownPinSize(group, view)
     local t = ns.db[view or "townView"]
+    local all = t.pinScale or 1
     -- (in town and city view the turn-ins are the givers' size: one slider for both, the user 2026-11-08)
     if group == "turnins" then
-        return t.sizes.questie or (ns.db.turnins and ns.db.turnins.scale or 1) * (t.pinScale or 1)
+        return (t.sizes.questie or (ns.db.turnins and ns.db.turnins.scale or 1)) * all
     end
-    return t.sizes[group] or (ns.db[group] and ns.db[group].scale or 1) * (t.pinScale or 1)
+    return (t.sizes[group] or (ns.db[group] and ns.db[group].scale or 1)) * all
 end
 
 -- (objective pins and dots: one size everywhere, the Quests page's; town view's own row for them didn't move
@@ -1106,7 +1213,10 @@ function ns.PinScale(group, own)
     if map and floor > 0 then
         -- (the slider's scale: Waymark's size isn't a shrunken map)
         local scale = map:GetEffectiveScale() / UIParent:GetEffectiveScale() / ns.AddonScale()
-        if scale > 0 then s = s * math.max(1, floor / scale) end
+        -- (pins.sizeAll: the settings' "Size of all pins" has been moved, 2026-11-15. The number is then the
+        -- size of every pin, below the map's scale too. Without it, the old floor: never smaller than the
+        -- map's scale makes them, so nobody's pins change until they touch the slider.)
+        if scale > 0 then s = s * (ns.db.pins.sizeAll and floor / scale or math.max(1, floor / scale)) end
     end
     return s
 end
@@ -1344,7 +1454,7 @@ local function SetupResize(map)
     grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
 
     -- drag: the map's width and height (MapControls, Shape), nothing else (the
-    -- scale is What's shown's "Pin & text size" slider). Right-click: the game's size.
+    -- scale is Size & shape's "Map scale" slider). Right-click: the game's size.
     local startX, startY, startW, startH, sizing
     grip:SetScript("OnMouseDown", function(_, button)
         if button ~= "LeftButton" then return end
@@ -1373,7 +1483,7 @@ local function SetupResize(map)
         GameTooltip:SetOwner(grip, "ANCHOR_TOPLEFT")
         GameTooltip:AddLine("Resize")
         local auto = ns.db.mapFrame.autoWidth and ns.db.mapFrame.rememberShapes
-        if auto then GameTooltip:AddLine("Auto shape: a drag is kept for this zone", 1, 1, 1, true) end
+        if auto then GameTooltip:AddLine("Auto shape: dragging saves the shape for this zone.", 1, 1, 1, true) end
         ns.Hints({ { "Drag", "size and shape" }, { "Right-click", auto and "this zone automatic again" or "default aspect" } })
         GameTooltip:Show()
     end)
@@ -1406,6 +1516,10 @@ function ns.OnSettingChanged(group, key)
         return
     end
     if group == "notebook" and ns.NotebookRefresh then ns.NotebookRefresh() end
+    if group == "told" and ns.ToldSettingChanged then ns.ToldSettingChanged() end
+    if group == "frames" and ns.FramesRefresh then ns.FramesRefresh() end
+    if group == nil and key == "searchButton" and ns.SearchSettingChanged then ns.SearchSettingChanged() end
+    if group == "coords" and ns.PlaceSearch then ns.PlaceSearch() end  -- (the magnifier sits over them)
     if group == "questie" and SHARED_WITH_TURNINS[key] then
         ns.ShareQuestLook()
         if key == "scale" then ns.ApplyScales("turnins") end
@@ -1874,8 +1988,8 @@ local function Setup()
     if ns.SetupCave then ns.SetupCave(map) end
     if ns.SetupExplore then ns.SetupExplore(map) end
     if ns.SetupInk then ns.SetupInk(map) end
-    if ns.SetupCamps then ns.SetupCamps(map) end  -- (the book's camps on the zone maps: Camps.lua, dev copy only for now)
-    if ns.SetupDangers then ns.SetupDangers(map) end  -- (what kills here, on and beside the dungeon map: Dangers.lua, dev copy only for now)
+    if ns.SetupCamps then ns.SetupCamps(map) end  -- (the book's camps on the zone maps: Camps.lua, in the build from 1.3, Forever)
+    if ns.SetupDangers then ns.SetupDangers(map) end  -- (what kills here, on and beside the dungeon map: Dangers.lua, in the build from 1.3, Forever)
     if ns.SetupZoneArt then ns.SetupZoneArt(map) end
     if ns.SetupStyle then ns.SetupStyle(map) end
     if ns.SetupZoneName then ns.SetupZoneName(map) end
@@ -2000,7 +2114,18 @@ end
 local blockWatch = CreateFrame("Frame")
 blockWatch:RegisterEvent("ADDON_ACTION_BLOCKED")
 blockWatch:RegisterEvent("ADDON_ACTION_FORBIDDEN")
-blockWatch:SetScript("OnEvent", function(_, event, addon, func) ReportBlocked(event, addon, func) end)
+-- (the game's chat line "Interface action failed because of an AddOn" also comes for these two,
+-- which name no addon: a block with only that line and nothing in the history, the clean client
+-- 2026-11-14. Kept in the history like the rest; never ours to report.)
+blockWatch:RegisterEvent("MACRO_ACTION_BLOCKED")
+blockWatch:RegisterEvent("MACRO_ACTION_FORBIDDEN")
+blockWatch:SetScript("OnEvent", function(_, event, addon, func)
+    if event:find("^MACRO") then
+        ReportBlocked(event, "(no addon named)", addon)
+    else
+        ReportBlocked(event, addon, func)
+    end
+end)
 
 -- after a reload: repeat what was blocked last time (once), then forget it
 local function ShowBlockedFromLastTime()
@@ -2071,7 +2196,7 @@ end)
 local DEV_SLASH = {}
 for _, c in ipairs({ "bar", "bosses list", "bosses place", "buttons", "cave", "controls", "cut", "devart", "forevermap",
     "layers", "notes me", "notes ship", "notes shots", "probe", "questart", "questprobe", "shapes", "tour", "town",
-    "watch", "where rec", "fillwatch", "padcheck" }) do DEV_SLASH[c] = true end
+    "watch", "where rec", "fillwatch", "padcheck", "blocktest", "marktest", "under" }) do DEV_SLASH[c] = true end
 local function DevOnly(msg)
     return not ns.DevCommands and (DEV_SLASH[msg] or msg:match("^tour ") or msg:match("^quest%s")) and true or false
 end
@@ -2079,6 +2204,9 @@ SLASH_BFI1, SLASH_BFI2 = "/waymark", "/bfi"
 SlashCmdList.BFI = function(msg)
     if ns.standBy then print(ns.standByMsg) return end
     msg = strtrim(msg or "")
+    -- (Report.lua: with the controller UI on, the game clears the chat box's controller focus
+    -- right after any addon's command, as that addon; the first word only, nothing a player wrote)
+    if ns.Note then ns.Note("typed /waymark " .. (msg:match("^%a+") or "")) end
     if DevOnly(msg) then msg = "?" end
     if msg == "debug" then
         Debug()
@@ -2216,6 +2344,17 @@ SlashCmdList.BFI = function(msg)
     end
     -- testing: Forever's art from Waymark_DevArt, or the substitutes an
     -- Era-only player gets (Art.lua); the art is set as frames are made, so reload
+    -- (docked: our map under the minimap's live dots, or the old way. No settings row since 2026-11-16; kept
+    -- as a way out for a player whose minimap misbehaves after a game patch. Ships.)
+    if msg == "blips" then
+        local d = ns.db.dock
+        d.ourGround = not d.ourGround
+        d.blipsOff = not d.ourGround or nil   -- (off by this command stays off over a reload)
+        ns.OnSettingChanged("dock", "ourGround")
+        Log(d.ourGround and "docked: Waymark's map under the minimap's dots (as it ships)"
+            or "docked: the game's own minimap picture up close; no dots on Waymark's map further out. /waymark blips again to go back")
+        return
+    end
     if msg == "devart" then
         if ns.FOREVER then Log("Forever has its own art: nothing to switch") return end
         WaymarkDB.devArtOff = not WaymarkDB.devArtOff or nil

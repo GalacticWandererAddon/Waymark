@@ -761,10 +761,31 @@ end
 -- top-left), its ring and number (to move them while it's dragged), its size.
 NoteSpots = function(owner, m, floor, w, ringSize, views)
     local spots = {}
+    -- (a ring put on a boss is drawn round that boss's skull as it stands NOW: the note keeps the spot the boss
+    -- had when the ring was dropped on it, and bosses have been placed again since, so rings sat a little off
+    -- their skulls. The user, 2026-11-15: "rings uncentered on skulls". Only a ring, and only within 0.02 of
+    -- the picture: an x or a bare number is where it was put.)
+    local inst = m and m.dg and m.dg.instance
+    local shipped = inst and ns.DungeonBosses and ns.DungeonBosses[inst] or {}
+    local mine = inst and ns.db and ns.db.bossSpots and ns.db.bossSpots[inst] or {}
+    local function OnBoss(x, y)
+        local best, bx, by = 0.02, x, y
+        local function Try(b)
+            if type(b) == "table" and b[1] == floor then
+                local d = math.max(math.abs(b[2] - x), math.abs(b[3] - y) * 0.667)
+                if d < best then best, bx, by = d, b[2], b[3] end
+            end
+        end
+        for name, b in pairs(shipped) do if mine[name] == nil then Try(b) end end
+        for _, b in pairs(mine) do Try(b) end
+        return bx, by
+    end
     for i, v in ipairs(views) do
         if v.floor == floor and v.x and v.y and v.mark ~= "off" then
             local c = v.yours and PENCIL or RED
-            local px, py = v.x * w, -v.y * w * 668 / 1002
+            local vx, vy = v.x, v.y
+            if not v.mark then vx, vy = OnBoss(vx, vy) end
+            local px, py = vx * w, -vy * w * 668 / 1002
             local rsz = ringSize * (v.rs or 1)  -- (the note's ring at its own size: Ctrl + wheel over it)
             local num = Text(owner, math.max(6, math.floor(rsz * 0.8)), c, m)
             num:SetText(i)
@@ -1529,16 +1550,32 @@ local DRAWN_BY = {
     brakk = { ink = 1, w = 1.35 },  -- a guide's sketch: heavy, plain, the way marked
     them = { ink = 6, w = 1 },      -- not his: a sketch found on a page he hadn't drawn on, in their violet (the Spire)
 }
-local function SceneSketch(scene, ink, seed, by)
+-- (pen pieces, the scenes redrawn 2026-11-13: drawn in a hand of their own (Ink.lua's ns.SketchHand): the page's
+-- writing hand (pageHand: FoundNotes.hands), who drew it, and the page's own say (over: before.hand); the place
+-- alone is left unfinished by a hand's stop)
+local function SceneSketch(scene, ink, seed, by, pageHand, over)
     local out, pieces = {}, ns.INK_SCENES or {}
+    local made = {}
     for n, s in ipairs(scene or {}) do
         local piece = pieces[s[1]]
         if piece then
             local x, y = 0, 0
             if not piece.wide then x, y = (s[2] or 0) / SCENE_W, (s[3] or 0) / SCENE_H end
-            local hand = DRAWN_BY[s.by or by or ""]
-            out[#out + 1] = { t = "sketch", piece = s[1], ink = hand and hand.ink or ink, w = hand and hand.w or nil,
+            local who = s.by or by or ""
+            local hand = DRAWN_BY[who]
+            local pen
+            if piece.pen and ns.SketchHand then
+                local key = who .. (piece.wide and ":place" or "")
+                pen = made[key]
+                if not pen then
+                    pen = ns.SketchHand(pageHand, who ~= "" and who or nil, over)
+                    if not piece.wide then pen.stop = 1 end
+                    made[key] = pen
+                end
+            end
+            out[#out + 1] = { t = "sketch", piece = s[1], ink = hand and hand.ink or ink, w = not pen and hand and hand.w or nil,
                               r = (seed + n * 131) % 2000000000 + 1, rot = s.rot,  -- (rot: turned, degrees clockwise, round its foot)
+                              flip = s.flip, hand = pen,
                               p = { x, y }, sc = not piece.wide and s[4] ~= 1 and s[4] or nil }
         end
     end
@@ -1577,7 +1614,9 @@ local function SceneInk(dg, spreadIndex)
     local b = dg.before
     local mine = who ~= "wanderer" and Mine(dg.id)
     if mine and mine.before and mine.before.scene then return mine.before.scene end  -- (your copy of it, once changed)
-    return b.ink or SceneSketch(b.scene, spreadIndex >= DeepFrom() and not dg.sepia and 3 or 1, Hash(dg.id), b.by)
+    local hands = Data().hands or {}
+    return b.ink or SceneSketch(b.scene, spreadIndex >= DeepFrom() and not dg.sepia and 3 or 1, Hash(dg.id), b.by,
+                                hands[dg.id .. ":before"] or hands[dg.id], b.hand)
 end
 
 -- a quest in your log ("have"), done ("done"), or neither
@@ -1964,11 +2003,22 @@ local function Before(dg)
     -- (the scene takes what room the words leave it: never past the page's foot)
     local width = PW - 40 - 34
     local textH = 0
-    for _, l in ipairs(b.lines) do textH = textH + select(2, Layout(l.s, width, BODY, HAND_BODY)) + 7 end
+    -- (b.across = { k, x, y }: the diary's line k is written on the facing page at (x, y) instead, where it
+    -- belongs to something there: Shadowfang's peacebloom line under the flower's ghost, 2026-11-14. The line
+    -- keeps its number, so a player's own rewording of any diary line stays on its line.)
+    local across = b.across
+    for _, l in ipairs(b.lines) do
+        if not (across and l.k == across.k) then textH = textH + select(2, Layout(l.s, width, BODY, HAND_BODY)) + 7 end
+    end
     for _, l in ipairs(b.added) do textH = textH + select(2, Layout(l.s, width, BODY, HAND_YOURS)) + 7 end
-    if b.margin then textH = textH + select(2, Layout(b.margin, width - 20, 15, HAND_BODY)) + 10 end
+    -- (b.marginAcross: the small note under the diary goes on the facing page, under what to bring, so the
+    -- drawing keeps its size on a full page. Only where the note stands by itself: the Deadmines', 2026-11-14)
+    local marginHere = b.margin and not b.marginAcross
+    if marginHere then textH = textH + select(2, Layout(b.margin, width - 20, 15, HAND_BODY)) + 10 end
     if b.whisper then textH = textH + 30 end
-    local sceneH = math.max(96, math.min((PW - 70) * SCENE_H / SCENE_W, PH - 80 - 8 - 34 - textH))
+    -- (24 under the words, 34 until 2026-11-14: the last line then ends about 36 over the page's foot, clear of
+    -- its number, and a tight page's drawing is some 10 taller)
+    local sceneH = math.max(96, math.min((PW - 70) * SCENE_H / SCENE_W, PH - 80 - 8 - 24 - textH))
     if not story then sceneH = 0 end  -- (the scene is the story's)
     local sceneW = sceneH * SCENE_W / SCENE_H
     local scene = left.scene
@@ -1983,11 +2033,32 @@ local function Before(dg)
         scene:SetSize(sceneW, sceneH)
         scene:SetFrameLevel(left:GetFrameLevel() + 2)
         scene:Show()
-        if ns.InkDrawList then ns.InkDrawList(scene, SceneInk(dg, i)) end
+        -- (turning through the pages fast: a drawing is some 1,500 lines, built and laid each time its page opens.
+        -- A page reached within 0.3 s of the one before waits a moment for its drawing, and gets none if it is
+        -- turned past; a page opened by itself, or drawn again while it stays open, is drawn at once. 2026-11-14)
+        if ns.InkDrawList then
+            local now = GetTime()
+            local fast = left.scenePage ~= id and left.sceneAt and now - left.sceneAt < 0.3
+            left.sceneTurn = (left.sceneTurn or 0) + 1
+            left.scenePage, left.sceneAt = id, now
+            if fast and C_Timer and C_Timer.After then
+                ns.InkDrawList(scene, {})
+                local turn = left.sceneTurn
+                C_Timer.After(0.15, function()
+                    if left.sceneTurn == turn and scene:IsShown() then ns.InkDrawList(scene, SceneInk(dg, i)) end
+                end)
+            else
+                ns.InkDrawList(scene, SceneInk(dg, i))
+            end
+        end
     end
     local y = -80 - sceneH - 8
     for _, l in ipairs(b.lines) do
-        y = Put(left, l.s, 40, y, width, BODY, l.yours and HAND_YOURS or HAND_BODY, l.yours and PENCIL or hand, "diary" .. l.k, Edit("diary", l.k)) - 7
+        if across and l.k == across.k then
+            Put(right, l.s, across.x, across.y, PW - across.x - 34, BODY, l.yours and HAND_YOURS or HAND_BODY, l.yours and PENCIL or hand, "diary" .. l.k, Edit("diary", l.k))
+        else
+            y = Put(left, l.s, 40, y, width, BODY, l.yours and HAND_YOURS or HAND_BODY, l.yours and PENCIL or hand, "diary" .. l.k, Edit("diary", l.k)) - 7
+        end
     end
     -- (your own lines after the page's; what doesn't fit goes on under the facing page's)
     local spill = {}
@@ -2004,7 +2075,7 @@ local function Before(dg)
         AddButtons(left, 40, y, width)
         if editing then y = y - 26 end
     end
-    if b.margin then
+    if marginHere then
         y = Put(left, b.margin, 52, y - 4, width - 20, 15, HAND_BODY, b.marginYours and PENCIL or INK_SOFT, "margin", Edit("margin")) - 6
     end
     if b.whisper then
@@ -2058,6 +2129,9 @@ local function Before(dg)
         who5:SetPoint("TOPLEFT", 44, y - 8)
         who5:SetText(b.rule[1])
         y = Put(right, b.rule[2], 44, y - 30, PW - 44 - 34, 17, HAND_BODY, hand, "rule", who == "wanderer" and Edit("rule") or nil) - 6
+    end
+    if b.margin and not marginHere then
+        y = Put(right, b.margin, 56, y - 12, PW - 44 - 34 - 20, 15, HAND_BODY, b.marginYours and PENCIL or INK_SOFT, "margin", Edit("margin")) - 6
     end
     y = y - 8
     for _, l in ipairs(spill) do
@@ -3822,7 +3896,7 @@ function ns.QuillButton(parent, size)  -- (on ns: the file is at Lua's 200 local
     b:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:AddLine("Write in the book")
-        ns.ShiftLines(self, { "Rewrite its lines, add your own, mark its pages and maps; the Battlefield map too while it's open." })
+        ns.ShiftLines(self, { "Edit the book's lines, add your own, draw on its pages and maps. Also works on the Battlefield map while the book is open." })
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -3923,27 +3997,52 @@ Show = function(to)
     if writing and UpdateBar then UpdateBar() end  -- (the quill's catcher: the scene on a "before" page, else the spread)
     prevCorner:SetShown(to > 0)
     nextCorner:SetShown(to < Spreads() or beforeOf == to)  -- (a "before" page: its own page next)
-    local step = math.min(30, (H - 40 - 72) / math.max(1, #tabs))  -- (closer together in a long book; above the quill)
-    for i, tab in ipairs(tabs) do
-        Bits(tab.bg, 40, i == to and 44 or 0, 216, i == to and 80 or 36)
+    -- the fore-edge tabs: the contents first, a dungeon each, the way back last (the story's only). The user,
+    -- 2026-11-11: the first and the last spread had no tab, only the page corners led to them.
+    local wayAt = Spreads() > #Data() and Spreads() or nil
+    local step = math.min(30, (H - 40 - 72) / math.max(1, #tabs + 1 + (wayAt and 1 or 0)))  -- (closer together in a long book; above the quill)
+    local function Lay(tab, slot, on)
+        Bits(tab.bg, 40, on and 44 or 0, 216, on and 80 or 36)
         tab:ClearAllPoints()
-        tab:SetPoint("TOPLEFT", open, "TOPRIGHT", i == to and -PAD_R + 2 or -PAD_R - 4, -40 - (i - 1) * step)
+        tab:SetPoint("TOPLEFT", open, "TOPRIGHT", on and -PAD_R + 2 or -PAD_R - 4, -40 - slot * step)
+    end
+    if tabs.first then Lay(tabs.first, 0, to == 0) end
+    for i, tab in ipairs(tabs) do Lay(tab, i, i == to) end
+    if tabs.last then
+        tabs.last:SetShown(wayAt ~= nil)
+        if wayAt then Lay(tabs.last, #tabs + 1, to == wayAt) end
     end
 end
 
 local function BuildTabs()
+    local function Make()
+        local t = CreateFrame("Button", nil, open)
+        t:SetSize(118, 26)
+        t:SetFrameLevel(open:GetFrameLevel())
+        t.bg = t:CreateTexture(nil, "BACKGROUND")
+        t.bg:SetAllPoints()
+        t.label = t:CreateFontString(nil, "OVERLAY")
+        SetHand(t.label, 13)
+        t.label:SetTextColor(INK[1], INK[2], INK[3])
+        t.label:SetPoint("LEFT", 28, 0)
+        return t
+    end
+    -- (the first spread and the last have tabs of their own, above and below the dungeons': Show lays them out)
+    if not tabs.first then
+        tabs.first = Make()
+        tabs.first.label:SetText("Contents")
+        tabs.first:SetScript("OnClick", function() Turn(0) end)
+    end
+    tabs.first:Show()
+    if not tabs.last then
+        tabs.last = Make()
+        tabs.last.label:SetText("The way back")
+        tabs.last:SetScript("OnClick", function() Turn(Spreads()) end)
+    end
     for i, dg in ipairs(Data()) do
         local t = tabs[i]
         if not t then
-            t = CreateFrame("Button", nil, open)
-            t:SetSize(118, 26)
-            t:SetFrameLevel(open:GetFrameLevel())
-            t.bg = t:CreateTexture(nil, "BACKGROUND")
-            t.bg:SetAllPoints()
-            t.label = t:CreateFontString(nil, "OVERLAY")
-            SetHand(t.label, 13)
-            t.label:SetTextColor(INK[1], INK[2], INK[3])
-            t.label:SetPoint("LEFT", 28, 0)
+            t = Make()
             tabs[i] = t
         end
         t.label:SetText(dg.tab or dg.title or dg.id)
@@ -4042,11 +4141,36 @@ local function DropShipped()
         return out
     end
     -- (the easy pulls' "!" under their pins, gone 2026-11-02: out of your copies too)
+    -- (and the "?" under the quest pins, gone 2026-11-16. Only a tool writes gen: ink drawn by hand has
+    -- none, so a "?" or "!" of your own is never touched.)
     for _, t in ipairs({ a, bases }) do
         for id, c in pairs(t) do
             for _, list in pairs(id ~= "flyleafMarks" and type(c) == "table" and c.mapMarks or {}) do
                 for i = #list, 1, -1 do
-                    if list[i].gen == 2 and list[i].t == "bang" then table.remove(list, i) end
+                    if list[i].gen == 2 and (list[i].t == "bang" or list[i].t == "q") then table.remove(list, i) end
+                end
+            end
+        end
+    end
+    -- (the "before we go" scenes redrawn, 2026-11-14: a copy of yours still carrying the old drawing as ink
+    -- (before.ink with no pen piece in it) would keep the old one over the page's new scene, since the ink is
+    -- "yours where you changed it". The old drawing goes, set aside first (notebook.stale); the rest of your
+    -- copy stays. A copy made of the new drawing has a pen piece in it and is left alone.)
+    local pieces = ns.INK_SCENES or {}
+    for id, c in pairs(a) do
+        for _, dg in ipairs(Data()) do
+            local fb = dg.id == id and dg.before
+            local first = fb and fb.scene and fb.scene[1] and pieces[fb.scene[1][1]]
+            if first and first.pen and type(c) == "table" and type(c.before) == "table" and c.before.ink then
+                local new = false
+                for _, m in ipairs(c.before.ink) do
+                    if m.t == "sketch" and pieces[m.piece] and pieces[m.piece].pen then new = true end
+                end
+                if not new then
+                    SetAside(id, c)
+                    c.before.ink, c.before.scene = nil, Copy(fb.scene)
+                    local base = bases[id]
+                    if base and type(base.before) == "table" then base.before.ink, base.before.scene = nil, Copy(fb.scene) end
                 end
             end
         end
@@ -4189,6 +4313,44 @@ local function Create()
         GameTooltip:Show()
     end)
     spine:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- A way to put the book away that can be seen: a small "x" in his ink at the right page's top outer corner,
+    -- there only while the pointer is on the book, so the pages stay clean at rest (the user, 2026-11-15: a
+    -- click on the map can bring up "the book that covers half your screen with no immediate obvious way to
+    -- close"; of three ideas, "Corner x on hover"). The spine's fold and Escape are as they were.
+    do
+        local away = CreateFrame("Button", nil, open)
+        away:SetSize(24, 24)
+        away:SetPoint("TOPRIGHT", right, "TOPRIGHT", -10, -8)
+        away:SetFrameLevel(right:GetFrameLevel() + 8)
+        local x = away:CreateFontString(nil, "OVERLAY")
+        if not (pcall(x.SetFont, x, HAND, 22, "") and x:GetFont()) then x:SetFont("Fonts\\FRIZQT__.TTF", 16, "") end
+        x:SetPoint("CENTER")
+        x:SetText("x")
+        x:SetTextColor(0.35, 0.23, 0.11)
+        away:SetAlpha(0)
+        away:SetScript("OnClick", function()
+            GameTooltip:Hide()
+            book:Hide()
+        end)
+        away:SetScript("OnEnter", function(self)
+            x:SetTextColor(0.54, 0.165, 0.11)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:AddLine("Put the book away")
+            GameTooltip:Show()
+        end)
+        away:SetScript("OnLeave", function()
+            x:SetTextColor(0.35, 0.23, 0.11)
+            GameTooltip:Hide()
+        end)
+        -- (looked at ten times a second while the book is open: is the pointer on it)
+        local since = 0
+        away:SetScript("OnUpdate", function(self, e)
+            since = since + e
+            if since < 0.1 then return end
+            since = 0
+            self:SetAlpha(open:IsMouseOver() and 0.75 or 0)
+        end)
+    end
     prevCorner = Corner(left, true, -1)
     nextCorner = Corner(right, false, 1)
     if ns.InkHost then
@@ -4228,7 +4390,7 @@ local function Create()
     end)
     big:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine("The map, big")
+        GameTooltip:AddLine("Big map")
         GameTooltip:Show()
     end)
     big:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -4251,8 +4413,14 @@ function ns.ToggleNotebook()
     end
     -- (in a dungeon the book has a page on, or the zone its door is in: turned to it; elsewhere
     -- the page it was last open at)
+    -- (the very first time: the flyleaf and the contents, wherever you stand. On a clean install it opened
+    -- at Scarlet Monastery, its door being in the zone: "It should open on contents", the user 2026-11-15)
     local here = ns.NotebookHere()
-    if here and here ~= Cfg().spread then
+    if not Cfg().openedOnce then
+        Cfg().openedOnce = true
+        Cfg().spread = 0
+        beforeOf = nil
+    elseif here and here ~= Cfg().spread then
         Cfg().spread = here
         beforeOf = nil
     end
@@ -4287,6 +4455,7 @@ end
 function ns.OpenNotebook(instance, floor, before)
     if not book then Create() end
     beforeOf = nil
+    Cfg().openedOnce = true   -- (asked for by its dungeon: that page, the first time too)
     for i, dg in ipairs(Data()) do
         if dg.instance == instance and not ns.NotebookLocked(i) then
             Cfg().spread = i
@@ -4505,7 +4674,23 @@ local function DungeonMapNotes()
         local views = NoteViews(dg)
         who = saved
         for _, v in ipairs(views) do v.dgi = idx end
-        for _, sp in ipairs(NoteSpots(layer, layer, floor, 1002, RING_PX, views)) do
+        -- (Each mark's frame is its own: 2026-11-16, the user: "what you expect that you're hovering on the map is
+        -- what you're actually hovering". Every mark had a frame a ring and a fifth wide, a bare number too, and
+        -- two marks close together lay under each other's: Zul'Farrak's 6 and 7, Stratholme's. A bare number's
+        -- is now its own size, and two that would overlap stop halfway between the marks.
+        -- tools\dangers_overlap.lua works these sizes out the same way.)
+        local spots = NoteSpots(layer, layer, floor, 1002, RING_PX, views)
+        for _, sp in ipairs(spots) do sp.hit = sp.view.mark == "number" and 26 or RING_PX * 1.2 end
+        for i, sp in ipairs(spots) do
+            sp.size = sp.hit
+            for j, o in ipairs(spots) do
+                if j ~= i then
+                    local d = math.max(math.abs(sp.x - o.x), math.abs(sp.y - o.y))
+                    if d < (sp.hit + o.hit) / 2 then sp.size = math.min(sp.size, math.max(14, 2 * d * sp.hit / (sp.hit + o.hit))) end
+                end
+            end
+        end
+        for _, sp in ipairs(spots) do
             local b = Take(layer, "hit", function()
                 local b = CreateFrame("Frame", nil, layer)
                 b.bfiTag = "notes ring"
@@ -4520,18 +4705,36 @@ local function DungeonMapNotes()
                     if not ns.InkCatcherPress(false, button) and ns.DungeonMapUp then ns.DungeonMapUp(button) end
                 end)
                 b:SetScript("OnEnter", function(self)
+                    -- (on the dungeon map the note shows on a slip of paper in his hand, as a danger mark's
+                    -- does beside it (Dangers.lua, ns.PaperNote): the user, 2026-11-15, "one is a paper note,
+                    -- other is a tooltip... paper for both". Without that file: the game's tooltip, as before.)
+                    if ns.PaperNote then
+                        -- (the boss whose skull the ring is on: his name, and "Defeated", at the head of the slip)
+                        local head
+                        if ns.DungeonBossAt and self.fx then
+                            local boss, dead, kind = ns.DungeonBossAt(self.fx, self.fy)
+                            if boss then head = boss .. (kind == "rare" and "  \194\183  Rare" or "") .. (dead and "  \194\183  Defeated" or "") end
+                        end
+                        ns.PaperNote(self, self.n .. ".  " .. ((self.text or ""):gsub("~", "")), "Click: its menu.", self.n, head)   -- (self.n: a danger at this mark is said on the same slip)
+                        return
+                    end
                     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                     GameTooltip:AddLine(self.n .. ".  " .. ((self.text or ""):gsub("~", "")), 1, 0.93, 0.78, true)
                     ns.Hints({ { "Click", "the found notes" }, { ns.QuillOut() and "Drag" or "Ctrl-drag", "move it (its number: round it)" },
                                { "Right-click", "its menu" } })
                     GameTooltip:Show()
                 end)
-                b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+                b:SetScript("OnLeave", function()
+                    GameTooltip:Hide()
+                    if ns.PaperNoteHide then ns.PaperNoteHide() end
+                end)
                 return b
             end)
             b:SetFrameLevel(layer:GetFrameLevel() + 2)
+            b:SetSize(sp.size, sp.size)
             b:SetPoint("CENTER", layer, "TOPLEFT", sp.x, sp.y)
             b.n, b.text = sp.n, sp.view.text
+            b.fx, b.fy = sp.x / 1002, -sp.y / 668
         end
         -- (the closed notebook: this place is in the book; a click opens it there)
         local s = dm.stamp
@@ -4573,7 +4776,9 @@ end
 
 -- what the found notes say at a spot on a dungeon floor (the boss list asks at a
 -- boss's spot): the note's number and words, the book as you have it
-function ns.FoundNoteAt(instance, floor, x, y)
+-- (reach: how near counts, 0.015 if not said; also returns where the note's mark is)
+function ns.FoundNoteAt(instance, floor, x, y, reach)
+    reach = reach or 0.015
     for i, dg in ipairs(Data()) do
         if dg.instance == instance then
             local saved = who
@@ -4582,12 +4787,54 @@ function ns.FoundNoteAt(instance, floor, x, y)
             who = saved
             for n, v in ipairs(views) do
                 if v.floor == floor and v.x and v.mark ~= "off"
-                    and math.abs(v.x - x) < 0.015 and math.abs(v.y - y) < 0.015 then  -- (a ring dropped by hand near the skull counts)
-                    return n, v.text
+                    and math.abs(v.x - x) < reach and math.abs(v.y - y) < reach then  -- (a ring dropped by hand near the skull counts)
+                    return n, v.text, v.x, v.y, v.mark, v.na
                 end
             end
         end
     end
+end
+
+-- what of the book's marks on a dungeon floor must stay readable, for Dangers.lua to keep its rings off:
+-- { { x, y, r (px of the 1002 picture) }, ... }: each note's number where it stands round its ring or x, each x,
+-- each bare number
+function ns.FoundNumbersOn(instance, floor)
+    local out = {}
+    for i, dg in ipairs(Data()) do
+        if dg.instance == instance then
+            local saved = who
+            who = "you"
+            local views = NoteViews(Entry(i))
+            who = saved
+            for _, v in ipairs(views) do
+                if v.floor == floor and v.x and v.y and v.mark ~= "off" then
+                    local rsz = RING_PX * (v.rs or 1)
+                    if v.mark == "number" then
+                        out[#out + 1] = { v.x, v.y, 9 }
+                    else
+                        local a = math.rad(v.na or 38)
+                        out[#out + 1] = { v.x + math.cos(a) * rsz * 0.78 / 1002, v.y - math.sin(a) * rsz * 0.78 / 668, math.max(6, rsz * 0.2) }
+                        if v.mark == "x" then out[#out + 1] = { v.x, v.y, rsz * 0.3 } end
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- the words the wanderer wrote in ink on a dungeon floor's map: { { "words", x, y (its top left) }, ... }.
+-- For Dangers.lua: a danger's tag does not say again what is written on the map in front of you.
+function ns.FoundInkWords(instance, floor)
+    local out = {}
+    for _, dg in ipairs(Data()) do
+        if dg.instance == instance then
+            for _, m in ipairs(MapMarks(dg, floor, true) or {}) do
+                if m.t == "text" and m.s and m.p then out[#out + 1] = { m.s, m.p[1], m.p[2] } end
+            end
+        end
+    end
+    return out
 end
 
 -- The quill, for Ink.lua (the Battlefield map) -------------------------------------
@@ -4607,6 +4854,12 @@ function ns.QuillMenu(items) Menu(items) end
 function ns.QuillUndo(u) undo[#undo + 1] = u end
 function ns.QuillPlace() if writing then PlaceBar() end end
 function ns.NotebookOpen() return book and book:IsShown() and open:IsShown() or false end
+-- (the dungeon whose "before we go" page the open book shows, or nil: a camp on the map puts the book away on
+-- a second click, Camps.lua)
+function ns.NotebookBeforeOpen()
+    local dg = beforeOf and Data()[beforeOf]
+    return book and book:IsShown() and open:IsShown() and dg and dg.instance or nil
+end
 
 -- as the wanderer on a found-notes dungeon's floor ("d<instance>:<floor>"): the book's
 -- marks on its map (make: on the copy to change); nil anywhere else
@@ -4712,11 +4965,28 @@ function ns.FoundSpotGrab()
     return (SpotUnder(layer))
 end
 
--- a click on a note's ring on the dungeon map: the book, on that dungeon and floor
+-- a click on a note's ring on the dungeon map: a one-line menu that opens the book on that dungeon and floor.
+-- (It opened the book at once until 2026-11-15. The user: a click on a danger mark beside it opens the danger
+-- on its small panel, a click on a ring that looks much the same "opens the book that covers half your screen
+-- with no immediate obvious way to close". Of the two ways out they chose "Small menu first".)
 function ns.FoundSpotOpen()
     local layer = dm and dm.layer
     if not (layer and layer:IsVisible() and SpotUnder(layer) and layer.dg) then return false end
-    ns.OpenNotebook(layer.dg.instance, layer.floor)
+    local inst, floor = layer.dg.instance, layer.floor
+    local sp = SpotUnder(layer)
+    -- (a danger that lies at this mark has no mark of its own here: this mark's menu opens it on its note)
+    local rows = {}
+    for _, e in ipairs(ns.DangersAtNote and ns.DangersAtNote(sp.n) or {}) do
+        rows[#rows + 1] = { "what kills here: " .. e.title, function() ns.DangersLead(e) end }
+    end
+    rows[#rows + 1] = { "open the found notes here", function() ns.OpenNotebook(inst, floor) end }
+    -- (the boss the ring is on: his own menu, which the skull under the ring cannot be clicked for)
+    if ns.DungeonBossAt and sp.x then
+        local boss, _, _, name = ns.DungeonBossAt(sp.x / 1002, -sp.y / 668)
+        if boss then rows[#rows + 1] = { boss .. "...", function() ns.DungeonBossMenu(name) end } end
+    end
+    if ns.PaperNoteHide then ns.PaperNoteHide() end
+    Menu(rows)
     return true
 end
 

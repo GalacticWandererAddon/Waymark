@@ -281,9 +281,9 @@ end
 -- with the gamepad UI on taints its bindings, which crashes: Questie warns too.)
 local function OpenLog(id)
     if ns.Trail then ns.Trail("open the game's quest log") end
-    if InCombatLockdown() then ns.Log("can't open the quest log in combat") return end
+    if InCombatLockdown() then ns.Log("Can't open the quest log in combat.") return end
     if InputUtil and InputUtil.IsGamepadUIEnabled and InputUtil.IsGamepadUIEnabled() then
-        ns.Log("opening the quest log from the tracker is off in controller mode")
+        ns.Log("Can't open the quest log from the tracker in controller mode.")
         return
     end
     local logFrame = QuestLogExFrame or ClassicQuestLog or QuestLogFrame
@@ -844,7 +844,7 @@ function ns.FindQuestOnMap(id, grown)
     local m = ns.QuestFindMap and ns.QuestFindMap(id)
     local map = BattlefieldMapFrame
     if not (m and map) then
-        UIErrorsFrame:AddMessage("No place on the map known for this quest", 1, 0.3, 0.1)
+        UIErrorsFrame:AddMessage("No known location for this quest.", 1, 0.3, 0.1)
         return
     end
     -- docked over the minimap: the big map, beside the square, to find it on
@@ -927,15 +927,15 @@ local function Row(i)
             -- window, or the game's when that's off), and find it on the map
             local id = q.id
             local items = {
-                { "view details", function()
+                { "quest details", function()
                     if ns.db.questlog.shown then ns.ShowQuestWindow(id) else OpenLog(id) end
                 end },
             }
             if ns.FindQuestOnMap then items[#items + 1] = { "find on map", function() ns.FindQuestOnMap(id) end } end
-            items[#items + 1] = { ns.IsFocused(id) and "out of focus" or "focus quest", function() ns.ToggleFocus(id) end }
+            items[#items + 1] = { ns.IsFocused(id) and "unfocus quest" or "focus quest", function() ns.ToggleFocus(id) end }
             -- (a quest the found notes name: its dungeon's "before we go" page)
             local page = ns.NotebookQuestPage and ns.NotebookQuestPage(id)
-            if page then items[#items + 1] = { "in the found notes", function() ns.OpenNotebook(page, nil, true) end } end
+            if page then items[#items + 1] = { "open in the found notes", function() ns.OpenNotebook(page, nil, true) end } end
             if ns.QuillMenu then ns.QuillMenu(items) end
         elseif IsShiftKeyDown() and ns.LinkQuestInChat(q.id, q.title) then
             return  -- (chat open: shift-click links it, as in the game's log)
@@ -962,7 +962,7 @@ local function Row(i)
             GameTooltip:SetOwner(self, "ANCHOR_LEFT")
             GameTooltip:AddLine(self.text:GetText() or "")
             ns.Hints({ { "Click", self.kind == "area" and "fold its quests away, or show them again"
-                or "show or hide the quests here you don't track; click one of them to track it" } })
+                or "show/hide. Click quest title to track it." } })
             GameTooltip:Show()
             return
         end
@@ -1336,6 +1336,24 @@ local function Fade(f, on)
     end
 end
 
+-- The game's tracker let go, and still gone a moment later: while it was tiny, the game laid its right-hand
+-- column out again (any quest update does), found no room for the tracker and hid it itself. Nothing makes
+-- it measure again before a reload, and doing that from here is what broke the controller's buttons (above).
+-- So: one chat line saying how to get it back. (The user, 2026-11-16, on the clean client: "Toggeling
+-- tracker on and off, hides blizz one when toggelign it off again"; "a chat with /reload brings
+-- blizz-tracker back is ok temporarily". Read only: IsShown and the watch count run none of the game's Lua.)
+local stuckTold = false
+local function CheckGameTrackerBack()
+    local f = _G.ObjectiveTrackerFrame
+    if not f or gameHidden then return end
+    if f:IsShown() then stuckTold = false return end
+    local n = C_QuestLog and C_QuestLog.GetNumQuestWatches and C_QuestLog.GetNumQuestWatches() or 0
+    if n > 0 and not stuckTold then
+        stuckTold = true
+        ns.Log("The game's quest tracker comes back after /reload.")
+    end
+end
+
 local function ApplyGameTracker()
     local want = WantGameHidden()
     if want == gameHidden then return end
@@ -1351,6 +1369,7 @@ local function ApplyGameTracker()
         local f = _G[name]
         if f and name == "ObjectiveTrackerFrame" then
             Fade(f, want)
+            if not want and C_Timer then C_Timer.After(1.5, function() pcall(CheckGameTrackerBack) end) end
         elseif f then
             if not hooked[name] then
                 hooked[name] = true
@@ -2280,7 +2299,7 @@ local function ListRow(i)
             local id = self.questID
             local items = { { "find on map", function() ns.FindQuestOnMap(id) end } }
             local page = ns.NotebookQuestPage and ns.NotebookQuestPage(id)
-            if page then items[#items + 1] = { "in the found notes", function() ns.OpenNotebook(page, nil, true) end } end
+            if page then items[#items + 1] = { "open in the found notes", function() ns.OpenNotebook(page, nil, true) end } end
             items[#items + 1] = { IsWatched(id, LogIndex(id)) and "untrack" or "track", function()
                 ToggleWatch(id)
                 ns.UpdateTracker(true)
@@ -2294,7 +2313,7 @@ local function ListRow(i)
             local id = self.previewID
             local items = { { "find on map", function() ns.FindQuestOnMap(id) end } }
             local page = ns.NotebookQuestPage and ns.NotebookQuestPage(id)
-            if page then items[#items + 1] = { "in the found notes", function() ns.OpenNotebook(page, nil, true) end } end
+            if page then items[#items + 1] = { "open in the found notes", function() ns.OpenNotebook(page, nil, true) end } end
             if ns.QuillMenu then ns.QuillMenu(items) end
             return
         end
@@ -2711,6 +2730,24 @@ function FillQuestWindow()
             qw.summary:SetPoint("TOPLEFT", 5, -y)
             y = y + qw.summary:GetStringHeight() + 18
         end
+        -- (the giver's own words, where QuestWords.lua holds them. A description only ever came
+        -- from your own log, so a step you do not hold had none.)
+        local okW, words = pcall(ns.QuestWords or function() end, qwPreview)
+        words = okW and words or nil
+        if qw.wordsHeader then qw.wordsHeader:Hide() end
+        if words then
+            if not qw.wordsHeader then qw.wordsHeader = qw.content:CreateFontString(nil, "ARTWORK") end
+            PartFont(qw.wordsHeader, "Sect", colors[2], TEXT_W)
+            qw.wordsHeader:SetText(QUEST_DESCRIPTION or "Description")
+            qw.wordsHeader:SetPoint("TOPLEFT", 5, -y)
+            qw.wordsHeader:Show()
+            y = y + qw.wordsHeader:GetStringHeight() + 5
+            PartFont(qw.desc, "Detail", colors[1], TEXT_W)
+            qw.desc:SetText(words)
+            qw.desc:SetPoint("TOPLEFT", 5, -y)
+            qw.desc:Show()
+            y = y + qw.desc:GetStringHeight() + 18
+        end
         y = FillChain(chain, y, colors, dark)
         qw.contentH = y
         qw.content:SetHeight(y)
@@ -2728,6 +2765,7 @@ function FillQuestWindow()
         return
     end
     if qw.previewNote then qw.previewNote:Hide() end
+    if qw.wordsHeader then qw.wordsHeader:Hide() end
     qw.descHeader:SetText(QUEST_DESCRIPTION or "Description")
     qw.title:Show()
     local e = Entry(index) or {}
@@ -2779,7 +2817,14 @@ function FillQuestWindow()
         qw.summary:SetText(objText or "")
         qw.summary:SetPoint("TOPLEFT", 5, -y)
         y = y + (objText and objText ~= "" and qw.summary:GetStringHeight() + 10 or 0)
-        for i, o in ipairs(Objectives(id, index)) do
+        -- (Forever gives a delivery one objective, already ticked, that only repeats the summary above:
+        -- the same words twice on the page. Such a line is left out.)
+        local function Plain(t) return (t or ""):gsub("%s+", " "):gsub("^ ", ""):gsub(" $", ""):lower() end
+        local said, shown = Plain(objText), 0
+        for _, o in ipairs(Objectives(id, index)) do
+          if said == "" or Plain(o.text) ~= said then
+            shown = shown + 1
+            local i = shown
             local l = qw.objLines[i]
             if not l then
                 l = qw.content:CreateFontString(nil, "ARTWORK")
@@ -2790,6 +2835,7 @@ function FillQuestWindow()
             l:SetPoint("TOPLEFT", 5, -y)
             l:Show()
             y = y + l:GetStringHeight() + 2
+          end
         end
         y = y + 18
     end
@@ -2963,11 +3009,7 @@ end
 local function ApplyQuestFrame()
     local c = QCfg()
     local style, size, gap, color = c.borderStyle or "own", c.borderSize, c.borderGap, c.borderColor
-    if style == "map" then
-        local b = ns.db.border
-        style, size, gap, color = ns.MapBorderStyle(true), b.size, b.gap, b.color
-        if style == "game" then style = "own" end
-    end
+    if style == "map" then style = "own" end   -- (gone from the choice, 2026-11-16: ns.QuestLogBorderOwn settles a saved one)
     qw.frameArt:SetShown(style == "own")
     if style == "own" or not ns.DressBorder then
         qw.border:Hide()
@@ -3399,7 +3441,7 @@ local function BuildQuestWindow()
         line:Show()
         GameTooltip:SetOwner(edge, "ANCHOR_BOTTOM")
         GameTooltip:AddLine("Height")
-        GameTooltip:AddLine("Drag: its height", 1, 1, 1)
+        GameTooltip:AddLine("Drag to set the height.", 1, 1, 1)
         GameTooltip:Show()
     end)
     edge:SetScript("OnLeave", function()
@@ -3504,7 +3546,7 @@ end
 local function MapLoaded()
     if BattlefieldMapFrame then return true end
     if InCombatLockdown() then
-        ns.Log("the quest window can't load in combat the first time: after the fight")
+        ns.Log("Can't open the quest log in combat the first time. Try again after combat.")
         return false
     end
     pcall(C_AddOns and C_AddOns.LoadAddOn or LoadAddOn, "Blizzard_BattlefieldMap")

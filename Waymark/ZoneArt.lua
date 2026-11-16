@@ -226,6 +226,16 @@ local function Tex(z, pieces, layer, sub)
     return t
 end
 
+-- The size everything on the host is laid by: the canvas's own, never the host's. The host fills the
+-- canvas by its anchors, and inside the canvas's OnSizeChanged (a corner drag fires it every frame) the
+-- host has not been measured again yet: its width read stale or as nothing, so the baked cells, patches
+-- and lettering were laid at the wrong size and stood gone or out of place until the next tick laid them
+-- again (the user's shots, 2026-11-13: paint gone during a drag, a stray block in the corner).
+local function HostSize()
+    local canvas = host:GetParent()
+    return canvas:GetWidth(), canvas:GetHeight()
+end
+
 -- the zone's frames over its rectangle of the canvas, each with the outline's mask
 local function Place(z)
     local canvas = host:GetParent()
@@ -565,7 +575,7 @@ local function PatchTex(p, f, layer, sub)
 end
 
 local function BuildPatch(p)
-    local cw, ch = host:GetWidth(), host:GetHeight()
+    local cw, ch = HostSize()
     if not (cw > 0 and ch > 0) then return end
     -- (whole units: the host's width comes from its anchors and can differ a hair with the
     -- zoom, which laid every patch again on each step)
@@ -655,7 +665,8 @@ local function BakedOf(cont)
 end
 
 local function LayBaked(cont, data)
-    local cw, ch = host:GetWidth(), host:GetHeight()
+    local cw, ch = HostSize()
+    if cw <= 0 then return end  -- (no size yet: laid when there is one, never at nothing)
     if bakedFor == cont and bakedW == cw then return end
     if not bakedFrame then
         bakedFrame = CreateFrame("Frame", nil, host)
@@ -763,7 +774,7 @@ local function ShowPatches(cont, a, s, veil, detail, global, seaA)
     if not on then return end
     local fade = veil .. "|" .. detail
     local vl, vt, vr, vb = ViewBox()
-    local size, built, waiting = math.floor(host:GetWidth() + 0.5), 0, false
+    local size, built, waiting = math.floor(HostSize() + 0.5), 0, false
     for _, p in ipairs(list) do
         local d = p.d
         local inView = not vl or (d.r > vl and d.l < vr and d.b > vt and d.t < vb)
@@ -1053,9 +1064,20 @@ local function Update()
             end
             local k = f.kind == "sea" and 1 or f.kind == "cool" and 4 or f.kind == "land" and 7
             if k then f.tex:SetVertexColor(tint[k], tint[k + 1], tint[k + 2]) end
-            local cw, ch = host:GetWidth(), host:GetHeight()
+            local cw, ch = HostSize()
             local n = f.tiles
             if cw > 0 then f.tex:SetTexCoord(0, n, 0, n * ch / cw) end
+            -- (a new size: the mask taken off and put on again. /bfi fillwatch through a corner drag,
+            -- 2026-11-13, showed every fill shown, loaded and at full alpha while the user saw the
+            -- painted land gone until the size settled: the client redraws a masked texture late
+            -- after its frame is resized, as it did for the wash above)
+            if f.sizedFor ~= cw then
+                if f.sizedFor then
+                    f.tex:RemoveMaskTexture(f.mask)
+                    f.tex:AddMaskTexture(f.mask)
+                end
+                f.sizedFor = cw
+            end
             f.tex:SetAlpha(fa * global)
             f.tex:Show()
         else
@@ -1065,7 +1087,7 @@ local function Update()
     local edition = ns.MapEdition()
     local box = LETTERS[edition] and LETTERS[edition][id]
     if box and seaA > 0.01 then
-        local cw, ch = host:GetWidth(), host:GetHeight()
+        local cw, ch = HostSize()
         if host.lettersFor ~= edition .. id .. "|" .. cw then
             host.letters:SetTexture(SHAPES .. edition .. "\\letters" .. id, "CLAMP", "CLAMP", "LINEAR")
             host.letters:ClearAllPoints()

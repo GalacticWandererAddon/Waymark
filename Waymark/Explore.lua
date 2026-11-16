@@ -589,7 +589,8 @@ function ns.UpdateExplore(force)
     local mapID = map:GetMapID()
     if force then seenFor = nil end
     ns.Safe("Explore UpdateSeen", UpdateSeen, map, mapID)
-    local show = ns.IsShown("explore") and mapID and Overlays(mapID)
+    -- (the pencil draws the unexplored land itself: Pencil.lua)
+    local show = ns.IsShown("explore") and mapID and Overlays(mapID) and not (ns.PencilOn and ns.PencilOn(mapID))
     if not show then
         fogHost:Hide()
         return
@@ -678,7 +679,14 @@ function ns.SetupExplore(map)
     if map.OnMapChanged then
         hooksecurefunc(map, "OnMapChanged", function() ReleaseFog() ReleaseFlash() seenFor = nil ns.UpdateExplore() end)
     end
-    canvas:HookScript("OnSizeChanged", function() ReleaseFog() seenFor = nil ns.UpdateExplore() end)
+    -- (the hour's tint again at once: the fog laid anew has its own plain colour, and MapHour's tick came
+    -- some milliseconds later, so the unexplored land flashed to daylight all through a corner drag at night)
+    canvas:HookScript("OnSizeChanged", function()
+        ReleaseFog()
+        seenFor = nil
+        ns.UpdateExplore()
+        if ns.UpdateMapHour then ns.UpdateMapHour() end
+    end)
 
     local events = CreateFrame("Frame")
     for _, e in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS",

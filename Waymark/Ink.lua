@@ -87,11 +87,11 @@ local function Catmull(pts, n)
             no = no + 1
             out[no] = { 0.5 * (2 * bx + (-ax + cx) * t + (2 * ax - 5 * bx + 4 * cx - dx) * t2 + (-ax + 3 * bx - 3 * cx + dx) * t3),
                         0.5 * (2 * by + (-ay + cy) * t + (2 * ay - 5 * by + 4 * cy - dy) * t2 + (-ay + 3 * by - 3 * cy + dy) * t3),
-                        p1[3] + (p2[3] - p1[3]) * t }
+                        p1[3] + (p2[3] - p1[3]) * t, p1[4] and p2[4] and p1[4] + (p2[4] - p1[4]) * t or nil }
         end
     end
     local last = pts[#pts]
-    out[#out + 1] = { last[1], last[2], last[3] }
+    out[#out + 1] = { last[1], last[2], last[3], last[4] }
     return out
 end
 
@@ -207,11 +207,195 @@ local function Scaled(P, sc)
     for _, p in ipairs(P) do p[1], p[2] = cx + (p[1] - cx) * sc, cy + (p[2] - cy) * sc end
 end
 
+-- The pen of the redrawn "before we go" scenes (2026-11-13; pieces with pen = true, written by tools\ink_scenes.py
+-- from tools\book_scenes): a stroke carries its weight (w), darkness (a) and detail level (lv); shade is kept as
+-- areas, and the hand that draws the page hatches them its own way. tools\ink_pen.py is the same model outside
+-- the game (pen_strokes, sketch_hand): change both together.
+-- A hand: { wob, shake, press, taper, lift, hatch = "lines" | "zig" | "cross" | "none", dense, level, tilt, stop,
+-- tone, ragged, even }. ns.SketchHand(pageHand, by, over): from the page's writing hand (FoundNotes.hands:
+-- wobble, even, press), who drew it, and the page's own say.
+local HAND0 = { wob = 1, shake = 0, press = 1, taper = 0.6, lift = 0.5, hatch = "lines", dense = 1.1, level = 2,
+                tilt = 0, stop = 1, tone = 1, ragged = 0.2 }
+local BY_HAND = {
+    tam = { wob = 0.8, press = 1, taper = 0.3, lift = 0.6, hatch = "zig", dense = 1, level = 2, tone = 0.8, ragged = 0.3 },
+    ewen = { wob = 0.45, press = 1, taper = 0.5, lift = 0.15, hatch = "cross", dense = 0.85, level = 3, ragged = 0.05 },
+    them = { wob = 0, press = 1, taper = 0, lift = 0, hatch = "cross", dense = 0.8, level = 3, ragged = 0, even = true },
+    brakk = { wob = 1, taper = 0.3, lift = 0.3, hatch = "lines", dense = 1.4, level = 1 },
+}
+function ns.SketchHand(pageHand, by, over)
+    local h = {}
+    for k, v in pairs(HAND0) do h[k] = v end
+    local hd = pageHand or {}
+    local even = hd.even or 0.35
+    h.wob = hd.wobble or 1
+    h.press = hd.press or 1
+    h.lift = 0.55 * (1 - even)
+    h.ragged = 0.25 * (1 - even) + 0.03
+    h.dense = 1.15 - 0.3 * even
+    if even >= 0.85 then
+        h.hatch, h.level = "cross", 3
+    elseif h.press >= 1.1 then
+        h.hatch, h.level = "zig", 1
+    end
+    for k, v in pairs(BY_HAND[by or ""] or {}) do h[k] = v end
+    for k, v in pairs(over or {}) do h[k] = v end
+    return h
+end
+
+-- where a hatch line (at height vv across the strokes' direction) lies inside a polygon (flat x, y, ...)
+local function HatchSpans(poly, vv, ca, sa)
+    local xs, n = {}, #poly / 2
+    for i = 1, n do
+        local j = i % n + 1
+        local x0, y0, x1, y1 = poly[i * 2 - 1], poly[i * 2], poly[j * 2 - 1], poly[j * 2]
+        local v0, v1 = -x0 * sa + y0 * ca, -x1 * sa + y1 * ca
+        if (v0 <= vv and vv < v1) or (v1 <= vv and vv < v0) then
+            local u0, u1 = x0 * ca + y0 * sa, x1 * ca + y1 * sa
+            xs[#xs + 1] = u0 + (vv - v0) * (u1 - u0) / (v1 - v0)
+        end
+    end
+    table.sort(xs)
+    local out = {}
+    for j = 1, #xs - 1, 2 do out[#out + 1] = { xs[j], xs[j + 1] } end
+    return out
+end
+local function SpansMinus(ivs, cuts)
+    for _, c in ipairs(cuts) do
+        local nxt = {}
+        for _, iv in ipairs(ivs) do
+            if c[2] <= iv[1] or c[1] >= iv[2] then
+                nxt[#nxt + 1] = iv
+            else
+                if c[1] > iv[1] then nxt[#nxt + 1] = { iv[1], c[1] } end
+                if c[2] < iv[2] then nxt[#nxt + 1] = { c[2], iv[2] } end
+            end
+        end
+        ivs = nxt
+    end
+    return ivs
+end
+
+local DEFAULT_HAND
+local function PenStrokes(piece, m, x, y, u, r)
+    DEFAULT_HAND = DEFAULT_HAND or ns.SketchHand()
+    local hand = m.hand or DEFAULT_HAND
+    local out = {}
+    local wob, shake, taper, lift = hand.wob or 1, hand.shake or 0, hand.taper or 0, hand.lift or 0
+    local level, tone, stop = hand.level or 2, hand.tone or 1, hand.stop or 1
+    local function Out(px, py, w, a) return { x + px * u, y + py * u, w, a } end
+    local strokes = piece.strokes
+    local last = math.floor(#strokes * stop + 0.5)
+    for si = 1, last do
+        local st = strokes[si]
+        if (st.lv or 0) <= level then
+            local w0, a0 = st.w or 1, (st.a or 1) * tone
+            -- the line in steps of about 6.5 units, each with the way across it
+            local pts, total = {}, 0
+            for i = 1, #st - 3, 2 do
+                local ax, ay, bx, by = st[i], st[i + 1], st[i + 2], st[i + 3]
+                local ln = math.sqrt((bx - ax) ^ 2 + (by - ay) ^ 2)
+                local n = math.max(1, math.floor(ln / 6.5))
+                local nx, ny = 0, 0
+                if ln > 0 then nx, ny = -(by - ay) / ln, (bx - ax) / ln end
+                for k = 0, n - 1 do pts[#pts + 1] = { ax + (bx - ax) * k / n, ay + (by - ay) * k / n, nx, ny } end
+                total = total + ln
+            end
+            pts[#pts + 1] = { st[#st - 1], st[#st], 0, 0 }
+            local cur, walk, wid, run, since = {}, 0, 0.85 + r() * 0.3, 0, 0
+            for i, q in ipairs(pts) do
+                if i > 1 then
+                    local d = math.sqrt((q[1] - pts[i - 1][1]) ^ 2 + (q[2] - pts[i - 1][2]) ^ 2)
+                    run, since = run + d, since + d
+                end
+                walk = walk * 0.75 + (r() - 0.5) * 0.9 * wob
+                wid = math.max(0.7, math.min(1.2, wid + (r() - 0.5) * 0.12))
+                local ends = math.min(1, run / 3 + 0.25, (total - run) / 3 + 0.25)
+                local wm = 1 - taper * (1 - ends) * 0.7
+                local sx, sy = (r() - 0.5) * shake, (r() - 0.5) * shake
+                cur[#cur + 1] = Out(q[1] + q[3] * walk + sx, q[2] + q[4] * walk + sy, wid * w0 * wm, a0)
+                -- the pen lifts on a long line and sets down again a hair off it
+                if lift > 0 and total > 26 and since > 14 and total - run > 8 and r() < lift * 0.34 then
+                    if #cur >= 2 then
+                        cur[#cur][3] = cur[#cur][3] * (1 - taper * 0.5)
+                        out[#out + 1] = Catmull(cur, 2)
+                    end
+                    walk = walk + (r() - 0.5) * 1.6 * math.max(0.4, wob)
+                    cur, since = {}, 0
+                end
+            end
+            if #cur >= 2 then out[#out + 1] = Catmull(cur, 2) end
+        end
+    end
+    local mode = hand.hatch or "lines"
+    if mode ~= "none" and stop >= 1 then
+        local ragged = hand.ragged or 0.15
+        for _, sh in ipairs(piece.shade or {}) do
+            if (sh.lv or 1) <= level then
+                local passes = { { sh.ang + (hand.tilt or 0), sh.gap * (hand.dense or 1), 1 } }
+                if mode == "cross" and (sh.lv or 1) <= 1 then
+                    passes[2] = { sh.ang + (hand.tilt or 0) + 72, sh.gap * (hand.dense or 1) * 1.35, 0.85 }
+                end
+                for _, ps in ipairs(passes) do
+                    local gap, k = ps[2], ps[3]
+                    local ca, sa = math.cos(math.rad(ps[1])), math.sin(math.rad(ps[1]))
+                    local lo, hi = math.huge, -math.huge
+                    for i = 1, #sh - 1, 2 do
+                        local v = -sh[i] * sa + sh[i + 1] * ca
+                        lo, hi = math.min(lo, v), math.max(hi, v)
+                    end
+                    local v, chain = lo + gap * 0.5, {}
+                    while v < hi do
+                        local vv = v + (r() - 0.5) * gap * (hand.even and 0 or 0.3)
+                        local ivs = HatchSpans(sh, vv, ca, sa)
+                        for _, hole in ipairs(sh.holes or {}) do ivs = SpansMinus(ivs, HatchSpans(hole, vv, ca, sa)) end
+                        for _, iv in ipairs(ivs) do
+                            local a = iv[1] + 0.3 + r() * ragged * 2
+                            local b = iv[2] - 0.3
+                            b = b - (b - a) * r() * ragged
+                            if b - a >= 1 then
+                                local bow = (r() - 0.5) * 0.7 * math.min(1, wob + 0.2)  -- (not a ruled line: it leans a hair)
+                                local al = 0.75 * tone * (sh.a or 1) * k
+                                local p0 = Out(a * ca - (vv - bow) * sa, a * sa + (vv - bow) * ca, 0.55 * k, al)
+                                local p1 = Out(b * ca - (vv + bow) * sa, b * sa + (vv + bow) * ca, 0.55 * k, al)
+                                if mode == "zig" then
+                                    chain[#chain + 1] = { p0, p1 }
+                                else
+                                    p1[3] = p1[3] * (1 - taper * 0.5)
+                                    out[#out + 1] = { p0, p1 }
+                                end
+                            end
+                        end
+                        v = v + gap * (hand.even and 1 or 0.9 + r() * 0.2)
+                    end
+                    if #chain > 0 then  -- (rubbed in back and forth, one stroke)
+                        local pts = {}
+                        for i, seg in ipairs(chain) do
+                            local a, b = seg[1], seg[2]
+                            if i % 2 == 0 then a, b = b, a end
+                            a[3], b[3] = a[3] * 1.1, b[3] * 1.1
+                            pts[#pts + 1], pts[#pts + 2] = a, b
+                        end
+                        out[#out + 1] = pts
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+-- how heavy a pen piece's lines are for its size and hand (Build's second result)
+local function PenThick(m, sc)
+    local piece = ns.INK_SCENES and ns.INK_SCENES[m.piece]
+    if not (piece and piece.pen) then return sc end
+    return math.sqrt(sc) * ((m.hand or {}).press or 1)
+end
+
 -- a scene piece as one mark (the notebook's "before" pages): Data\InkScenes.lua's strokes round
 -- the mark's spot, u pixels to a scene unit (a scene is 360 across), so it moves, sizes and rubs
 -- out whole (wide pieces are placed at 0, 0)
 local function SketchStrokes(m, x, y, u, r)
     local piece = ns.INK_SCENES and ns.INK_SCENES[m.piece]
+    if piece and piece.pen then return PenStrokes(piece, m, x, y, u, r) end
     local out = {}
     -- (drawn, not ruled: long straight runs are broken into short steps that wander a little off the
     -- line and back, as a pen does; the width breathes along it)
@@ -440,7 +624,7 @@ local function Build(m, W, H)
                 end
             end
         end
-        return out, sc
+        return out, t == "sketch" and PenThick(m, sc) or sc
     end
     if t == "pen" and m.q == 2 then return Feather(P, k, r), 1.15 end
     if t == "pen" then
@@ -689,6 +873,23 @@ local function PaintStrokes(h, pool, strokes, ink, k, join, avoid)
     local c = INKS[ink] or INKS[1]
     local least = 1.5 * UIParent:GetEffectiveScale() / math.max(0.01, h:GetEffectiveScale())
     for _, s in ipairs(strokes) do
+        -- (no piece shorter than the thinnest line is wide, the ends kept: on a map zoomed far out a small
+        -- glyph's curve is cut into pieces of less than a pixel, and the game draws none of them. The user,
+        -- 2026-11-15: the "!" in the danger marks "dissapear when map is zoomed out". At a usual size every
+        -- piece is longer than this and nothing changes.)
+        if #s > 2 then
+            local kept, last = { s[1] }, s[1]
+            for i = 2, #s - 1 do
+                local p = s[i]
+                if (p[1] - last[1]) ^ 2 + (p[2] - last[2]) ^ 2 >= least * least then
+                    kept[#kept + 1] = p
+                    last = p
+                end
+            end
+            local e = s[#s]
+            if #kept > 1 and (e[1] - last[1]) ^ 2 + (e[2] - last[2]) ^ 2 < least * least then kept[#kept] = e else kept[#kept + 1] = e end
+            s = kept
+        end
         local a, b = s[1], s[2]
         local th = b and math.max(least, 2.6 * k * (a[3] + b[3]) / 2)
         if #s == 2 and math.sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2) < th * 0.8 then

@@ -36,11 +36,11 @@ Waymark builds on the game's own Battlefield Map (Shift-M): the small map you ca
 
 **From CurseForge:** install *Waymark: Battlefield Map* with the CurseForge app (formerly Battlefield Info: existing installs update by themselves).
 
-**By hand:** download `Waymark-Forever-1.2.2.zip` from the [latest release](../../releases/latest) and unzip it into
-`World of Warcraft\_forever_\Interface\AddOns\`, so you end up with `AddOns\Waymark\Waymark.toc` and `AddOns\BattlefieldInfo\`
-(a small helper that carries 1.x settings over; it can be deleted once each character has logged in with Waymark).
+**By hand:** download `Waymark-Forever-1.3.0.zip` from the [latest release](../../releases/latest) and unzip it into
+`World of Warcraft\_forever_\Interface\AddOns\`, so you end up with `AddOns\Waymark\Waymark.toc`.
+(An old `AddOns\BattlefieldInfo\` folder from before 1.3 can be deleted.)
 
-**From git:** copy this repository's `Waymark` and `BattlefieldInfo` folders into your AddOns folder.
+**From git:** copy this repository's `Waymark` folder into your AddOns folder.
 
 The latest release and this branch are for **WoW Forever** (interface 16001). For **Classic Era** (interface 11509), get `Waymark-Era-1.2.0.zip` from [its release](../../releases/tag/v1.2.0-era) and unzip it into `World of Warcraft\_classic_era_\Interface\AddOns\`; it has a third folder, `Waymark_Nodes`. The Era files are on the [`era` branch](../../tree/era).
 

@@ -155,8 +155,12 @@ end
 
 -- fades in as you zoom in, to all of `strength` from detail.fullZoom on
 -- (MapControls' ns.DetailFade: times closer than fully out, the same at any map size)
-local function UpdateAlpha(map)
+-- how much of the close-up shows on this map now, 0 to 1, before its strength and the map's opacity
+local function Shows(map)
     local c = Cfg()
+    -- (bigMap off: the small map only)
+    local here = not (c.bigMap == false and ns.MapIsBig and ns.MapIsBig())
+    if not (ns.IsShown("detail") and not ns.Perf("detail") and here) then return 0 end
     local fade = ns.DetailFade and ns.DetailFade(map) or 1
     if c.always then
         fade = 1  -- full detail at every zoom
@@ -167,12 +171,20 @@ local function UpdateAlpha(map)
         if ns.ContinentZoneZoom then x, reach = ns.ContinentZoneZoom(map) end
         fade = x and ns.DetailFadeAt and ns.DetailFadeAt(x, reach) or 0
     end
+    return math.max(0, math.min(1, fade))
+end
+-- For what gives way to the close-up or lies on it (Relief.lua). The zoom's own fade (ns.DetailFade) is not it:
+-- on a continent the tiles stay away at any zoom, and the relief, asking the zoom, went down to its strength
+-- "on the close-up" over a painted map with no close-up on it: a third of itself, zoomed far in on a continent
+-- (the user, 2026-11-15: "then panning, its gone").
+ns.DetailShows = Shows
+
+local function UpdateAlpha(map)
+    local c = Cfg()
     -- the map's own opacity slider fades the map art (its "global alpha"), not
     -- the frame; fade with it, or the tiles stay solid over see-through art
     local mapAlpha = map.GetGlobalAlpha and map:GetGlobalAlpha() or map.globalAlpha or 1
-    -- (bigMap off: the small map only)
-    local here = not (c.bigMap == false and ns.MapIsBig and ns.MapIsBig())
-    local a = ns.IsShown("detail") and not ns.Perf("detail") and here and c.strength * fade * mapAlpha or 0
+    local a = c.strength * Shows(map) * mapAlpha
     host:SetAlpha(a)
     host:SetShown(a > 0.01)
     return a

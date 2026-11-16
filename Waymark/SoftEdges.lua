@@ -83,9 +83,10 @@ local function MaskFrame(f, area, file)
     end
     m:Show()
     for _, r in ipairs({ f:GetRegions() }) do
+        -- (three masks a texture at most: a full one, the pencil's hatching, goes without ours
+        -- and the rest are still masked. ClearView.lua's cut has the same guard.)
         if r:GetObjectType() == "Texture" and not masked[r] then
-            r:AddMaskTexture(m)
-            masked[r] = m
+            if pcall(r.AddMaskTexture, r, m) then masked[r] = m end
         end
     end
 end

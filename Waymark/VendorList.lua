@@ -70,7 +70,28 @@ local function SellRows(npc)
         return out, seen.day
     end
     local s, d = Data().sells and Data().sells[npc], Data()
-    if not s then return nil end
+    if not s then
+        -- Forever's own vendors: AllTheThings (Data\ForeverATT.lua) lists what a collector wants, plain ids
+        -- (negative: limited supply), as Forever's new items pass the 3-letter code; QuestieDB adds the
+        -- rest (food, drink, reagents), without prices
+        if not ns.FOREVER then return nil end
+        local fs = ns.ForeverStock
+        local list, have = fs and fs.sells[npc], {}
+        for _, item in ipairs(list or {}) do
+            local id = math.abs(item)
+            if not have[id] then
+                have[id] = true
+                out[#out + 1] = { id, fs.price[id] or (d.price and d.price[id]), 1, item < 0 }
+            end
+        end
+        for _, id in ipairs(ns.QuestieStock and ns.QuestieStock(npc) or {}) do
+            if not have[id] then
+                have[id] = true
+                out[#out + 1] = { id, (fs and fs.price[id]) or (d.price and d.price[id]), 1, false }
+            end
+        end
+        return #out > 0 and out or nil
+    end
     local i, limited = 1, false
     while i <= #s do
         if s:byte(i) == 33 then  -- "!"
@@ -96,7 +117,10 @@ end
 function ns.StockKinds(npc)
     local out = {}
     if not npc then return out end
-    if (Learned() and Learned()[npc]) or (Data().sells and Data().sells[npc]) then out[#out + 1] = "sell" end
+    if (Learned() and Learned()[npc]) or (Data().sells and Data().sells[npc])
+        or (ns.FOREVER and ((ns.ForeverStock and ns.ForeverStock.sells[npc]) or (ns.QuestieStock and ns.QuestieStock(npc)))) then
+        out[#out + 1] = "sell"
+    end
     if TeachRows(npc) then out[#out + 1] = "teach" end
     return out
 end
@@ -244,7 +268,7 @@ local function Make()
         Show()
     end)
     f.otherText = Text(f, "GameFontNormalSmall", 0.79, 0.73, 0.56)
-    f.otherText:SetText("show what I can't learn")
+    f.otherText:SetText("show what you can't learn")
     f.otherText:SetPoint("LEFT", f.other, "RIGHT", 1, 0)
     f.foot = Text(f, "GameFontDisableSmall", 0.55, 0.55, 0.55)
     f.hint = Text(f, "GameFontDisableSmall", 0.55, 0.55, 0.55)
@@ -365,7 +389,7 @@ local function RecipeEntries(list)
     return out, #known > 0 and "known" or nil
 end
 
-local TOGGLE = { other = { "stockOther", "show what I can't learn" }, known = { "stockKnown", "show what I know" } }
+local TOGGLE = { other = { "stockOther", "show what you can't learn" }, known = { "stockKnown", "show what you know" } }
 
 function Show()
     if not f then Make() end
@@ -378,8 +402,9 @@ function Show()
 
     local list, day, toggle = {}, nil, nil
     if teach then
-        local rows = TeachRows(shown.npc) or { 0 }
-        if rows[1] == 0 then list, toggle = WeaponEntries(rows) else list, toggle = RecipeEntries(rows) end
+        local rows = TeachRows(shown.npc)
+        if not rows then list = {}  -- (no list for this trainer: the sentence below)
+        elseif rows[1] == 0 then list, toggle = WeaponEntries(rows) else list, toggle = RecipeEntries(rows) end
     else
         list, day = SellEntries()
     end
@@ -445,11 +470,26 @@ function Show()
             y = y - ROW - 2
         end
     end
-    if #list == 0 then
-        nl = nl + 1
-        Label(nl, "Nothing listed"):SetPoint("TOPLEFT", 12, y - 2)
-        y = y - 18
+    -- no list at all: one plain sentence in its place (the right-click always opens this window)
+    if not f.empty then
+        f.empty = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        f.empty:SetTextColor(0.79, 0.73, 0.56)
+        f.empty:SetJustifyH("LEFT")
+        f.empty:SetWordWrap(true)
+        f.empty:SetWidth(W - 24)
     end
+    f.empty:SetShown(#list == 0)
+    if #list == 0 then
+        f.empty:SetText(teach and (shown.soon and "Waymark doesn't know what they teach yet (adding this info soon)."
+            or "Waymark doesn't know what they teach yet.")
+            or (Cfg().record and "Waymark hasn't seen their goods yet. Open their shop once and it's kept here."
+            or "Waymark doesn't know what they sell."))
+        f.empty:ClearAllPoints()
+        f.empty:SetPoint("TOPLEFT", 12, y - 4)
+        y = y - 8 - f.empty:GetStringHeight()
+    end
+    local priced = false
+    for _, e in ipairs(list) do if e.price then priced = true break end end
     for i = n + 1, #rows do rows[i]:Hide() end
     for i = nl + 1, #labels do labels[i]:Hide() end
 
@@ -473,13 +513,13 @@ function Show()
         f.foot:ClearAllPoints()
         f.foot:SetPoint("TOPLEFT", 10, y - 4)
         if day then
-            f.foot:SetText("seen by you, " .. date("%b %d", day))
+            f.foot:SetText("Last seen " .. date("%b %d", day))
             f.foot:SetTextColor(0.56, 0.75, 0.42)
         else
-            f.foot:SetText(more and "" or "Prices before any discount")
+            f.foot:SetText((more or not priced) and "" or "Prices before any discount")
             f.foot:SetTextColor(0.55, 0.55, 0.55)
         end
-        f.hint:SetText(more or "Shift-click: link")
+        f.hint:SetText(more or (#list > 0 and "Shift-click: link") or "")
     end
     if teach and not t and not more then y = y + 8 end
     f:SetHeight(-y + 28)
@@ -487,12 +527,12 @@ function Show()
 end
 
 -- npc: its ID; name, sub: who they are; where: the map's name; kind: "sell" or "teach" (nil: the first)
-function ns.OpenStock(npc, name, sub, where, kind)
+function ns.OpenStock(npc, name, sub, where, kind, soon)
     kind = kind or ns.StockKinds(npc)[1]
     if not kind then return end
     if not f then Make() end
     if shown.npc ~= npc or shown.kind ~= kind then shown.offset = 0 end
-    shown.npc, shown.kind, shown.name, shown.sub, shown.where = npc, kind, name, sub, where
+    shown.npc, shown.kind, shown.name, shown.sub, shown.where, shown.soon = npc, kind, name, sub, where, soon
     Show()
 end
 

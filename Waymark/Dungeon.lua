@@ -56,6 +56,9 @@ local overlay, tiles, floorText, prevBtn, nextBtn
 local floorCount  -- docked: the floor's "(2/3)", bottom middle between the arrows (floorText keeps the name)
 local titleName, titleCounter  -- the floor shown: its name and "(2/5)", for the header
 local floors, floorIndex, shownInstance
+-- the dungeon the Bosses slip is about while it is unpinned from the map and no dungeon map is up (the one you
+-- stand in, else the one last shown); nil whenever a dungeon map is up (then it is shownInstance)
+local listInst
 local preview  -- a dungeon you clicked on the zone map, shown from outside (further down)
 local viewBtn  -- the Map / Minimap switch
 local zoneView -- inside: right-clicked out to the dungeon's zone (instance ID), when browsing can't hold it
@@ -417,7 +420,7 @@ local function Run() return ns.db.dungeonRun end
 local function Kills() return Run().kills end
 -- (a dungeon looked at from outside isn't this run's)
 local function KilledHere(name)
-    return Run().id == shownInstance and Kills()[name:lower()] or false
+    return Run().id == (shownInstance or listInst) and Kills()[name:lower()] or false
 end
 
 local placing = false  -- /bfi bosses place: a click on the map puts the picked boss there
@@ -579,6 +582,7 @@ local function DrawBosses()
                 m:ClearAllPoints()
                 m:SetPoint("CENTER", m.anchor, "CENTER")
                 m.name, m.bossName = b.name, b.label or b.name
+                m.bx, m.by = b.x, b.y
                 m.ours = true
                 m.killed = KilledHere(b.name) and true or false
                 local skull = m.ours and skulls and (skulls[shownInstance] or skulls.default)
@@ -597,6 +601,39 @@ local function DrawBosses()
                 local ring = skull and ns.FoundNoteAt and ns.FoundNoteAt(shownInstance, f.index, b.x, b.y)
                 m.num:SetShown(m.ours and not skull)
                 m.num:SetText(b.n or "")
+                -- (A skull under ANOTHER boss's book ring could not be pointed at: the ring's frame, a fifth wider
+                -- than the ring, lay over it, and the neighbour's note answered. Velratha in Zul'Farrak, Moira
+                -- beside the Emperor, Phalanx beside Plugger, eight in all; tools\dangers_overlap.lua, NO REACH.
+                -- Such a skull gets a frame over the book's that hands everything on to the marker. Drawn as
+                -- before: only the pointer's reach changes. A skull inside its OWN ring stays the ring's: one
+                -- place, one mark, the user's rule of 2026-11-15.)
+                do
+                    local own = false
+                    if ring then
+                        local n, _, vx, vy, mark = ns.FoundNoteAt(shownInstance, f.index, b.x, b.y)
+                        own = n and not mark and true or false
+                        if own then
+                            local mine = math.max(math.abs(b.x - vx), math.abs(b.y - vy) * 0.667)
+                            for _, o in ipairs(f.bosses) do
+                                if o ~= b and o.x and o.y and math.max(math.abs(o.x - vx), math.abs(o.y - vy) * 0.667) < mine then own = false end
+                            end
+                        end
+                    end
+                    if not own and not m.reach then
+                        local r = CreateFrame("Frame", nil, m)
+                        r:SetAllPoints(m)
+                        r:EnableMouse(true)
+                        r.bfiTag = "boss marker"
+                        for _, script in ipairs({ "OnEnter", "OnLeave", "OnMouseDown", "OnMouseUp" }) do
+                            r:SetScript(script, function(_, ...) local fn = m:GetScript(script) if fn then fn(m, ...) end end)
+                        end
+                        m.reach = r
+                    end
+                    if m.reach then
+                        m.reach:SetShown(not own)
+                        m.reach:SetFrameLevel(canvas:GetFrameLevel() + 8)   -- (over the book's frames, + 6; under a danger's, + 9)
+                    end
+                end
                 m.kill:SetShown(m.ours and skull and not b.kind and not ring or false)
                 m.kill:SetText(b.n or "")
                 m.kind = b.kind
@@ -690,6 +727,21 @@ local P_RED, P_BLUE = { 0.54, 0.165, 0.11 }, { 0.13, 0.17, 0.26 }
 local ROUND = "Interface\\CHARACTERFRAME\\TempPortraitAlphaMask"
 
 local list, listTitle, listRows = nil, nil, {}
+-- The Bosses list (2026-11-14, after three looks that each covered half of a small map: pale paper, glass,
+-- ink in the margin; the user plays with the map about 390 px wide in a corner, and: "Needs to be a
+-- check-slip"): on the map only a small glass COUNT, "BOSSES 2 of 8" (list, a child of the map). The list
+-- itself is a slip you check: it unfolds under the count while the pointer is on the count or on it, and
+-- folds again when the pointer has left; a click on the count keeps it open (bossListOpen) until the next
+-- click. The slip is its own frame on the screen (listSlip, UIParent's), so the map's clipping and scale
+-- don't shrink it: readable at any map size, and never on the map unless asked for.
+local listSlip, listHover, listAway = nil, false, 0
+local listWait = false   -- closed by a click: the pointer must leave the count before it may open the slip again
+local ListMenu, ListOpenMap, ListDragStart, ListDragStop   -- (with the unpinned slip, below)
+-- (dark glass: its colours, and plain type for the names)
+local G_TEXT, G_SOFT, G_FAINT = { 0.91, 0.89, 0.85 }, { 0.66, 0.64, 0.58 }, { 0.46, 0.44, 0.40 }
+local G_GOLD, G_HAND, G_RED, G_BLUE = { 0.73, 0.55, 0.32 }, { 0.85, 0.73, 0.54 }, { 0.86, 0.40, 0.30 }, { 0.56, 0.69, 0.82 }
+local LIST_EDGE = 18
+local function SetPlain(fs, size) fs:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", size, "") end
 
 local function SetHand(fs, size, font)
     if not (pcall(fs.SetFont, fs, font or HAND, size, "") and fs:GetFont()) then
@@ -746,6 +798,36 @@ function ns.PaperSlip(f, l, r, t, b)
     end
     return body
 end
+-- Dark glass (2026-11-14, the user's pick over the pale slips: "Dark glass for what kills here FOR SURE"; the
+-- Bosses list's count and the slip it unfolds on wear it too): As told's panel (AsToldPanel.lua): a dark ground that is full under the words and
+-- fades out at the right over `edge`, a gold rule along its top. Three textures, no art. The paper above stays
+-- for what lies ON the map by the cursor (the dangers' hover tag).
+function ns.GlassPanel(f, edge, alpha)
+    edge, alpha = edge or 24, alpha or 0.8
+    local back = f:CreateTexture(nil, "BACKGROUND", nil, -1)
+    back:SetPoint("TOPLEFT")
+    back:SetPoint("BOTTOMRIGHT", -edge, 0)
+    back:SetColorTexture(0.055, 0.06, 0.07, alpha)
+    local fade = f:CreateTexture(nil, "BACKGROUND", nil, -1)
+    fade:SetPoint("TOPLEFT", back, "TOPRIGHT")
+    fade:SetPoint("BOTTOMRIGHT")
+    fade:SetColorTexture(1, 1, 1, 1)
+    local faded = false
+    if fade.SetGradient and CreateColor then
+        faded = pcall(fade.SetGradient, fade, "HORIZONTAL", CreateColor(0.055, 0.06, 0.07, alpha), CreateColor(0.055, 0.06, 0.07, 0))
+    end
+    if not faded and fade.SetGradientAlpha then
+        faded = pcall(fade.SetGradientAlpha, fade, "HORIZONTAL", 0.055, 0.06, 0.07, alpha, 0.055, 0.06, 0.07, 0)
+    end
+    if not faded then fade:SetColorTexture(0.055, 0.06, 0.07, alpha * 0.5) end
+    local rule = f:CreateTexture(nil, "BORDER")
+    rule:SetPoint("TOPLEFT")
+    rule:SetPoint("TOPRIGHT", -edge, 0)
+    rule:SetHeight(1)
+    rule:SetColorTexture(0.73, 0.55, 0.32, 0.95)
+    f.glassRule = rule
+    return back
+end
 -- the brass pin through a note's top (Media\Notes\Pin: its dome lit from the top left, its shadow, the paper
 -- drawn in round it); y: its middle, down from the note's top
 function ns.PaperPin(f, y)
@@ -792,8 +874,8 @@ end
 
 -- what the found notes say at a boss's spot: its number, its words (Notebook.lua)
 local function FoundNote(name)
-    local s = Spot(shownInstance, name)
-    if s and ns.FoundNoteAt then return ns.FoundNoteAt(shownInstance, s[1], s[2], s[3]) end
+    local s = Spot((shownInstance or listInst), name)
+    if s and ns.FoundNoteAt then return ns.FoundNoteAt((shownInstance or listInst), s[1], s[2], s[3]) end
 end
 
 -- a boss's menu (its marker or its name in the list): your note, killed, the found notes'
@@ -811,7 +893,7 @@ local function BossMenu(name)
     end
     local s = Spot(shownInstance, name)
     if s and FoundNote(name) and ns.OpenNotebook then
-        items[#items + 1] = { "the found notes on it", function() ns.OpenNotebook(shownInstance, s[1]) end }
+        items[#items + 1] = { "found notes on this boss", function() ns.OpenNotebook(shownInstance, s[1]) end }
     end
     if ns.HasBossLoot and ns.HasBossLoot(shownInstance, name) then
         local inst = shownInstance
@@ -827,6 +909,18 @@ local function BossMenu(name)
     end
     ns.QuillMenu(items)
 end
+
+-- the boss whose skull stands at this place on the floor shown (a found note's ring snapped onto it:
+-- Notebook.lua): its name as the map says it, whether it is dead this run, its kind, the name its menu takes.
+-- For the ring's slip and menu, which answer for the skull under them.
+function ns.DungeonBossAt(x, y)
+    for name, m in pairs(markerByName) do
+        if m:IsShown() and m.bx and math.abs(m.bx - x) * PW < 1.5 and math.abs(m.by - y) * PH < 1.5 then
+            return m.bossName or name, m.killed, m.kind, name
+        end
+    end
+end
+function ns.DungeonBossMenu(name) BossMenu(name) end
 
 -- right-click on a thing on the dungeon map (Controls.lua): its menu, true when there was one. A
 -- note's ring sits on its boss's skull: the quill out, the ring's menu (the boss's at its end); else
@@ -859,67 +953,142 @@ end
 
 local function RowTip(self, ring)
     local n, text = FoundNote(self.name)
-    local note = Note(shownInstance, self.name)
+    local note = Note((shownInstance or listInst), self.name)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine(self.name)
     if n then GameTooltip:AddLine(n .. ".  " .. text:gsub("~", ""), 1, 0.93, 0.78, true) end
-    if ns.DangersBossLines then ns.DangersBossLines(shownInstance, self.name) end  -- (what kills here, of this boss)
-    ns.DungeonBossQuestLines(shownInstance, self.name)
+    if ns.DangersBossLines then ns.DangersBossLines((shownInstance or listInst), self.name, n and text) end  -- (what kills here, of this boss; the book's note is said already)
+    ns.DungeonBossQuestLines((shownInstance or listInst), self.name)
     if note then GameTooltip:AddLine(note, NOTE_COLOR[1], NOTE_COLOR[2], NOTE_COLOR[3], true) end
-    ns.Hints({ { "Click", ring and "the found notes on it" or "its floor" },
+    ns.Hints({ { "Click", ring and "found notes on this boss" or "its floor" },
                not ring and { "Shift-click", note and "your note" or "add a note" } or nil,
                { "Right-click", "its menu" },
                placing and not ring and { "Wheel", "earlier or later in the kill order" } or nil })
     GameTooltip:Show()
 end
 
+-- Unpinned from the map (the user, 2026-11-14: "let unpin from map and keep open with map closed on screen";
+-- "Right click>dropdown>unpin from map"): dungeon.bossListAt = { left, top } on the screen. The slip then stays
+-- open where it is put, with a heading of its own, map up or shut; a drag moves it; its menu or its "x" puts
+-- it back on the map.
+local function ListUnpin()
+    local c = Cfg()
+    local l, t = listSlip:IsShown() and listSlip:GetLeft(), listSlip:GetTop()
+    if not (l and t) then
+        -- (folded: where it would unfold, under the count; the count is in the map's own scale)
+        local k = list:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        l, t = (list:GetLeft() or 20) * k, (list:GetBottom() or 400) * k
+    end
+    c.bossListAt = { l, t }
+    UpdateList()
+end
+-- back on the map. From the menu ("Back on the map") it stays open there; from the slip's "x" it is shut, the
+-- count alone left (the user, 2026-11-15: the x "should close. 'Back to map' should stay open")
+local function ListRepin(open)
+    local c = Cfg()
+    c.bossListAt = nil
+    c.bossListOpen = open and true or nil
+    listHover, listWait = false, true
+    UpdateList()
+end
+function ListMenu()
+    if not ns.QuillMenu then return end
+    if Cfg().bossListAt then
+        ns.QuillMenu({ { "back on the map", function() ListRepin(true) end } })
+    else
+        ns.QuillMenu({ { "unpin from map", ListUnpin } })
+    end
+end
+function ListOpenMap()
+    local map = BattlefieldMapFrame
+    if map and not map:IsShown() and not ns.standBy then map:Show() end
+    if listInst and ns.PreviewDungeon then ns.PreviewDungeon(listInst) end
+end
+-- A drag moves the unpinned slip. Moved by hand, not by the game's StartMoving: the drag usually begins on a
+-- row, and a row is laid out again whenever the list is redrawn, which ended the game's own move at once
+-- ("bosses slip doesnt move", the user 2026-11-15). So: where the pointer took hold is kept here, the slip's
+-- OnUpdate follows the pointer, and the move ends when the button is let go (looked at there too, so it
+-- does not hang on any frame's OnDragStop). While it moves the list is not redrawn.
+function ListDragStart()
+    if not Cfg().bossListAt or listSlip.moving then return end
+    local s = UIParent:GetEffectiveScale()
+    local cx, cy = GetCursorPosition()
+    listSlip.moving = { cx / s - (listSlip:GetLeft() or 0), cy / s - (listSlip:GetTop() or 0) }
+    GameTooltip:Hide()
+end
+function ListDragStop() end
+-- the dungeon you are standing in, if we know its bosses
+local function ListHere()
+    if not (IsInInstance and IsInInstance()) then return end
+    local id = select(8, GetInstanceInfo())
+    if not id then return end
+    local names = Encounters(id)
+    return names and #names > 0 and id or nil
+end
+
 local function ListRow(i)
     local r = listRows[i]
     if r then return r end
-    r = CreateFrame("Button", nil, list)
+    r = CreateFrame("Button", nil, listSlip)
     r:SetHeight(18)
     r.hl = r:CreateTexture(nil, "BACKGROUND", nil, 2)
     r.hl:SetAllPoints()
-    r.hl:SetColorTexture(P_RED[1], P_RED[2], P_RED[3], 0.12)
-    -- the box, drawn by hand (each side a little off), and the tick in your ink
-    local b = {}
-    for k = 1, 4 do b[k] = InkLine(r, P_SOFT, 0.85, 1.3) end
-    local j = { (i * 37) % 5 * 0.25 - 0.5, (i * 53) % 5 * 0.25 - 0.5 }
-    Ends(b[1], r, 4, -4 + j[1], 15, -3.5)
-    Ends(b[2], r, 15, -3.5, 15.5 + j[2], -14.5)
-    Ends(b[3], r, 15.5 + j[2], -14.5, 4.5, -15 + j[1])
-    Ends(b[4], r, 4.5, -15 + j[1], 4, -4 + j[1])
-    r.tick = { InkLine(r, P_BLUE, 0.92, 2), InkLine(r, P_BLUE, 0.92, 2) }
-    Ends(r.tick[1], r, 4, -9, 9, -15)
-    Ends(r.tick[2], r, 9, -15, 19, -1)
+    r.hl:SetColorTexture(G_GOLD[1], G_GOLD[2], G_GOLD[3], 0.16)
+    -- the box: four straight sides, and the game's own tick in gold. (It was drawn by hand, each side a little
+    -- off, for the paper slip; thin slanted lines on dark glass came out jagged: the user, 2026-11-14,
+    -- "Tickboxes pixelated".)
+    for _, side in ipairs({ { 4, -4, 11, 1 }, { 4, -14, 11, 1 }, { 4, -4, 1, 11 }, { 14, -4, 1, 11 } }) do
+        local e = r:CreateTexture(nil, "ARTWORK")
+        e:SetColorTexture(G_FAINT[1], G_FAINT[2], G_FAINT[3], 0.95)
+        e:SetPoint("TOPLEFT", r, "TOPLEFT", side[1], side[2])
+        e:SetSize(side[3], side[4])
+    end
+    local tick = r:CreateTexture(nil, "OVERLAY")
+    tick:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    tick:SetVertexColor(1, 0.86, 0.55)
+    tick:SetSize(17, 17)
+    tick:SetPoint("CENTER", r, "TOPLEFT", 10, -9)
+    r.tick = { tick }
     r.text = r:CreateFontString(nil, "OVERLAY")
-    SetHand(r.text, 15, HAND_BODY)
+    SetPlain(r.text, 12)
     r.text:SetPoint("LEFT", 22, 0)
     r.text:SetJustifyH("LEFT")
-    r.strike = InkLine(r, P_INK, 0.75, 1.3)
+    r.strike = InkLine(r, G_FAINT, 0.9, 1.1)
     r.mark = r:CreateFontString(nil, "OVERLAY")  -- (your note: a red asterisk)
     SetHand(r.mark, 15)
     r.mark:SetPoint("LEFT", r.text, "RIGHT", 2, 2)
-    r.mark:SetTextColor(P_RED[1], P_RED[2], P_RED[3])
+    r.mark:SetTextColor(G_RED[1], G_RED[2], G_RED[3])
     r.mark:SetText("*")
     -- the found notes' number, ringed
     r.ref = CreateFrame("Button", nil, r)
     r.ref:SetSize(18, 18)
     r.ref:SetPoint("RIGHT", -2, 0)
-    local ring = r.ref:CreateTexture(nil, "ARTWORK")
-    ring:SetAllPoints()
-    ring:SetTexture(NOTES .. "Bits")
-    ring:SetTexCoord(136 / 256, 200 / 256, 150 / 512, 214 / 512)
-    ring:SetVertexColor(P_RED[1], P_RED[2], P_RED[3])
+    -- (a clean ring for the glass: a red disc with a dark one on it. The book's hand-drawn ring, a 64 px
+    -- picture squeezed to 18, and the hand's digits at 11 came out jagged on the dark slip: the user,
+    -- 2026-11-14, "at low size the ink gets jagged and pixelated". On the map the book's own rings are untouched.)
+    local ring = r.ref:CreateTexture(nil, "ARTWORK", nil, 1)
+    ring:SetPoint("CENTER")
+    ring:SetSize(17, 17)
+    ring:SetTexture(ROUND)
+    ring:SetVertexColor(G_RED[1], G_RED[2], G_RED[3], 0.95)
+    local hole = r.ref:CreateTexture(nil, "ARTWORK", nil, 2)
+    hole:SetPoint("CENTER")
+    hole:SetSize(14.5, 14.5)
+    hole:SetTexture(ROUND)
+    hole:SetVertexColor(0.075, 0.08, 0.09, 1)
     r.ref.n = r.ref:CreateFontString(nil, "OVERLAY")
-    SetHand(r.ref.n, 11)
+    SetPlain(r.ref.n, 10)
     r.ref.n:SetPoint("CENTER", 0, 0)
-    r.ref.n:SetTextColor(P_RED[1], P_RED[2], P_RED[3])
+    r.ref.n:SetTextColor(G_RED[1], G_RED[2], G_RED[3])
     r.ref:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     r.ref:SetScript("OnClick", function(_, button)
-        if button == "RightButton" then BossMenu(r.name) return end
-        local s = Spot(shownInstance, r.name)
-        if s and ns.OpenNotebook then ns.OpenNotebook(shownInstance, s[1]) end
+        if button == "RightButton" then
+            if shownInstance then BossMenu(r.name) else ListMenu() end
+            return
+        end
+        local inst = shownInstance or listInst
+        local s = Spot(inst, r.name)
+        if s and ns.OpenNotebook then ns.OpenNotebook(inst, s[1]) end
     end)
     r.ref:SetScript("OnEnter", function() RowTip(r, true) end)
     r.ref:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -932,7 +1101,15 @@ local function ListRow(i)
         if placing and ns.MoveBoss then ns.MoveBoss(self.name, d > 0 and -1 or 1) end
     end)
     r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    r:RegisterForDrag("LeftButton")
+    r:SetScript("OnDragStart", ListDragStart)
+    r:SetScript("OnDragStop", ListDragStop)
     r:SetScript("OnClick", function(self, button)
+        -- (unpinned, and no dungeon map up: a click brings that dungeon's map; a right-click, the slip's menu)
+        if not shownInstance then
+            if button == "RightButton" then ListMenu() else ListOpenMap() end
+            return
+        end
         if button == "RightButton" then BossMenu(self.name) return end
         if IsShiftKeyDown() and not placing then EditNote(shownInstance, self.name) return end
         if placing then picked = self.name end
@@ -952,16 +1129,20 @@ UpdateList = function(lit)
         for _, g in ipairs(m.glows) do g:SetShown(m.lit) end
         if m.sk then m.skull:SetSize(m.sk * (m.lit and 1.1 or 1), m.sk * (m.lit and 1.1 or 1)) end
     end
+    if listSlip.moving then return end                    -- (being dragged: as it is until let go)
+    local c = Cfg()
+    local free = c.bossListAt and true or false           -- unpinned from the map
+    local onMap = shownInstance and canvas:IsShown() and true or false
+    if shownInstance then c.bossListInst = shownInstance end
+    listInst = (not shownInstance and free) and (ListHere() or c.bossListInst) or nil
+    local inst = shownInstance or listInst
     local names, kind = {}, {}
-    if shownInstance then names, kind = Encounters(shownInstance) end
-    -- (docked, only on the big map: on the square it was in the way whatever its size, the user)
-    local small = ns.Docked and ns.Docked() and not (ns.DockBigMovable and ns.DockBigMovable())
-    if not (Cfg().bossList and #names > 0 and canvas:IsShown()) or small then list:Hide() return end
-    list:ClearAllPoints()
-    if viewBtn and viewBtn:IsShown() and ns.Docked and ns.Docked() then
-        list:SetPoint("TOPLEFT", viewBtn, "BOTTOMLEFT", 2, -8)
-    else
-        list:SetPoint("TOPLEFT", overlay, "TOPLEFT", 6, -8)
+    if inst then names, kind = Encounters(inst) end
+    -- (on the docked small square too, since 2026-11-14: a count is small enough there, where a list never was)
+    if not (c.bossList and #names > 0 and (onMap or free)) then
+        list:Hide()
+        listSlip:Hide()
+        return
     end
     local killed, bosses = 0, 0
     for _, name in ipairs(names) do
@@ -970,17 +1151,32 @@ UpdateList = function(lit)
             if KilledHere(name) then killed = killed + 1 end
         end
     end
-    local folded = Cfg().bossListFolded and not placing
-    listTitle.text:SetText(placing and "Placing" or "Bosses")
-    listTitle.text:SetTextColor(unpack(placing and P_RED or P_INK))
+    local folded = not (placing or free or c.bossListOpen or listHover)
+    listTitle.text:SetText(placing and "PLACING" or "BOSSES")
+    listTitle.text:SetTextColor(unpack(placing and G_RED or G_SOFT))
     listTitle.count:SetText(killed .. " of " .. bosses)
-    local w = listTitle.text:GetStringWidth() + listTitle.count:GetStringWidth() + 40
+    -- (the count ends square, no fade: the "!" joins straight on to it, one bar. The user, 2026-11-15, of the
+    -- gap and the fade between the two: "Maybe we should just let these two join together?")
+    local chipW = listTitle.text:GetStringWidth() + listTitle.count:GetStringWidth() + 34
+    local w = chipW
     -- (rows kept up while they're used: hiding the one under the mouse fired its OnLeave, which
     -- redrew the list unlit, so hovering a name never lit its skull)
     local used = {}
     list.lucky:Hide()
-    list.rule:SetShown(not folded)
-    local y = -42
+    local y = -6
+    -- (unpinned: a heading of its own, as the count may not be on the screen)
+    listSlip.head:SetShown(free)
+    -- (its own gold rule only while unpinned: under the count it was a second rule a few pixels below the
+    -- count's, ending almost, not quite, at the "!": the user, 2026-11-15)
+    if listSlip.glassRule then listSlip.glassRule:SetShown(free) end
+    if free then
+        local nm = ns.DungeonEntranceInfo and ns.DungeonEntranceInfo(inst)
+        listSlip.title:SetText("BOSSES")
+        listSlip.sub:SetText(nm and nm[1] or "")
+        listSlip.count:SetText(killed .. " of " .. bosses)
+        w = math.max(w, listSlip.title:GetStringWidth() + listSlip.sub:GetStringWidth() + listSlip.count:GetStringWidth() + 62 + LIST_EDGE)
+        y = -26
+    end
     if not folded then
         local blizzard = floors and floors[floorIndex] and floors[floorIndex].tiles
         -- the bosses, then the rares under their line
@@ -991,23 +1187,23 @@ UpdateList = function(lit)
         for i, name in ipairs(order) do
             if i == nBosses + 1 then
                 list.lucky:ClearAllPoints()
-                list.lucky:SetPoint("TOPLEFT", 12, y - 4)
+                list.lucky:SetPoint("TOPLEFT", listSlip, "TOPLEFT", 12, y - 4)
                 list.lucky:Show()
                 y = y - 20
             end
             local r = ListRow(i)
             r.name = name
             local done = KilledHere(name) and true or false
-            local unplaced = placing and blizzard and not Spot(shownInstance, name)
+            local unplaced = placing and blizzard and not Spot(inst, name)
             r.text:SetText(name .. (unplaced and "  ?" or ""))
-            local c = (placing and name == picked) and P_RED or kind[name] == "rare" and P_BLUE or P_INK
-            r.text:SetTextColor(c[1], c[2], c[3])
-            r.text:SetAlpha(done and 0.5 or unplaced and 0.6 or 1)
+            local col = (placing and name == picked) and G_RED or kind[name] == "rare" and G_BLUE or G_TEXT
+            r.text:SetTextColor(col[1], col[2], col[3])
+            r.text:SetAlpha(done and 0.45 or unplaced and 0.6 or 1)
             for _, t in ipairs(r.tick) do t:SetShown(done) end
             local tw = r.text:GetStringWidth()
             r.strike:SetShown(done)
-            Ends(r.strike, r, 20, -10, 24 + tw, -9)
-            r.mark:SetShown(Note(shownInstance, name) ~= nil)
+            Ends(r.strike, r, 20, -9.5, 24 + tw, -9.5)
+            r.mark:SetShown(Note(inst, name) ~= nil)
             local n = FoundNote(name)
             r.ref:SetShown(n ~= nil)
             if n then r.ref.n:SetText(n) end
@@ -1020,22 +1216,92 @@ UpdateList = function(lit)
                 r:EnableMouseWheel(wheel)
             end
             r:ClearAllPoints()
-            r:SetPoint("TOPLEFT", 8, y)
-            r:SetPoint("RIGHT", list, "RIGHT", -8, 0)
+            r:SetPoint("TOPLEFT", listSlip, "TOPLEFT", 8, y)
+            r:SetPoint("RIGHT", listSlip, "RIGHT", -LIST_EDGE, 0)
             r:Show()
             used[r] = true
-            w = math.max(w, tw + 22 + 14 + (n and 22 or 0) + 16)
+            w = math.max(w, tw + 22 + 14 + (n and 22 or 0) + 12 + LIST_EDGE)
             y = y - 18
         end
     end
     for _, r in ipairs(listRows) do if not used[r] then r:Hide() end end
-    -- (smaller with a smaller map, but not one for one: about the square root of it, between
-    -- 0.72 and 1 of its size)
-    list:SetScale(math.max(0.72, math.min(1, math.sqrt((overlay:GetWidth() or 900) / 900))))
-    -- (never more than about half the map)
-    list:SetWidth(math.min(w, math.max(120, overlay:GetWidth() * 0.5)))
-    list:SetHeight(-y + (folded and 2 or 10))
-    list:Show()
+    -- (under the count, the slip's dark ground runs at least to the "!"'s right edge before it starts to fade
+    -- (the "!" is 24 wide, 3 off the count: Dangers.lua). It stopped a few pixels short of that line; the user,
+    -- 2026-11-15: "extend the area before feathering began ... a few pixels". Nothing else changes width: a
+    -- first try made the slip square and widened the count to fit, "janky". A list with longer names than
+    -- that still runs further, as it must.)
+    -- (the count and the "!" are the map's children, the slip is the screen's: where the map has a scale of its
+    -- own their pixels are not the slip's, and the line was still some pixels out in the user's marked shot)
+    -- (and the other way round: names longer than the count made the list's ground run on past the "!", so the
+    -- heading stopped short of the list under it. The user, 2026-11-16: "Header not lining up". With the list
+    -- open the count is as wide as the list's dark ground, the "!" at its end; folded, it is its own width)
+    local headW = chipW
+    if not free then
+        local k = (list:GetEffectiveScale() or 1) / math.max(0.01, listSlip:GetEffectiveScale() or 1)
+        local bang = ns.dangersTab and ns.dangersTab:IsShown() and 24 or 0   -- (the "!" joined to the count, if it is there)
+        w = math.max(w, (chipW + bang) * k + LIST_EDGE)
+        -- (to the slip's outer edge, not to where its ground starts to fade: over the dark map the 18 px fade
+        -- reads as solid ground, and the heading still looked short by that much in the user's second shot)
+        if not folded then headW = math.max(chipW, w / k - bang) end
+    end
+    local map = BattlefieldMapFrame
+    local border = map and map.BorderFrame
+    if onMap then
+        -- the count alone is on the map
+        list:ClearAllPoints()
+        if viewBtn and viewBtn:IsShown() and ns.Docked and ns.Docked() then
+            list:SetPoint("TOPLEFT", viewBtn, "BOTTOMLEFT", 2, -8)
+        else
+            -- (18 down, not 8: the map's own border frame takes the mouse along the top edge, and the count and
+            -- the "!" beside it had their top under it: the user, 2026-11-14, "hitbox on them are not all the way up")
+            list:SetPoint("TOPLEFT", overlay, "TOPLEFT", 6, -18)
+        end
+        -- (its full size at any map size: shrunk with a small map its letters and the "!" beside it went jagged)
+        list:SetScale(1)
+        list:SetWidth(headW)
+        list:SetHeight(24)
+        -- (the count takes the mouse only if nothing of the map lies over it: the game's own border frame is in a
+        -- higher strata than the map and had the pointer at the map's top, /fstack in the user's shots, and the
+        -- map's header and buttons are far above the dungeon overlay's level. So: the border's strata, over it.
+        -- The first build sat at the overlay's level + 10 and never got its OnEnter: "Bosses slip doesnt open".)
+        if border then
+            list:SetFrameStrata(border:GetFrameStrata())
+            list:SetFrameLevel(math.min(9900, border:GetFrameLevel() + 12))
+        elseif ns.ButtonLevel and map then
+            list:SetFrameLevel(math.min(9900, ns.ButtonLevel(map) + 12))
+        end
+        list:Show()
+    else
+        list:Hide()
+    end
+    if folded then
+        listSlip:Hide()
+    else
+        -- (the slip: over the map's border when the map is up, so the pointer reaches it wherever it lies; kept
+        -- on the screen if the list is long)
+        if border and map:IsShown() then
+            listSlip:SetFrameStrata(border:GetFrameStrata())
+            listSlip:SetFrameLevel(math.min(9950, border:GetFrameLevel() + 17))
+        else
+            listSlip:SetFrameStrata("MEDIUM")
+            listSlip:SetFrameLevel(40)
+        end
+        listSlip:SetSize(w, -y + 8)
+        if not listSlip.moving then
+            listSlip:ClearAllPoints()
+            if free then
+                listSlip:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", c.bossListAt[1], c.bossListAt[2])
+            else
+                listSlip:SetPoint("TOPLEFT", list, "BOTTOMLEFT", 0, 0)
+            end
+        end
+        if not listSlip:IsShown() then
+            listAway = 0
+            listSlip.fade = 0          -- (soft, as the dangers note unfolds: its own OnUpdate brings it in)
+            listSlip:SetAlpha(0)
+            listSlip:Show()
+        end
+    end
 end
 
 RefreshNotes = function() UpdateList() end
@@ -1045,39 +1311,183 @@ local function CreateList(parent)
     ns.dungeonBossList = list  -- (Dangers.lua: its "!" tab sits beside this slip)
     -- (over the dungeon's object pins, DungeonObjects.lua at the canvas + 6 to 8: a quest pin sat on it)
     list:SetFrameLevel(parent:GetFrameLevel() + 10)
-    list:SetSize(140, 30)
-    list:EnableMouse(true)  -- (a click between rows isn't one on the map)
-    -- the slip: a window of the notebook's paper with torn edges and a soft shadow on the map, a brass pin
-    -- through its top middle, above the title (ns.PaperSlip, ns.PaperPin, above)
-    ns.PaperSlip(list, 0.55, 0.75, 0.12, 0.42)
-    ns.PaperPin(list, -9)
+    list:SetSize(140, 24)
+    list:EnableMouse(true)  -- (a click beside the words isn't one on the map)
+    -- the slip the list unfolds on: the screen's own, not the map's (see the top of this part)
+    listSlip = CreateFrame("Frame", nil, UIParent)
+    listSlip:SetClampedToScreen(true)
+    listSlip:EnableMouse(true)
+    ns.GlassPanel(listSlip, LIST_EDGE, 0.9)
+    listSlip:RegisterForDrag("LeftButton")
+    listSlip:SetScript("OnDragStart", ListDragStart)
+    listSlip:SetScript("OnDragStop", ListDragStop)
+    listSlip:SetScript("OnMouseUp", function(_, button)
+        if button == "RightButton" then ListMenu() end
+    end)
+    -- its heading while unpinned: BOSSES, the dungeon's name, the count, and an "x" that puts it back on the map
+    local head = CreateFrame("Frame", nil, listSlip)
+    head:SetPoint("TOPLEFT", 0, -1)
+    head:SetPoint("TOPRIGHT", -LIST_EDGE, -1)
+    head:SetHeight(22)
+    -- (the heading takes the mouse itself: a press on it takes hold of the slip at once, a right-click is the
+    -- slip's menu. Left to the slip under it, a drag on the title did nothing: the user, 2026-11-15)
+    head:EnableMouse(true)
+    head:SetScript("OnMouseDown", function(_, button)
+        if button == "LeftButton" then ListDragStart() end
+    end)
+    head:SetScript("OnMouseUp", function(_, button)
+        if button == "RightButton" then ListMenu() end
+    end)
+    listSlip.head = head
+    listSlip.title = head:CreateFontString(nil, "OVERLAY")
+    SetPlain(listSlip.title, 10)
+    listSlip.title:SetTextColor(G_SOFT[1], G_SOFT[2], G_SOFT[3])
+    listSlip.title:SetPoint("LEFT", 10, 0)
+    listSlip.sub = head:CreateFontString(nil, "OVERLAY")
+    SetPlain(listSlip.sub, 10)
+    listSlip.sub:SetTextColor(G_GOLD[1], G_GOLD[2], G_GOLD[3])
+    listSlip.sub:SetPoint("LEFT", listSlip.title, "RIGHT", 8, 0)
+    listSlip.count = head:CreateFontString(nil, "OVERLAY")
+    SetPlain(listSlip.count, 10)
+    listSlip.count:SetTextColor(G_SOFT[1], G_SOFT[2], G_SOFT[3])
+    listSlip.count:SetPoint("RIGHT", -22, 0)
+    local back = CreateFrame("Button", nil, head)
+    back:SetSize(18, 18)
+    back:SetPoint("RIGHT", -2, 0)
+    back.x = back:CreateFontString(nil, "OVERLAY")
+    SetPlain(back.x, 11)
+    back.x:SetTextColor(G_FAINT[1], G_FAINT[2], G_FAINT[3])
+    back.x:SetPoint("CENTER")
+    back.x:SetText("x")
+    back:SetScript("OnClick", function() GameTooltip:Hide() ListRepin(false) end)
+    back:SetScript("OnEnter", function(self)
+        self.x:SetTextColor(G_TEXT[1], G_TEXT[2], G_TEXT[3])
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine("Close")
+        GameTooltip:AddLine("Back to the boss count on the map.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    back:SetScript("OnLeave", function(self)
+        self.x:SetTextColor(G_FAINT[1], G_FAINT[2], G_FAINT[3])
+        GameTooltip:Hide()
+    end)
+    head:Hide()
+    -- (unpinned, it follows the run with no map up: looked at twice a second, redrawn only when the dungeon
+    -- shown, the one you stand in or the kills change. With it pinned this is one comparison.)
+    local watch, since2, last = CreateFrame("Frame", nil, UIParent), 0, nil
+    watch:SetScript("OnUpdate", function(_, e)
+        since2 = since2 + e
+        if since2 < 0.5 then return end
+        since2 = 0
+        if not (ns.db and Cfg() and Cfg().bossListAt) then last = nil return end
+        local n = 0
+        for _ in pairs(Kills() or {}) do n = n + 1 end
+        -- ((ListHere()) in brackets: outside a dungeon it returns nothing at all, and tostring of nothing is an
+        -- error, eight of them a few seconds after the slip was first unpinned, 2026-11-15)
+        local sig = tostring(shownInstance) .. ":" .. tostring((ListHere())) .. ":" .. tostring(Run().id) .. ":" .. n
+        if sig ~= last then
+            last = sig
+            UpdateList()
+        end
+    end)
+    listSlip:Hide()
+    -- (the pointer on the count, looked at by where it is, ten times a second: it opens the slip even where
+    -- another frame of the map has the mouse and the count's own OnEnter never comes)
+    local poll = 0
+    list:SetScript("OnUpdate", function(self, e)
+        poll = poll + e
+        if poll < 0.1 then return end
+        poll = 0
+        local on = self:IsMouseOver()
+        if listWait then
+            if not on then listWait = false end
+        elseif not listHover and on then
+            listHover = true
+            UpdateList()
+        end
+    end)
+    list:HookScript("OnHide", function()   -- (the map shut, or another map shown: the slip goes with its count...)
+        listHover = false
+        if not Cfg().bossListAt then listSlip:Hide() end   -- (...unless it is unpinned from the map)
+    end)
+    -- (it folds when the pointer has been off the count and the slip for a moment; not while kept open by a
+    -- click, while placing, or while a menu asked from one of its rows is up)
+    local since = 0
+    listSlip:SetScript("OnUpdate", function(self, e)
+        if self.moving then
+            local sc = UIParent:GetEffectiveScale()
+            local cx, cy = GetCursorPosition()
+            local l, t = cx / sc - self.moving[1], cy / sc - self.moving[2]
+            self:ClearAllPoints()
+            self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l, t)
+            if not IsMouseButtonDown("LeftButton") then
+                self.moving = nil
+                if Cfg().bossListAt then Cfg().bossListAt = { self:GetLeft() or l, self:GetTop() or t } end   -- (as clamped to the screen)
+                UpdateList()
+            end
+            return
+        end
+        if self.fade then
+            self.fade = self.fade + e
+            local a = math.min(1, self.fade / 0.25)
+            self:SetAlpha(a)
+            if a >= 1 then self.fade = nil end
+        end
+        since = since + e
+        if since < 0.15 then return end
+        if placing or Cfg().bossListOpen or Cfg().bossListAt or self:IsMouseOver() or list:IsMouseOver()
+            or (ns.QuillMenuShown and ns.QuillMenuShown()) then
+            listAway, since = 0, 0
+            return
+        end
+        listAway, since = listAway + since, 0
+        if listAway >= 0.4 then
+            listHover = false
+            UpdateList()
+        end
+    end)
+    -- dark glass with a gold rule (ns.GlassPanel, above; before 2026-11-14 a torn slip of pale paper with a
+    -- brass pin: the user, "Not loving the pale parchment")
+    ns.GlassPanel(list, 0)
     listTitle = CreateFrame("Button", nil, list)
-    listTitle:SetPoint("TOPLEFT", 0, -12)
-    listTitle:SetPoint("RIGHT", list, "RIGHT")
-    listTitle:SetHeight(26)
+    listTitle:SetPoint("TOPLEFT", 0, -1)
+    listTitle:SetPoint("RIGHT", list, "RIGHT", -6, 0)
+    listTitle:SetHeight(23)
     listTitle.text = listTitle:CreateFontString(nil, "OVERLAY")
-    SetHand(listTitle.text, 20)
+    SetPlain(listTitle.text, 10)
     listTitle.text:SetPoint("LEFT", 10, 0)
     listTitle.count = listTitle:CreateFontString(nil, "OVERLAY")
-    SetHand(listTitle.count, 14)
-    listTitle.count:SetPoint("RIGHT", -10, -1)
-    listTitle.count:SetTextColor(P_SOFT[1], P_SOFT[2], P_SOFT[3])
-    listTitle:SetScript("OnClick", function()
-        Cfg().bossListFolded = not Cfg().bossListFolded
+    SetPlain(listTitle.count, 10)
+    listTitle.count:SetPoint("RIGHT", -4, 0)
+    listTitle.count:SetTextColor(G_GOLD[1], G_GOLD[2], G_GOLD[3])
+    listTitle:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    listTitle:SetScript("OnClick", function(_, button)
+        GameTooltip:Hide()
+        if button == "RightButton" then ListMenu() return end
+        if Cfg().bossListAt then return end   -- (unpinned: the slip is open elsewhere; its menu brings it back)
+        Cfg().bossListOpen = not Cfg().bossListOpen or nil   -- (kept open, or back to opening under the pointer)
+        -- (clicked shut: it stays shut while the pointer is still on the count, the user 2026-11-14)
+        if not Cfg().bossListOpen then listHover, listWait = false, true end
         UpdateList()
     end)
     listTitle:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        if not listWait then
+            listHover = true
+            UpdateList()
+        end
+        GameTooltip:SetOwner(self, "ANCHOR_TOPRIGHT")
         GameTooltip:AddLine("Bosses")
-        GameTooltip:AddLine("In the order they're usually killed, then the rares; ticked when killed this run. A red ring: the found notes say something there.", 1, 1, 1, true)
-        ns.Hints({ { "Click", Cfg().bossListFolded and "unfold" or "fold" } })
+        -- (its explanation only while Shift is held, as the hints are: the name says enough, and the tooltip
+        -- sat large over the map each time the pointer came to open the slip. The user, 2026-11-15)
+        ns.ShiftLines(self, { "Bosses in kill order, then rares. Ticked when killed this run. A ringed number has a found note." })
+        ns.Hints({ not Cfg().bossListAt and { "Click", Cfg().bossListOpen and "fold the list again" or "keep the list open" } or nil,
+                   { "Right-click", Cfg().bossListAt and "put the list back on the map" or "unpin the list from the map" } })
         GameTooltip:Show()
     end)
     listTitle:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    list.rule = ns.InkRule(list, 9, -39)
-    list.lucky = list:CreateFontString(nil, "OVERLAY")
-    SetHand(list.lucky, 13)
-    list.lucky:SetTextColor(P_SOFT[1], P_SOFT[2], P_SOFT[3])
+    list.lucky = listSlip:CreateFontString(nil, "OVERLAY")   -- (the one line still in a hand: the wanderer's aside)
+    SetHand(list.lucky, 12, HAND_BODY)
+    list.lucky:SetTextColor(G_HAND[1], G_HAND[2], G_HAND[3])
     list.lucky:SetText("if we're lucky")
     list:Hide()
 end
@@ -1290,7 +1700,7 @@ function ns.ToggleDevBossList()
             local opened = not (map and map:IsShown())
             if opened and ToggleBattlefieldMap then pcall(ToggleBattlefieldMap) end
             if ns.Docked and ns.Docked() and ns.db.dock.face ~= "map" and ns.DockToggleBig then
-                ns.Log("docked on the minimap face: switch to the map (or the big map) to see it")
+                ns.Log("Undock to see dungeon map.")
             end
             -- (just opened: after the game puts it on your map, which would end a preview)
             C_Timer.After(opened and 0.4 or 0, function()
@@ -1483,7 +1893,7 @@ local function UpdateFallback(map)
     if docked then
         viewBtn:SetPoint("TOPLEFT", overlay, "TOPLEFT", 4, -26)
     else
-        viewBtn:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", 6, 6 + (ns.CoordsCornerLift and ns.CoordsCornerLift() or 0))
+        viewBtn:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", 6, 6 + (ns.CoordsCornerLift and ns.CoordsCornerLift() or 0) + (ns.SearchCornerLift and ns.SearchCornerLift() or 0))
     end
     if not floors and not minimapView then overlay:Hide() return end  -- (no art: the minimap view still works)
     overlay:Show()
@@ -1561,6 +1971,15 @@ function ns.DungeonFollowFloor()
     centerX, centerY = 0, 0
     ShowFloor()
     DrawBosses()
+end
+
+-- a dungeon's bosses in the order they're usually killed, the rares and the friendly left out (Dangers.lua:
+-- which danger is next)
+function ns.DungeonBossesInOrder(instance)
+    local names, kind = Encounters(instance)
+    local out = {}
+    for _, n in ipairs(names) do if not kind[n] then out[#out + 1] = n end end
+    return out
 end
 
 -- stairs in the ink that lead to another floor (Ink.lua): a click turns the map there
@@ -1813,7 +2232,7 @@ local function CreateOverlay(map)
     for _, b in ipairs({ prevBtn, nextBtn }) do
         b:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-            GameTooltip:AddLine(self == prevBtn and "Floor before" or "Next floor")
+            GameTooltip:AddLine(self == prevBtn and "Previous floor" or "Next floor")
             ns.Hints({ { "Shift-wheel on the map", "the floors too" } })
             GameTooltip:Show()
         end)
@@ -1876,10 +2295,10 @@ local function CreateOverlay(map)
         local onMinimap = Cfg().view == "minimap" and not (ns.Docked and ns.Docked())
         GameTooltip:AddLine(onMinimap and "The dungeon's map" or "Your minimap")
         if ns.Docked and ns.Docked() then
-            ns.ShiftLines(self, { "Your minimap, in the dungeon map's place. The X or the map's key brings the dungeon map back." })
+            ns.ShiftLines(self, { "The game's minimap in this frame. Click the X or press the map key for the dungeon map." })
         else
-            ns.ShiftLines(self, { "Minimap: your arrow and the game's own detail (borrows your minimap).",
-                                  "Map: the dungeon's map with boss markers." })
+            ns.ShiftLines(self, { "Minimap: the game's minimap in this frame.",
+                                  "Map: dungeon map." })
         end
         GameTooltip:Show()
     end)
@@ -2037,7 +2456,7 @@ local function BookLines(id)
     if not qs then return false end
     if #qs > 0 then
         GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("Who asked us (the found notes)", 1, 0.82, 0)
+        GameTooltip:AddLine("Quests from the found notes", 1, 0.82, 0)
     end
     for _, q in ipairs(qs) do
         local ok, pv = pcall(ns.QuestPreview or function() end, q.quest)
@@ -2111,7 +2530,7 @@ function BFIDungeonPinMixin:OnEnter()
         if book then hints[1] = { "Click", "the found notes" } end
     else
         local has = OpenMapFloors(self.info.id)
-        if not has then GameTooltip:AddLine("No map of it to show", 0.6, 0.6, 0.6) end
+        if not has then GameTooltip:AddLine("No map for this dungeon.", 0.6, 0.6, 0.6) end
         if has then hints[#hints + 1] = { "Click", "its map" } end
         if book then hints[#hints + 1] = { "Shift-click", "the found notes" } end
     end
@@ -2129,10 +2548,10 @@ function BFIDungeonPinMixin:OnMouseUp(button)
         local id = self.info.id
         local items = {}
         if self:GetMap() ~= WorldMapFrame and OpenMapFloors(id) then
-            items[1] = { "its map", function() ns.PreviewDungeon(id) end }
+            items[1] = { "dungeon map", function() ns.PreviewDungeon(id) end }
         end
         if ns.NotebookQuests and ns.NotebookQuests(id) then
-            items[#items + 1] = { "the found notes: who asked us", function() ns.OpenNotebook(id, nil, true) end }
+            items[#items + 1] = { "found notes: quests", function() ns.OpenNotebook(id, nil, true) end }
         end
         if ns.HasBossLoot and ns.HasBossLoot(id) then items[#items + 1] = { "what they carry", function() ns.OpenBossLoot(id) end } end
         ns.PinMenu(self, items, EntranceInfo(id)[1])

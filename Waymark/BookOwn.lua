@@ -402,7 +402,9 @@ end
 function ns.BookBeforeView(b, kind, mb)
     local story = kind == "story"
     local text = mb and mb.text or {}
-    local v = { lines = {}, added = {}, whisper = story and b.whisper or nil, rule = story and b.rule or nil }
+    local v = { lines = {}, added = {}, whisper = story and b.whisper or nil, rule = story and b.rule or nil,
+                marginAcross = b.marginAcross,   -- (where the small note is drawn: Notebook.lua)
+                across = story and b.across or nil }  -- (a diary line drawn on the facing page: Notebook.lua)
     for k, s in ipairs(b.diary or {}) do
         local t = text["diary:" .. k]
         if t and t.s then

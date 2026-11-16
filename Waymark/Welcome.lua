@@ -90,35 +90,79 @@ local function Switch(col, label, group, key, what)
 end
 
 local function BuildPage()
-    page = Window("WaymarkWelcome")
+    -- (the settings window's frame, title bar and red X, as the gear's quick panel: the user, 2026-11-16.
+    -- Its title says the welcome, so the page starts at its first words.)
+    local dressed = ns.MetalWindow ~= nil
+    if dressed then
+        page = CreateFrame("Frame", "WaymarkWelcome", UIParent)
+        ns.AddonWindow(page)
+        page:SetFrameStrata("HIGH")
+        page:SetClampedToScreen(true)
+        page:EnableMouse(true)
+        page:Hide()
+        ns.MetalWindow(page, "Welcome to Waymark")
+    else
+        page = Window("WaymarkWelcome")
+    end
     page:SetWidth(W)
     tinsert(UISpecialFrames, "WaymarkWelcome")  -- (Esc)
     page:SetScript("OnHide", function()
         if not quietly then Cfg().done = true end
         quietly = nil
     end)
-    local ok, close = pcall(CreateFrame, "Button", nil, page, "UIPanelCloseButton")
-    if ok then close:SetPoint("TOPRIGHT", 0, 0) end
+    if not dressed then
+        local ok, close = pcall(CreateFrame, "Button", nil, page, "UIPanelCloseButton")
+        if ok then close:SetPoint("TOPRIGHT", 0, 0) end
+    end
 
-    local col = ns.PanelColumn(page, 10, -6, W - 20)
-    col:Header("Welcome to Waymark")
-    col:Note("This is your map. It follows you, shows quest givers and turn-ins, and fills in the parts of "
-        .. "the world you haven't found yet. Wheel to zoom, right-click to go out a level.", 1, 0.96, 0.86)
-    col:Header("Would you like more on it?")
+    -- The settings pass, 2026-11-14: what a new player sees first, kept short. What the map is in 1.3 (it no
+    -- longer "fills in" unexplored land: that is blank and pencilled now), the glance in one line (the best
+    -- of folding, and nothing else told a player it exists), where the map can live (so the minimap
+    -- replacement and clear view are met here), then the few switches worth a first look, and the book.
+    local col = ns.PanelColumn(page, 10, dressed and -26 or -6, W - 20)
+    if not dressed then col:Header("Welcome to Waymark") end
+    col:Note("This is your map. It follows you, and the land on it is shaded from the game's real terrain. "
+        .. "Land you have seen but not walked is sketched in pencil. Mouse wheel to zoom, right-click to go up to the continent.",
+        1, 0.96, 0.86)
+    local key = GetBindingKey and GetBindingKey("TOGGLEBATTLEFIELDMINIMAP")
+    key = key and GetBindingText and GetBindingText(key) or key
+    col:Note("Hold " .. (key or "the map's key") .. " and the map shows only while you hold it: a glance.", 1, 0.96, 0.86)
+    if ns.MapRole and ns.SetMapRole then
+        col:Choice("Where the map goes", nil, nil, {
+            { "window", "A window" }, { "clear", "Clear view: no frame" }, { "dock", "In the minimap's place" },
+        }, ns.MapRole, function(v)
+            -- (the page stays where it is on the screen: it hangs on the map, and jumped away with it when
+            -- the map went to the minimap's place, from under the pointer. The user, 2026-11-15)
+            local l, t = page:GetLeft(), page:GetTop()
+            if l and t then
+                page:ClearAllPoints()
+                page:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l, t)
+            end
+            ns.SetMapRole(v)
+            ns.RefreshControls()
+        end)
+    end
+    col:Header("Want more on the map?")
     Switch(col, "Townsfolk", "townsfolk", "shown", "Trainers, vendors and innkeepers.")
     col:CheckWith("Quest objectives", ns.ObjectivesOn, function(v)
         ns.SetObjectives(v)
         ns.RefreshControls()
     end)
-    col:Note("Where your quests' monsters and items are.", nil, nil, nil, 26)
-    col:Header("You can also have")
+    col:Note("Where your quest mobs and items are.", nil, nil, nil, 26)
+    col:Header("Beside it")
+    -- (As told first here: its panel stands beside the map, not on it. The user, 2026-11-15)
+    if ns.ToldNow then
+        Switch(col, "As told", "told", "on", "Your quest in its giver's words, on a small panel.")
+    end
     Switch(col, "Waymark's quest tracker", "tracker", "shown", "In place of the game's.")
-    Switch(col, "A clock on the map", "clock", "shown")
-    Switch(col, "Clear view", "clearView", "on", "Just the map, no frame.")
+    -- (the words, then their button, as the performance lines under it. The user, 2026-11-15)
+    col.y = col.y - 6
+    col:Note("A wanderer's dungeon notebook came with the map.", 1, 0.96, 0.86)
+    col:Button("Open the book", function() if ns.ToggleNotebook then ns.ToggleNotebook() end end)
     -- (performance mode: its own settings page, where the player picks what it lightens)
     col.y = col.y - 6
-    col:Note("The addon has a lower performance cost mode for handhelds and older PC's.", 1, 0.96, 0.86)
-    col:Button("Click here to enable", function()
+    col:Note("There's a performance mode for handhelds and older PCs.", 1, 0.96, 0.86)
+    col:Button("Open performance mode", function()
         if ns.ToggleOptions then ns.ToggleOptions("performance") end
     end)
     if ns.FOREVER then
@@ -131,9 +175,14 @@ local function BuildPage()
     done:SetPoint("TOPRIGHT", -12, col.y - 6)
     done:SetText("Done")
     done:SetScript("OnClick", function() page:Hide() end)
-    local foot = page:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    foot:SetPoint("LEFT", page, "TOPLEFT", 14, col.y - 17)
-    foot:SetText("All of this is in the settings too.")
+    -- (the way on: Start here lists everything Waymark can do, what is off too)
+    local more = ns.RedButton(page, 150, 22)
+    more:SetPoint("TOPLEFT", 12, col.y - 6)
+    more:SetText("See all it can do")
+    more:SetScript("OnClick", function()
+        page:Hide()
+        if ns.ToggleOptions then ns.ToggleOptions("overview") end
+    end)
     page:SetHeight(-col.y + 6 + 22 + 12)
 end
 
@@ -141,18 +190,16 @@ end
 local function PlacePage()
     local map = BattlefieldMapFrame
     page:ClearAllPoints()
-    if ns.Docked and ns.Docked() and Minimap then
-        page:SetPoint("TOPRIGHT", Minimap, "TOPLEFT", -14, 0)
-        return
-    end
+    -- (docked too, by the map itself: the live dots shrink the real minimap and lay it on your arrow, so a
+    -- page hung on the minimap opened from the middle of the map, as the gear's panel did, 2026-11-16)
     local right = map:GetRight()
     local room = right and UIParent:GetRight()
         and UIParent:GetRight() * UIParent:GetEffectiveScale() - right * map:GetEffectiveScale()
             > W * page:GetEffectiveScale() + 8
     if room then
-        page:SetPoint("TOPLEFT", map, "TOPRIGHT", 8, 0)
+        page:SetPoint("TOPLEFT", map, "TOPRIGHT", 18, 0)   -- (clear of the metal frame, which reaches past the page)
     else
-        page:SetPoint("TOPRIGHT", map, "TOPLEFT", -8, 0)
+        page:SetPoint("TOPRIGHT", map, "TOPLEFT", -18, 0)
     end
 end
 

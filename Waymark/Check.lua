@@ -307,6 +307,16 @@ function ns.RunCheck(noReload)
         end
         Check("scroll area at a normal level", scroll and scroll:GetFrameLevel() <= map:GetFrameLevel() + 30,
             string.format("scroll %d, map %d", scroll and scroll:GetFrameLevel() or -1, map:GetFrameLevel()))
+        -- our borders are in the map's strata with the art: over the scroll area by their level (Style.lua)
+        for _, name in ipairs({ "border", "labBorder" }) do
+            local f = ns.debugFrames[name]
+            if f and f:IsShown() and scroll then
+                Check(name .. " over the map art", f:GetFrameLevel() > scroll:GetFrameLevel()
+                        or f:GetFrameStrata() ~= scroll:GetFrameStrata(),
+                    string.format("%s %s %d, scroll %s %d, game's border %s", name, f:GetFrameStrata(), f:GetFrameLevel(),
+                        scroll:GetFrameStrata(), scroll:GetFrameLevel(), bf and (bf:GetFrameStrata() .. " " .. bf:GetFrameLevel()) or "none"))
+            end
+        end
 
         -- the gear and the toggle buttons
         local gear, strip = ns.debugFrames.gear, ns.debugFrames.toggleStrip
@@ -316,6 +326,9 @@ function ns.RunCheck(noReload)
         if collapsed then
             Check("map collapsed (info)", true, "buttons hidden on purpose, not checked; " .. tostring(ns.collapseTrim))
         end
+        -- (making room: what's in the way now, and how the map stacks against the game's windows)
+        Check("making room (info)", true, string.format("window in the way: %s; map strata %s, level %d",
+            tostring(ns.collapseRoom), map:GetFrameStrata(), map:GetFrameLevel()))
         local buttons = ns.db.mapButtons ~= false and not collapsed
         if gear and buttons and ns.db.quickButton then
             Check("gear shown", gear:IsVisible())
@@ -429,6 +442,36 @@ function ns.RunCheck(noReload)
         if ns.DockPatchInfo and ns.db.dock.on then Check("patch of blips (info)", true, ns.DockPatchInfo()) end
         if ns.DockGeometry and ns.db.dock.on then Check("minimap and view places (info)", true, ns.DockGeometry()) end
         if ns.DockMouseFrames and ns.db.dock.on then Check("moved frames with the mouse (info)", true, ns.DockMouseFrames()) end
+        -- the minimap's own buttons, docked or not: shown, see-through, whose child, where (the tracking
+        -- button was gone after undocking, the user 2026-11-15, and nothing here said where it was)
+        do
+            local out = {}
+            local function Say(label, f)
+                if not f then out[#out + 1] = label .. ": no such frame" return end
+                local ok, line = pcall(function()
+                    local p = f:GetParent()
+                    local e = f:GetEffectiveScale()
+                    local pt, rel, rp, x, y = f:GetPoint(1)
+                    return string.format("%s: %s%s, alpha %.2f (in all %.2f), scale %.2f, %s/%d, child of %s, at %s,%s size %sx%s, point %s of %s %s %d,%d",
+                        label, f:IsShown() and "shown" or "HIDDEN", f:IsVisible() and "" or " (not visible)",
+                        f:GetAlpha(), f.GetEffectiveAlpha and f:GetEffectiveAlpha() or -1, f:GetScale(),
+                        f:GetFrameStrata(), f:GetFrameLevel(),
+                        p and (p:GetName() or (p == MinimapCluster and "MinimapCluster") or "an unnamed frame") or "nothing",
+                        f:GetLeft() and math.floor(f:GetLeft() * e) or "?", f:GetBottom() and math.floor(f:GetBottom() * e) or "?",
+                        math.floor((f:GetWidth() or 0) * e), math.floor((f:GetHeight() or 0) * e),
+                        tostring(pt), rel and (rel:GetName() or "unnamed") or "nil", tostring(rp), x or 0, y or 0)
+                end)
+                out[#out + 1] = ok and line or (label .. ": " .. tostring(line))
+            end
+            local cluster = MinimapCluster
+            Say("tracking", cluster and cluster.Tracking or _G.MiniMapTracking or _G.MiniMapTrackingFrame)
+            if cluster and cluster.Tracking and cluster.Tracking.Button then Say("tracking's button", cluster.Tracking.Button) end
+            Say("mail", cluster and cluster.IndicatorFrame or _G.MiniMapMailFrame)
+            Say("clock", _G.TimeManagerClockButton)
+            Say("calendar", _G.GameTimeFrame)
+            Check("the minimap's own buttons (info)", true, table.concat(out, "; "))
+        end
+        if ns.PlaceLooksInfo then Check("a look for each place (info)", true, ns.PlaceLooksInfo()) end
         if ns.QuestWindowInfo then Check("quest log window (info)", true, ns.QuestWindowInfo()) end
         -- a dungeon's floor on the map (Dungeon.lua): which, its pins (DungeonObjects.lua), the found
         -- notes' route and stairs on it (Data\FoundNotes.lua), and the header naming it (ZoneName.lua)

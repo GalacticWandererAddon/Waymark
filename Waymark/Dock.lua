@@ -643,7 +643,20 @@ local function PlaceRim(map)
             f:SetScript("OnMouseDown", function(_, button)
                 if button ~= "LeftButton" then return end
                 if applied then
-                    if IsControlKeyDown() and ns.DockSquareDragStart then ns.DockSquareDragStart() end
+                    -- (a plain drag moves the docked map too, as its header does and as the border of a
+                    -- windowed map: Ctrl-drag was nowhere to be known with the header off, the user,
+                    -- 2026-11-15. A few pixels first, so a click on the border stays a click; not while
+                    -- the map is locked in place.)
+                    if not ns.DockSquareDragStart or (ns.db.mapFrame and ns.db.mapFrame.locked) then return end
+                    if IsControlKeyDown() then return ns.DockSquareDragStart() end
+                    local x0, y0 = GetCursorPosition()
+                    rim:SetScript("OnUpdate", function()
+                        if not (applied and IsMouseButtonDown("LeftButton")) then return rim:SetScript("OnUpdate", nil) end
+                        local x, y = GetCursorPosition()
+                        if math.abs(x - x0) + math.abs(y - y0) < 8 then return end
+                        rim:SetScript("OnUpdate", nil)
+                        ns.DockSquareDragStart()
+                    end)
                 elseif ns.MapMoveStart then
                     ns.MapMoveStart()
                 end
@@ -654,7 +667,7 @@ local function PlaceRim(map)
             end)
             f:SetScript("OnEnter", function(self)
                 GameTooltip:SetOwner(self, "ANCHOR_TOP")
-                ns.Hints({ { "Right-click", "the map's menu" }, applied and { "Ctrl-drag", "move it" } or { "Drag", "move it" } })
+                ns.Hints({ { "Right-click", "the map's menu" }, { "Drag", "move it" } })
                 GameTooltip:Show()
             end)
             f:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -817,6 +830,24 @@ local function LowerMap(map)
     local was = mapWas
     mapWas = nil
     map:SetFrameStrata(was.strata)
+    -- (a change of strata leaves the frames inside the map in a muddle: the frame set's corner art lay under
+    -- the map's picture after window > docked > drag > window, and a click on the map, which raises it, put
+    -- it right: the user, 2026-11-15. So the map is raised here, as that click does.)
+    pcall(map.Raise, map)
+    -- (and again once the rest of the undocking is done, and a moment later: the raise above comes before
+    -- the buttons go back, the scroll area's strata is set and the rim is placed, and the corners still lay
+    -- under the picture after it, the user that day. Not while it has been docked again meanwhile.)
+    local function Again()
+        if mapWas or not map:IsShown() then return end
+        -- (the picture in the map's own strata again: left a strata up, it is over our border whatever
+        -- the levels say)
+        local sc = map.ScrollContainer
+        if sc and sc:GetFrameStrata() ~= map:GetFrameStrata() then sc:SetFrameStrata(map:GetFrameStrata()) end
+        pcall(map.Raise, map)
+        if ns.UpdateStyle then pcall(ns.UpdateStyle) end
+    end
+    C_Timer.After(0, Again)
+    C_Timer.After(0.3, Again)
     -- a map you'd never moved hangs off its tab again
     local pos = ns.db.mapFrame.pos
     if not (pos and pos.kind == "topleft") and was.points[1] then

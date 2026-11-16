@@ -1,0 +1,9 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+  <!-- The map search's ring; the mixin lives in Search.lua -->
+  <Frame name="BFISearchPinTemplate" mixin="BFISearchPinMixin" virtual="true">
+    <Size x="34" y="34"/>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+    </Scripts>
+  </Frame>
+</Ui>

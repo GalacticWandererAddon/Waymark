@@ -44,6 +44,22 @@ local function Tint(hour)
     return 1, 1, 1, 0
 end
 
+-- the hour's tint by itself (r, g, b, how dark), for a map this file does not tint: the Lab's night on a continent
+function ns.MapHourTint(hour) return Tint((hour or ns.MapHourNow()) % 24) end
+
+-- Where the light stands at an hour (nil: now), for everything that shows a sun or is lit by one (the
+-- Horizon, the land's light): the body ("sun" from 6 to 18, else "moon"), its bearing in degrees (90 east,
+-- 180 south, 270 west; the moon stands opposite the sun), its height (0 at the skyline, 1 at its highest),
+-- and how dark the map's tint is (0 to 1). East to west is the map's convention, not read from the game.
+function ns.Sky(hour)
+    hour = (hour or ns.MapHourNow()) % 24
+    local day = hour >= 6 and hour < 18
+    local bearing = (hour * 15) % 360
+    if not day then bearing = (bearing + 180) % 360 end
+    local _, _, _, dark = Tint(hour)
+    return day and "sun" or "moon", bearing, math.abs(math.sin((hour - 6) / 12 * math.pi)), dark
+end
+
 local function Paint(map, r, g, b)
     ns.EachMapArtFrame(map, function(f)
         if f.bfiNoHour then return end

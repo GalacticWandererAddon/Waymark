@@ -103,6 +103,7 @@ end
 
 -- "(Hold Shift)" in the tooltip's top right corner, unless something is there already
 local WRAP_AT = 250  -- px: a first line wider than this wraps in the tooltip
+local widened = setmetatable({}, { __mode = "k" })   -- [tooltip] = 1 while we hold its least width, 0 after
 function ns.HoldShift(tip)
     tip = tip or GameTooltip
     local right = _G[(tip:GetName() or "") .. "TextRight1"]
@@ -130,6 +131,21 @@ function ns.HoldShift(tip)
     right:SetText("(Hold Shift)")
     right:SetTextColor(HOLD[1], HOLD[2], HOLD[3])
     right:Show()
+    -- (room for both: a first line added as one that may wrap does not widen the tooltip for what stands at
+    -- its right, and on a one-line tooltip the two lay over each other. The user, 2026-11-15: "1liners the
+    -- hold shift overlap". The width is let go again when the tooltip hides or is cleared.)
+    if w and tip.SetMinimumWidth then
+        local rw = right:GetStringWidth()
+        if not ns.Known(rw) then rw = 72 end
+        if not widened[tip] then
+            widened[tip] = 0
+            local function Free(t) if widened[t] == 1 then widened[t] = 0 t:SetMinimumWidth(0) end end
+            tip:HookScript("OnHide", Free)
+            pcall(tip.HookScript, tip, "OnTooltipCleared", Free)
+        end
+        widened[tip] = 1
+        tip:SetMinimumWidth(w + rw + 34)
+    end
 end
 
 -- a tooltip's own description lines, only while Shift is held ("(Hold Shift)" till then), as the

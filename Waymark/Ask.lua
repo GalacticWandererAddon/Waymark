@@ -148,7 +148,7 @@ function ns.Ask(o)
     if current then Close(false) end
     current = o
     local f = box
-    -- (the menus' font, Header & border > Menus & questions: Friz reads best, a size smaller)
+    -- (the menus' font, Header & borders > Menus & questions: Friz reads best, a size smaller)
     local mf = ns.db and ns.db.menus and ns.db.menus.font or "friz"
     if ns.SetFontSafe then
         local big = mf == "felipa"

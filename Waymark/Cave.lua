@@ -18,9 +18,14 @@ local function Cfg() return ns.db.cave end
 
 -- World position ----------------------------------------------------------------
 
--- UnitPosition gives two horizontal numbers; which is north-south (the data's X)
--- and which east-west (Y) is settled the first time one order lands in a cave
-local swap  -- nil = not known yet
+-- UnitPosition gives two horizontal numbers: north-south first (the data's X), then
+-- east-west (Y). That is the game's documented order, the one C_Map's world calls
+-- take (CaveZone below hands them the same two) and the Horizon reads its heights by.
+-- (Until 2026-11-12 the order was guessed: settled by whichever order first landed in
+-- any cave box. Standing outdoors where the two numbers turned round fell in a box,
+-- as 150 of the 287 boxes allow, settled it wrongly, and no cave was found again
+-- until a reload. /bfi probe still shows what each order would find.)
+local swap = false
 
 local function RawPos()
     if IsInInstance() then return end
@@ -86,13 +91,6 @@ end
 local function WorldPos()
     local a, b, cont = RawPos()
     if not a then return end
-    if swap == nil then
-        -- not known yet: whichever order is in a cave settles it
-        if AnyCaveAt(cont, a, b) then swap = false
-        elseif AnyCaveAt(cont, b, a) then swap = true
-        else return a, b, cont end  -- (no cave either way: order doesn't matter yet)
-    end
-    if swap then return b, a, cont end
     return a, b, cont
 end
 
@@ -315,6 +313,13 @@ local function UpdateView(x, y)
     if f then viewArrow:SetRotation(f) end
 end
 
+-- (for marks laid on the cave's ground by other files, Lab\StillWarm.lua: the canvas is in yards, a world
+-- point (x, y) sits at (refY - y, x - refX) from its centre; nil while the view isn't up)
+function ns.CaveViewGround()
+    if view and view:IsVisible() and viewCanvas and refX then return viewCanvas, refX, refY end
+end
+ns.CaveWorldPos = WorldPos
+
 -- the player arrow: the classic world map arrow if you chose it (cave.classicArrow),
 -- else the modern one where the client has it, else the classic one anyway
 local CLASSIC_ARROW = "Interface\\WorldMap\\WorldMapArrow"
@@ -439,8 +444,8 @@ local function CreateStyleButton(map)
     b:SetScript("OnEnter", function()
         GameTooltip:SetOwner(b, "ANCHOR_TOP")
         GameTooltip:AddLine(Cfg().minimapStyleEverywhere and "Blizzard's cave map" or "The minimap pictures")
-        ns.ShiftLines(b, { Cfg().minimapStyleEverywhere and "Showing the minimap pictures. A click: Blizzard's cave map."
-                           or "Showing Blizzard's cave map. A click: the minimap pictures." })
+        ns.ShiftLines(b, { Cfg().minimapStyleEverywhere and "Minimap view. Click for Blizzard's cave map."
+                           or "Blizzard's cave map. Click for the minimap view." })
         GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -461,7 +466,7 @@ local function UpdateStyleButton(map, kind, cont, x, y)
     styleButton:Art(kind == "extra" and "StudMap" or "StudNeedle")
     styleButton:ClearAllPoints()
     local area = map.ScrollContainer or map
-    styleButton:SetPoint("BOTTOMLEFT", area, "BOTTOMLEFT", 6, 6 + (ns.CoordsCornerLift and ns.CoordsCornerLift() or 0))
+    styleButton:SetPoint("BOTTOMLEFT", area, "BOTTOMLEFT", 6, 6 + (ns.CoordsCornerLift and ns.CoordsCornerLift() or 0) + (ns.SearchCornerLift and ns.SearchCornerLift() or 0))
     styleButton:Show()
 end
 

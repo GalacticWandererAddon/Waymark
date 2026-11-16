@@ -22,8 +22,16 @@ itemIn={ [281030]=3065 },
 -- Forever's own dungeons' entrances (the game's files have none): instance = { uiMapID, x, y }, 0-1. Learn.lua
 -- LearnedEntrance takes a walked-in one first. The Hall of Thanes: Ironforge 32.5, 44.5 (the user, 2026-11-09).
 entrances={ [3065]={ 1455, 0.325, 0.445 }, [2999]={ 1458, 0.725, 0.115 }, [2998]={ 1437, 0.48, 0.565 },
-    [2959]={ 1416, 0.08, 0.62 } },   -- (Ruins of Lordaeron: Undercity 72.5, 11.5; Excavation Site: Wetlands 48.0, 56.5;
-    -- City of Dalaran: Alterac Mountains 8.0, 62.0)
+    [2959]={ 1416, 0.08, 0.62 },
+    [2970]={ 1434, 0.214, 0.279 }, [3039]={ 2548, 0.375, 0.375 }, [2994]={ 1445, 0.75, 0.15 },
+    [2974]={ 1447, 0.387, 0.334 }, [3001]={ 1449, 0.481, 0.061 } },
+    -- (Ruins of Lordaeron: Undercity 72.5, 11.5; Excavation Site: Wetlands 48.0, 56.5; City of Dalaran: Alterac
+    -- Mountains 8.0, 62.0. From warcrafttavern.com's dungeon guides, 2026-11-14, plain facts: the Drowned City
+    -- underwater off Stranglethorn 21.4, 27.9 (a cavern by a large tablet, past the Vile Reef); Krol'dok
+    -- Stronghold a cave west of the fortress gates, Riverglades 37.5, 37.5; Alcaz Prison in the big building's
+    -- basement on Alcaz Island, Dustwallow 75, 15; Blackmaw Hold the furbolg tunnel in Azshara 38.7, 33.4 (the
+    -- portal itself deeper, on Winterspring's map 66.6, 84.4); the Shaper's Terrace on the hill over Marshal's
+    -- Refuge, Un'Goro 48.1, 6.1. Manor Mistmantle and the Barrow Deeps: no entrance published yet.)
 -- Classic quests Forever gives otherwise: these fields of the row replaced (WorldQuests.lua), by its field
 -- number in the row (9 preQuestSingle, 16 starts { npcs, objects, items }). From the user's quest notes and
 -- what Learn.lua saw: who offered it, after what.

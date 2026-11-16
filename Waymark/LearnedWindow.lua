@@ -126,7 +126,7 @@ local function Monsters()
             end
         end
         if n > 0 then
-            out[#out + 1] = { id = id, title = m.name or ("Monster " .. id), map = mapID, x = x, y = y,
+            out[#out + 1] = { id = id, title = m.name or ("Mob " .. id), map = mapID, x = x, y = y,
                               zone = Zone(mapID), spots = n, quests = QuestsFor(id) }
         end
     end
@@ -189,7 +189,7 @@ local function Row(i)
         else
             if e.level then GameTooltip:AddLine("Level " .. e.level, 1, 1, 1) end
             if e.from then GameTooltip:AddLine("From " .. e.from, 0.8, 0.8, 0.8) end
-            if e.to then GameTooltip:AddLine("Handed in to " .. e.to, 0.8, 0.8, 0.8) end
+            if e.to then GameTooltip:AddLine("Turned in to " .. e.to, 0.8, 0.8, 0.8) end
         end
         if e.map then GameTooltip:AddLine("Click: show it on the map", 0.6, 0.6, 0.6) end
         GameTooltip:Show()
@@ -256,7 +256,7 @@ local function Fill()
         return n
     end
     local nq, ng, nm = Count(db.quests), Count(db.givers), Count(db.mobs)
-    f.counts:SetText(string.format("%d quests · %d givers · %d %s", nq, ng, nm, nm == 1 and "monster" or "monsters"))
+    f.counts:SetText(string.format("%d quests · %d givers · %d %s", nq, ng, nm, nm == 1 and "mob" or "mobs"))
 
     for _, r in ipairs(rows) do r:Hide() end
     for _, h in ipairs(heads) do h:Hide() end
@@ -296,8 +296,8 @@ local function Fill()
         end
     end
     f.empty:SetShown(ri == 0)
-    f.empty:SetText(tab == "quests" and "Nothing learned yet: talk to quest givers as you play, or import what someone shared."
-        or "No monsters yet: a quest's monster the map can't place is learned when you loot or kill it.")
+    f.empty:SetText(tab == "quests" and "Nothing learned yet. Talk to quest givers as you play, or import what someone shared."
+        or "No mobs yet: a quest mob the map can't place is learned when you loot or kill it.")
     content:SetHeight(math.max(1, y))
     list:SetVerticalScroll(math.min(list:GetVerticalScroll(), math.max(0, y - LIST_H)))
     rowsUsed = y
@@ -334,7 +334,7 @@ local function Make()
 
     -- the two tabs
     local prev
-    for _, t in ipairs({ { "quests", "Quests" }, { "monsters", "Monsters" } }) do
+    for _, t in ipairs({ { "quests", "Quests" }, { "monsters", "Mobs" } }) do
         local b = CreateFrame("Button", nil, f, "BackdropTemplate")
         b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
         b.text = Text(b, "GameFontNormalSmall", 0.79, 0.73, 0.56)
@@ -388,13 +388,13 @@ local function Make()
     local import = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     import:SetSize(100, 22)
     import:SetPoint("LEFT", share, "RIGHT", 6, 0)
-    import:SetText("Import...")
+    import:SetText("Import")
     import:SetScript("OnClick", function() if ns.ShowImport then ns.ShowImport() end end)
     local note = Text(f, "GameFontDisableSmall", 0.56, 0.52, 0.45)
     note:SetWordWrap(true)
     note:SetWidth(W - 20)
     note:SetPoint("TOPLEFT", share, "BOTTOMLEFT", 2, -7)
-    note:SetText("Forever's quests are still being gathered: what you share is very welcome.")
+    note:SetText("Forever's quest data isn't complete yet. Sharing what you've learned helps.")
     local hint = Text(f, "GameFontDisableSmall", 0.55, 0.55, 0.55)
     hint:SetJustifyH("RIGHT")
     hint:SetPoint("TOPRIGHT", list, "BOTTOMRIGHT", -2, -48)

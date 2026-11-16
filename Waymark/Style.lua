@@ -46,6 +46,32 @@ function ns.BorderLevel()
     return lvl
 end
 
+-- The level of a border of ours round the map: over the scroll area, which draws all the map's art and
+-- pins at its own level, whatever levels they carry inside it. Our borders are the map's children, in
+-- the map's strata; the game's BorderFrame is in HIGH, so its level alone says nothing about the art:
+-- it stayed 2 while the scroll area's rose, and the art lay over our corners till a reload (the user,
+-- 2026-11-14). And over the pictures laid on the map area, the dungeon map and the cave view (area + 5000,
+-- their own layers up to + 60): the Stockade's parchment lay over the frame's corners, the user's shot
+-- that day. Under those views' buttons (+ 5100), the hover label (+ 5500) and the search (+ 5700); the
+-- map's own buttons and header are in HIGH.
+function ns.MapBorderLevel(map)
+    local level = (map.BorderFrame or map):GetFrameLevel() + 1
+    local sc = map.ScrollContainer
+    if sc then level = math.max(level, math.min(sc:GetFrameLevel() + 5090, 9090)) end
+    return level
+end
+
+-- Borders kept at that level while the map is open (ours, the Lab's frame sets): the levels can move
+-- with no word to us, so a look twice a second, and a level set only when it's wrong.
+local kept = {}
+function ns.KeepBorderLevel(f) kept[f] = true end
+local function HoldBorderLevels(map)
+    local want = ns.MapBorderLevel(map)
+    for f in pairs(kept) do
+        if f:IsShown() and f:GetFrameLevel() ~= want then f:SetFrameLevel(want) end
+    end
+end
+
 -- the game's own border art (not its close button)
 local function ShowGameBorder(map, show)
     local bf = map.BorderFrame
@@ -105,6 +131,12 @@ function ns.DressBorder(edgeFrame, frame, style, size, gap, color)
     return out
 end
 
+-- the border as the settings ask for it now: its style, size and gap in one word
+function ns.StyleKey()
+    local c = ns.db.border
+    return tostring(ns.MapBorderStyle()) .. "|" .. tostring(c.size) .. "|" .. tostring(c.gap)
+end
+
 function ns.UpdateStyle()
     local map = BattlefieldMapFrame
     if not (border and map) then return end
@@ -116,6 +148,10 @@ function ns.UpdateStyle()
     if def and def.fallback and not HasFile(def.edge) then def = BORDERS[def.fallback] end
     ShowGameBorder(map, style == "game")
     outset = style ~= "game" and 0 or nil
+    -- (ZoneName.lua: the border the header measures itself against is the real one from here. Which border
+    -- it is goes with it: a premade look sets the header before the border, and a header turned in between
+    -- measured itself against the border of the look before.)
+    ns.styleApplied = ns.StyleKey()
     if def then
         local size = math.max(1, math.floor(def.size * (c.size or 1) + 0.5))
         -- gap: your own nudge, out from (or in over) the map
@@ -126,7 +162,7 @@ function ns.UpdateStyle()
         border:ClearAllPoints()
         border:SetPoint("TOPLEFT", area, "TOPLEFT", -out, out)
         border:SetPoint("BOTTOMRIGHT", area, "BOTTOMRIGHT", out, -out)
-        border:SetFrameLevel((map.BorderFrame or map):GetFrameLevel() + 1)
+        border:SetFrameLevel(ns.MapBorderLevel(map))
         border:Show()
     else
         border:Hide()
@@ -147,8 +183,12 @@ function ns.ApplyFrameAlpha()
     -- (clear view's border fading in for town and city view)
     local e = ns.ClearViewBorderAlpha and ns.ClearViewBorderAlpha() or 1
     border:SetAlpha(a * e)
+    -- (a frame set's border, Frames.lua: it is the map's border when one is picked, and the slider passed it
+    -- by. "frame opacity slider doesnt actually reduce frame opacity", the user 2026-11-15)
+    if ns.debugFrames.labBorder then ns.debugFrames.labBorder:SetAlpha(a * e) end
     -- (the game's border frame holds the close X: faded only when it's the border drawn)
-    if map.BorderFrame then map.BorderFrame:SetAlpha(ns.MapBorderStyle() == "game" and a * e or a) end
+    -- (any other style: it holds only the close X, a button, and buttons no longer follow this slider)
+    if map.BorderFrame then map.BorderFrame:SetAlpha(ns.MapBorderStyle() == "game" and a * e or 1) end
     -- (clear view can show the header only under the mouse, or not at all)
     local h = ns.ClearViewHeaderAlpha and ns.ClearViewHeaderAlpha() or 1
     if ns.debugFrames.header then ns.debugFrames.header:SetAlpha(a * h) end
@@ -161,6 +201,14 @@ function ns.SetupStyle(map)
     border:Hide()
 
     ns.debugFrames.border = border
+    ns.KeepBorderLevel(border)
+    local watch, since = CreateFrame("Frame", nil, map), 0   -- (the map's child: runs only while it's open)
+    watch:SetScript("OnUpdate", function(_, dt)
+        since = since + dt
+        if since < 0.5 then return end
+        since = 0
+        HoldBorderLevels(map)
+    end)
 
     map:HookScript("OnShow", ns.UpdateStyle)
     if map.RefreshAlpha then hooksecurefunc(map, "RefreshAlpha", ns.ApplyFrameAlpha) end
