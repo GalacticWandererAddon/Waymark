@@ -22,7 +22,9 @@ local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local DIGIT = {}
 for i = 1, 64 do DIGIT[B64:byte(i)] = i - 1 end
 
-local GROUPS = { "Trainers", "Services", "Vendors", "Sold by vendors" }
+local GROUPS = { "Trainers", "Services", "Vendors", "Sold by vendors", "Zones", "Places" }
+local MAX_PLACES = 8
+local ZONE_ICON, PLACE_ICON = "Interface\\Icons\\INV_Misc_Map_01", "Interface\\Icons\\INV_Misc_Map02"
 -- other words a player might type for a type
 local WORDS = {
     ["Flight Master"] = "fly flying taxi gryphon wyvern hippogryph bat", Repair = "repair anvil armour armor",
@@ -140,8 +142,75 @@ local function ItemEntry(id)
     return e
 end
 
+-- Zones and named places (the user 2026-11-17, the big map as the world map: "a way to a far zone").
+-- A zone: the map goes there. A place: the map goes to its zone and rings it, as it rings a trainer.
+-- Zones are the world's zone and continent maps as the game lists them, with ZoneLevels' as a net;
+-- places are Places.lua's rows that have a name, one line a name (Places.lua: the game's own names).
+local zoneList, placeList
+local function Zones()
+    if zoneList then return zoneList end
+    zoneList = {}
+    local have = {}
+    local function Add(id, name, mapType)
+        if not (id and name and name ~= "") or have[id] then return end
+        have[id] = true
+        zoneList[#zoneList + 1] = { zone = id, label = name, icon = ZONE_ICON, group = 5, find = name:lower(), continent = mapType == 2 }
+    end
+    local T = Enum and Enum.UIMapType
+    if C_Map.GetMapChildrenInfo and T then
+        for _, top in ipairs({ 947, 946 }) do
+            local ok, kids = pcall(C_Map.GetMapChildrenInfo, top, nil, true)
+            for _, k in ipairs(ok and kids or {}) do
+                if k.mapType == T.Zone or k.mapType == T.Continent then Add(k.mapID, k.name, k.mapType) end
+            end
+        end
+    end
+    for id in pairs(ns.ZoneLevels or {}) do
+        local info = C_Map.GetMapInfo(id)
+        if info then Add(id, info.name, info.mapType) end
+    end
+    table.sort(zoneList, function(a, b) return a.label < b.label end)
+    return zoneList
+end
+
+local function PlaceNames()
+    if placeList then return placeList end
+    placeList = {}
+    local by = {}
+    for _, r in ipairs(ns.Places or {}) do
+        if r.name and r.name ~= "" then
+            local k = r.name:lower()
+            local e = by[k]
+            if not e then
+                e = { place = k, label = r.name, icon = PLACE_ICON, group = 6, find = k, rows = {} }
+                by[k] = e
+                placeList[#placeList + 1] = e
+            end
+            e.rows[#e.rows + 1] = r
+        end
+    end
+    return placeList
+end
+
 local function Matches(q)
-    local groups = { {}, {}, {}, {} }
+    local groups = { {}, {}, {}, {}, {}, {} }
+    if #q >= 2 then
+        for _, e in ipairs(Zones()) do
+            if e.find:find(q, 1, true) then table.insert(groups[5], e) end
+        end
+    end
+    if #q >= 3 then
+        local hits = {}
+        for _, e in ipairs(PlaceNames()) do
+            local at = e.find:find(q, 1, true)
+            if at then hits[#hits + 1] = { e = e, score = (at == 1 and 0 or 1000) + #e.find } end
+        end
+        table.sort(hits, function(a, b)
+            if a.score ~= b.score then return a.score < b.score end
+            return a.e.find < b.e.find
+        end)
+        for i = 1, math.min(#hits, MAX_PLACES) do groups[6][i] = hits[i].e end
+    end
     for _, e in ipairs(Entries()) do
         if e.find:find(q, 1, true) then table.insert(groups[e.group], e) end
     end
@@ -193,6 +262,20 @@ local function TypeCandidates(e)
                 end
             end
         end
+    end
+    return out
+end
+
+-- a named place: its rows, one a zone map (a mine's mark and its area share a name and a spot: the mark)
+local function PlaceCandidates(e)
+    local per, out = {}, {}
+    for _, r in ipairs(e.rows or {}) do
+        local have = per[r.map]
+        if not have or (r.source == "mark" and have.source ~= "mark") then per[r.map] = r end
+    end
+    for map, r in pairs(per) do
+        local info = C_Map.GetMapInfo(map)
+        out[#out + 1] = { id = r.id, name = r.name, sub = info and info.name or nil, map = map, x = r.x, y = r.y }
     end
     return out
 end
@@ -349,7 +432,7 @@ local function Resolve()
     local e = found and found.entry
     if not e then return end
     local list
-    if e.item then list = ItemCandidates(e) else list = TypeCandidates(e) end
+    if e.item then list = ItemCandidates(e) elseif e.place then list = PlaceCandidates(e) else list = TypeCandidates(e) end
     if not list then
         -- (the townsfolk index is still being built: ask again shortly)
         found.waiting = (found.waiting or 0) + 1
@@ -367,6 +450,12 @@ end
 local function Pick(e)
     if not e then return end
     box:Hide()
+    -- (a zone: the map goes there, nothing to ring; an old search's ring and bar go)
+    if e.zone then
+        Clear()
+        if ns.BrowseTo then ns.BrowseTo(e.zone) elseif BattlefieldMapFrame then pcall(BattlefieldMapFrame.SetMapID, BattlefieldMapFrame, e.zone) end
+        return
+    end
     found = { entry = e, list = {}, step = 1 }
     Resolve()
 end
@@ -643,7 +732,7 @@ local function MakeBox()
     edit:SetMaxLetters(40)
     edit.placeholder = Text(edit, "GameFontDisable", 0.5, 0.5, 0.5)
     edit.placeholder:SetPoint("LEFT", 7, 0)
-    edit.placeholder:SetText("Trainer, service or item...")
+    edit.placeholder:SetText("Trainer, service, item or place...")
     edit:SetScript("OnTextChanged", Refresh)
     edit:SetScript("OnEscapePressed", function() box:Hide() end)
     edit:SetScript("OnEnterPressed", function() if first then Pick(first) end end)
@@ -651,9 +740,9 @@ local function MakeBox()
 
     box.hint = Text(box, "GameFontDisableSmall", 0.55, 0.55, 0.55)
     box.hint:SetPoint("TOPLEFT", 10, -36)
-    box.hint:SetText("A trainer, a service, or an item a vendor sells.")
+    box.hint:SetText("A trainer, a service, an item a vendor sells, a zone or a place.")
     box.none = Text(box, "GameFontDisableSmall", 0.55, 0.55, 0.55)
-    box.none:SetText("Nobody we know of sells or teaches that.")
+    box.none:SetText("Nothing we know of by that name.")
 
     -- names arriving from the server: the list again (a few at a time)
     local pending

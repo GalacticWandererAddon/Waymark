@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.3.1 (2026-11-17)
+
+**A smoother map on the continents, and the zone maps there come in clear.**
+
+Performance
+- Opening a continent, or wheeling out of a zone onto one, no longer hitches. Waymark laid every zone map of the continent in one go. Now it lays them in small steps, and has your own continent ready soon after you log in.
+- Zoomed in on a continent, only the zone maps in view are drawn.
+- Zooming on a continent does less work on every step.
+
+New
+- Escape shuts a big map you opened with its key, and makes any other big map small again.
+- The map search finds zones and named places too.
+- The quest log can open with the big map: Settings > Quest log > "Open it with the big map". Off as it comes.
+- Boats: a size slider for the moving ships and zeppelins.
+- Fisherman's mode can have a button on the map: Settings > Toggle buttons. Off as it comes.
+
+Changed
+- On a continent, each zone's own map now comes in almost as soon as you wheel out, so the continent looks as clear as the zones do. For new installs and a setup picked afresh: your own settings stay as they are. The three sliders are on The map's look, under Show advanced settings.
+- A quest started by a dropped item shows one "!" on a map, at the busiest camp, where it could cover a whole zone in them before. Point at it and the other camps show faintly.
+- As told: the "Asked" part of the panel has its own warm gold.
+- The shaded land, here and there: Kalimdor's ground is rounder, Un'Goro keeps its wall, the sea off Gilneas lies flat, and two walls that are not on the painted map (the Blasted Lands' coast, east of the Shimmering Flats) no longer throw a shadow.
+
+Fixed
+- Coloured specks on the painted continents: small red, yellow or purple dots in the sea and along coasts, more of them the further you zoomed out. Every piece of the continents is made again without them.
+- Zoomed all the way out on a continent, the shaded land lay at full strength over the game's own continent map, with halos and dark patches on the coasts. The shading now comes in together with Waymark's painted zone maps.
+
+Known
+- With Waymark's quest tracker switched off again, the game's own tracker can stay hidden. Chat says so when it happens: a /reload brings it back.
+- The first time a continent opens after you log in, the frame rate can dip for a second or two while the game loads the art.
+- Class trainers don't have their lists yet. A right-click says so.
+- "SetPreferredGamepadInteractTarget()" can still come up with a controller. If you see it, click [Copy a report] in the chat line and paste it in a comment on Waymark's CurseForge page.
+
 ## 1.3.0 (2026-11-16)
 
 **The map gets its land: shaded hills, pencil where you've only looked, boats where they really are, and your quests as the quest giver told them.**

@@ -680,16 +680,30 @@ local function BuildGivers()
         for m, cells in pairs(c.maps) do
             local list = givers[m]
             if not list then list = {} givers[m] = list end
-            -- (still a lot, the user: the busiest camp a map in full, the others faint)
-            local top
-            for _, cell in pairs(cells) do
-                if not top or cell.n > top.n then top = cell end
+            -- (one mark a map, at the busiest camp, and no faint ones: Crystal in the Mountains' pendant
+            -- drops all over Arathi and every camp had its "!", a player on CurseForge 2026-11-17. Its
+            -- name says when the droppers are spread wide)
+            local top, spread, names, more = nil, 0, {}, -1
+            for k, cell in pairs(cells) do
+                -- (ties by the cell's key, so the mark stands at the same camp every session)
+                if not top or cell.n > top.n or (cell.n == top.n and k < top.k) then top = cell top.k = k end
+                spread = spread + 1
+                for nm in pairs(cell.names) do
+                    if not names[nm] then names[nm] = true more = more + 1 end
+                end
             end
-            for _, cell in pairs(cells) do
-                local more = -1
-                for _ in pairs(cell.names) do more = more + 1 end
-                list[#list + 1] = { x = cell.x / cell.n, y = cell.y / cell.n, starterType = "itemFromMonster", quests = c.quests,
-                                    name = cell.first .. (more > 0 and " and " .. more .. " more" or ""), faint = cell ~= top or nil }
+            if top then
+                local who = top.first .. (more > 0 and " and " .. more .. " more" or "")
+                -- (the other camps: shown faintly while the pointer is on the mark, Pin.lua)
+                local others
+                for _, cell in pairs(cells) do
+                    if cell ~= top then
+                        others = others or {}
+                        others[#others + 1] = { cell.x / cell.n, cell.y / cell.n }
+                    end
+                end
+                list[#list + 1] = { x = top.x / top.n, y = top.y / top.n, starterType = "itemFromMonster", quests = c.quests,
+                                    name = spread > 3 and ("Drops all over the zone: " .. who) or who, camps = others }
             end
         end
         n = n + 1
@@ -1515,7 +1529,7 @@ function ns.QuestIcons(mapID)
                 local icon = best.trivial and "available_gray" or (anyRep and #quests == 1 and "repeatable") or "available"
                 out[#out + 1] = {
                     x = (lx or g.x) * 100, y = (ly or g.y) * 100, id = best.id, name = QuestName(best.id), group = "questie",
-                    level = bestLevel, starterType = g.starterType, who = g.name, sub = g.sub, quests = quests, faint = g.faint,
+                    level = bestLevel, starterType = g.starterType, who = g.name, sub = g.sub, quests = quests, camps = g.camps,
                     trivial = best.trivial or nil,
                     kind = art and "file" or nil, value = art and (QUESTIE_ICONS .. icon .. ".blp") or nil,
                     l = 0, r = 1, t = 0, b = 1,

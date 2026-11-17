@@ -272,7 +272,8 @@ local function Draw()
                     -- yards to map units, from a second point a hundred yards north
                     local _, ny = ns.WorldToMap(ui, x + 100, y, inst)
                     local perYard = ny and math.abs(ny - my) * H / 100 or 0
-                    local size = math.max(ACROSS[path.kind] * perYard, floor)
+                    -- (times the player's own size for them: transports.shipScale, 1 = true size with the floor)
+                    local size = math.max(ACROSS[path.kind] * perYard, floor) * (layer.shipScale or 1)
                     local t = Mark(id, path.kind)
                     t:SetSize(size, size)
                     t:ClearAllPoints()

@@ -1205,7 +1205,10 @@ local BIG_TIME = 0.45  -- seconds the change glides
 -- the screen in the map's units, a little margin left
 local function ScreenRoom(map)
     local k = UIParent:GetEffectiveScale() / map:GetEffectiveScale()
-    return UIParent:GetWidth() * k * 0.95, UIParent:GetHeight() * k * 0.95
+    -- (the quest log that opens with the big map, Tracker.lua questlog.withBig: its width stays free)
+    local side = ns.QuestLogSideRoom and ns.QuestLogSideRoom() or 0
+    local sw = UIParent:GetWidth()
+    return math.max(sw * 0.95 - side, sw * 0.4) * k, UIParent:GetHeight() * k * 0.95
 end
 
 local function FitScreen(map, w, h, most)
@@ -1551,6 +1554,38 @@ end
 -- closes it again, back to small for next time (the user, 2026-11-03: M as a big map of its own).
 -- Open already: big and small.
 local openedBig  -- the big map key opened the map (cleared when the map closes any way)
+local keyGrew    -- the big map key grew a map that was open already (cleared when it's small again)
+
+-- Escape puts the big map away (the user 2026-11-17: "Opened by keybind, close on esc. Opened by
+-- arrow, shrink to small"): shut if its key opened the map, back to small however else it got big
+-- (the arrow button, the key on an open map). Not the docked big map.
+-- How: a frame with nothing to see, in the game's list of windows Escape closes, shown while the
+-- map is big. The game hides it on Escape and its OnHide does the rest. (The map itself is not in
+-- that list: small, it is made to stay open.)
+local escape, escapeOurs
+local function EscapeWatch()
+    local map = BattlefieldMapFrame
+    local want = map and map:IsShown() and Cfg().big and not (ns.Docked and ns.Docked()) and true or false
+    if want and not escape then
+        escape = CreateFrame("Frame", "WaymarkBigMapEscape")
+        escape:SetSize(1, 1)
+        escape:Hide()
+        escape:SetScript("OnHide", function()
+            if escapeOurs then return end
+            local m = BattlefieldMapFrame
+            if not (m and m:IsShown() and Cfg().big) then openedBig, keyGrew = nil, nil return end
+            if ns.Docked and ns.Docked() then return end
+            if openedBig then ns.ToggleBigMap(true) else keyGrew = nil ns.ToggleBigMap() end
+        end)
+        tinsert(UISpecialFrames, "WaymarkBigMapEscape")
+    end
+    if escape and escape:IsShown() ~= want then
+        escapeOurs = true
+        escape:SetShown(want)
+        escapeOurs = nil
+    end
+    if ns.QuestLogFollowBig then ns.QuestLogFollowBig(want) end  -- (Tracker.lua: the quest log comes and goes with the big map)
+end
 
 -- back to small without the grow animation (the map closed, or about to show)
 local function SmallNow()
@@ -1560,6 +1595,7 @@ local function SmallNow()
     StopGlide()
     ns.Safe("MapControls UpdateShape", UpdateShape, true, true)
     RefreshBigButton()
+    EscapeWatch()
 end
 
 -- (fromKey: the key binding, Keys.lua; the arrow button and menus only grow and shrink, and a
@@ -1577,21 +1613,23 @@ function ns.ToggleBigMap(fromKey)
         openedBig = nil
         if ToggleBattlefieldMap then pcall(ToggleBattlefieldMap) end
         if not map:IsShown() then SmallNow() end
+        EscapeWatch()
         return
     end
-    openedBig = nil
+    openedBig, keyGrew = nil, nil
     local opened  -- (opened now: straight to big, no grow; the user, 2026-11-03)
     if not (map and map:IsShown()) then
         if ToggleBattlefieldMap then pcall(ToggleBattlefieldMap) end
         map = BattlefieldMapFrame
         if not (map and map:IsShown()) then return end
         openedBig = fromKey or nil
-        if Cfg().big then return end
+        if Cfg().big then EscapeWatch() return end
         opened = true
     end
-    if not defaultW then return end
+    if not defaultW then EscapeWatch() return end
     local c = Cfg()
     c.big = not c.big
+    keyGrew = c.big and fromKey and not opened or nil
     if c.big then
         -- the map is placed by its top-left corner from here on (as when you
         -- drag it), so the kept corner can move it
@@ -1607,10 +1645,12 @@ function ns.ToggleBigMap(fromKey)
     growCorner = c.bigCorner
     ns.Safe("MapControls UpdateShape", UpdateShape, opened or false, true, BIG_TIME)
     RefreshBigButton()
+    EscapeWatch()
 end
 
 function ns.MapIsBig() return IsBig() end
-ns.RefreshBigButton = function() RefreshBigButton() end  -- (Dock.lua: docking changes what big means)
+-- (Dock.lua: docking changes what big means; and whatever made the map big or small, Escape's watch follows)
+ns.RefreshBigButton = function() RefreshBigButton() EscapeWatch() end
 
 -- left of the map's close X, as big as its red X art (the button itself is
 -- larger: a click margin round the art); the game's red "condense" button while
@@ -1916,6 +1956,7 @@ function ns.ApplyMapControls(group)
     end
     ns.Safe("MapControls UpdateShape", UpdateShape)
     RefreshBigButton()  -- (a loaded setup brings its own big / normal)
+    EscapeWatch()
     if not group then RelayoutButtons() end  -- (and its own button places)
     -- auto-zoom settings changed: decide afresh (not for other map settings,
     -- or dragging e.g. the opacity slider would re-zoom you)
@@ -1936,8 +1977,9 @@ function ns.SetupMapControls(map)
         ns.Safe("MapControls UpdateShape", UpdateShape, true)
         pauseUntil = 0
         heldAt = nil  -- (a freshly opened map follows you again)
+        EscapeWatch()
     end)
-    map:HookScript("OnHide", function() openedBig = nil end)
+    map:HookScript("OnHide", function() openedBig, keyGrew = nil, nil EscapeWatch() end)
     -- into a dungeon the map is small, however it was left (the user, 2026-11-03: it came back
     -- big after being closed big)
     local enter = CreateFrame("Frame")

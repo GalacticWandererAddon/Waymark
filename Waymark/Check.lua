@@ -80,10 +80,63 @@ function ns.TimedFrame(label, parent)
     return f
 end
 
+-- A stretch of frames written down one by one, for a hitch that lasts a second or two and that
+-- the sums by label cannot show (a continent's first showing: ZoneArt.lua): each frame's length
+-- and our share of it. The next /bfi check prints them: "traces:" in the frame cost line.
+local tracing, traces = {}, {}  -- (several at once: a continent opened while the art still warms)
+function ns.CostTrace(label, frames)
+    if #tracing + #traces >= 4 then return end
+    tracing[#tracing + 1] = { label = label, left = frames, n = 0, ms = 0, ours = 0, worst = 0, oursWorst = 0, long = {} }
+end
+local function TraceOne(t, ms, ours)
+    t.n, t.left, t.ms, t.ours = t.n + 1, t.left - 1, t.ms + ms, t.ours + ours
+    if ms > t.worst then t.worst = ms end
+    if ours > t.oursWorst then t.oursWorst = ours end
+    -- (the long frames by number: where in the stretch the hitch sits, and whose it is)
+    if ms >= 20 and #t.long < 12 then t.long[#t.long + 1] = string.format("%d: %.0f (ours %.1f)", t.n, ms, ours) end
+    if t.left > 0 then return end
+    traces[#traces + 1] = string.format("%s: %d frames in %.2f s, mean %.1f ms, longest %.0f ms, ours %.1f ms in all "
+        .. "(most in one frame %.1f); frames of 20 ms and more: %s", t.label, t.n, t.ms / 1000, t.ms / t.n, t.worst,
+        t.ours, t.oursWorst, #t.long > 0 and table.concat(t.long, ", ") or "none")
+    return true
+end
+local function TraceFrame(ms, ours)
+    for i = #tracing, 1, -1 do
+        if TraceOne(tracing[i], ms, ours) then table.remove(tracing, i) end
+    end
+end
+
+-- Our own map layers' share of a map change (the wheel going up or into a zone: "Browse SetMapID"
+-- times the whole of it, the game's part too): each of our data providers' OnMapChanged under
+-- "map change: <its mixin>". Only ours, by name: never the game's own.
+function ns.TimeMapChange(map)
+    if not (map and map.dataProviders) then return end
+    local ours = {}
+    for _, name in ipairs({ "Questie", "Dungeon", "Fishing", "Gather", "Learned", "QuestPOI", "QuestBlob",
+                            "Waypoint", "Transport", "Townsfolk", "Search", "Rare" }) do
+        local mixin = _G["BFI" .. name .. "ProviderMixin"]
+        if type(mixin) == "table" and type(mixin.OnMapChanged) == "function" then ours[mixin.OnMapChanged] = name end
+    end
+    for provider in pairs(map.dataProviders) do
+        local fn = type(provider) == "table" and provider.OnMapChanged
+        if fn and ours[fn] and not provider.bfiTimed then
+            provider.bfiTimed = true
+            provider.OnMapChanged = ns.Timed("map change: " .. ours[fn], fn)
+        end
+    end
+end
+
 do
     local counter = CreateFrame("Frame")
+    local timedAt = 0
     counter:SetScript("OnUpdate", function(_, dt)
         costFrames = costFrames + 1
+        if tracing[1] then TraceFrame(dt * 1000, ourFrame) end
+        -- (our layers join the map over the first seconds: looked for a few times, then left)
+        if timedAt < 5 and costFrames % 300 == 0 then
+            timedAt = timedAt + 1
+            pcall(ns.TimeMapChange, BattlefieldMapFrame)
+        end
         if ourFrame > ourWorst then ourWorst = ourFrame end
         ourTotal, ourFrame = ourTotal + ourFrame, 0
         -- (the first frames after a loading screen are long anyway)
@@ -118,6 +171,10 @@ local function FrameCost()
         secs, costFrames, costFrames / math.max(secs, 0.001), ourTotal / n, ourWorst, gameWorst * 1000,
         #spiky > 0 and table.concat(spiky, ", ") or "none",
         #changes > 0 and table.concat(changes, ", ") or "none", table.concat(top, ", "))
+    if #traces > 0 then
+        line = line .. "; traces: " .. table.concat(traces, " | ")
+        traces = {}
+    end
     cost, costFrames, costFrom, ourFrame, ourWorst, ourTotal, gameWorst = {}, 0, GetTime(), 0, 0, 0, 0
     return line, list
 end

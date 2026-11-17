@@ -3713,6 +3713,8 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     -- (with the window's own settings, not its buttons: moved here 2026-11-03)
     a:Check("Light up its spots and areas while open", "questlog", "glow")
     a:Tip("Highlights the open quest's spots and turn-in on the map, like hovering it in the tracker.")
+    a:Check("Open it with the big map", "questlog", "withBig")
+    a:Tip("The quest log opens beside the map when the map goes big, and closes when it goes small. The big map leaves room for it.")
     a:Check("Open it with the quest log key", "questlog", "keyL")
     a:Tip("While the map shows, your quest log key (L) opens this window instead of the game's quest log.")
     a:Check("Replace the game's quest log", "questlog", "replaceGame")
@@ -4064,11 +4066,16 @@ PAGES[#PAGES + 1] = { key = "traversal", label = "Boats & zeppelins", build = fu
         a:Tip("Once you have ridden a boat or zeppelin, its ship is drawn on the map where the boat is now.")
         a:Check("A dotted wake behind them", "transports", "wake")
         a.last.bfiDep = function() return ns.db.transports.live and true or false end
+        -- (the moving ships' own size: "Size" below never touched them, a player on CurseForge 2026-11-16)
+        a:Slider("Ships & zeppelins: size", 0.5, 3, 0.05, "transports", "shipScale", "%.2fx")
+        a.last.bfiDep = function() return ns.db.transports.live and true or false end
     end
     a:Check("Anchors & pennants", "transports", "marks")
     a:Tip("A small anchor at each pier and a pennant at each zeppelin tower.")
+    a:Slider("Anchors, pennants & tram: size", 0.2, 2, 0.05, "transports", "scale")
+    -- (nothing to size with the anchors off and the tram off)
+    a.last.bfiDep = function() local t = ns.db.transports return (t.marks or t.trams) and true or false end
     a:Slider("Opacity", 0, 1, 0.05, "transports", "alpha")
-    a:Slider("Size", 0.2, 2, 0.05, "transports", "scale")
     a:Requires()
 end }
 
@@ -6500,6 +6507,8 @@ local TOGGLES = {
     { "gather",    "shown",    "cursor_gatherherbs_128",                         "Gathering nodes", nil, "Other addons" },
     { "line",      "shown",    "minimap-questarrow",                             "Line to party member" },
     { "dungeons",  "shown",    "dungeon",                                        "Dungeon entrances" },
+    -- (asked for on CurseForge 2026-11-17: the mode had a switch in settings but no button; FishingMap.lua; the header's fish)
+    { "fishing",   "shown",    ns.MEDIA .. "Marks\\FishOutlined",                "Fisherman's mode" },
     { "detail",    "shown",    "cursor_inspect_128",                             "Close-up detail" },
     { "detailAll", "always",   "Interface\\WorldMap\\UI-World-Icon",             "Full detail at every zoom", "detail" },
     { "zoom",      "center",   "Interface\\Minimap\\UI-Minimap-ZoomInButton-Up",  "Follows you", "mapFrame" },  -- (id "zoom" kept for your saved order; Shift-click: auto-zoom)
@@ -6649,6 +6658,14 @@ local function RefreshToggles()
             local v = on and 1 or 0.55
             b.icon:SetVertexColor(v, v, v)
             b.icon:SetAlpha(1)
+        end
+        -- (Fisherman's mode, on: its fish in the header's colour for the map on view, the wash's for
+        -- your skill there; soft ink brown where the header has no fish. "Maybe make it the same
+        -- color", the user 2026-11-17)
+        if on and b.id == "fishing" then
+            local map = BattlefieldMapFrame
+            local c = ns.FishingTint and map and ns.FishingTint(map:GetMapID()) or { 0.6, 0.56, 0.48 }
+            b.icon:SetVertexColor(c[1], c[2], c[3])
         end
     end
 end

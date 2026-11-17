@@ -102,7 +102,7 @@ local DEFAULTS = {
                    color = { 1, 1, 1 } },
     waypoints  = { shown = false, alpha = 1, scale = 1, clickToAdd = true },  -- TomTom
     transports = { shown = true, alpha = 1, scale = 1, boats = true, zeppelins = true, trams = true, continent = true, routes = true, marks = false,
-                   live = true, wake = true },  -- Transports.lua (ink on the map, not pins); live, wake: Boats.lua (a ship where its boat is, once ridden; its dotted wake)
+                   live = true, wake = true, shipScale = 1 },  -- shipScale: the moving ships' size (Boats.lua), scale: the pier and tram marks'. Transports.lua (ink on the map, not pins); live, wake: Boats.lua (a ship where its boat is, once ridden; its dotted wake)
     rares      = { shown = false, alpha = 1, scale = 1, rsIcons = false },  -- RareScanner
     fishing    = { shown = false, alpha = 0.55 },  -- Fisherman's mode (FishingMap.lua)
     -- quest givers learned as you play (Learn.lua): mode "gaps" = only quests
@@ -167,7 +167,7 @@ local DEFAULTS = {
     -- art) / "map" (the map border's) / a map border style, with borderSize,
     -- borderGap, borderColor.
     -- replaceGame: the quest log key opens it map or not, the game's closes as it opens
-    questlog   = { shown = true, fromPins = false, keyL = false, replaceGame = false,
+    questlog   = { shown = true, fromPins = false, keyL = false, replaceGame = false, withBig = false,
                    chainWords = true,  -- (QuestWords.lua: a chain step you do not hold shows the giver's words)
                    listHereFirst = true, listFoldOthers = true, listLevelColors = true, listShare = 0.27, logStyle = "leather",
                    listGoldTitles = false,
@@ -316,7 +316,7 @@ local DEFAULTS = {
     browse     = { enabled = true, wheel = true, friction = 3, idle = 10, onReopen = true, onZone = false, taxi = true,
                    overviewNames = true,
                    silver = true, continentGivers = true,
-                   zoneArt = true, fadeFrom = 0.1, fadeFull = 0.25, detailFull = 0.95, zoneWash = true },
+                   zoneArt = true, fadeFrom = 0.05, fadeFull = 0.1, detailFull = 0.15, zoneWash = true },
     -- exploration (Explore.lua): shown = draw the areas you haven't found, in
     -- fogStyle (faded, fog, sepia, ink, full) at fogAlpha; flash = a gold flash
     -- where you discover one; hoverNames: the area under the cursor, at the map's

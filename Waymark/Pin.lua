@@ -177,10 +177,66 @@ function ns.PinGlow(pin, on)
 end
 
 function BFIQuestiePinMixin:ApplyCurrentAlpha()
-    local group = self.bfiGroup or "questie"
-    -- (a camp of monsters dropping a quest's item, not the busiest: faint)
-    local faint = self.icon and self.icon.faint
-    self:SetAlpha(ns.PinAlpha(group) * (faint and 0.3 or 1))
+    self:SetAlpha(ns.PinAlpha(self.bfiGroup or "questie"))
+end
+
+-- A quest that starts from a dropped item has one "!" a map, at the busiest camp of its monsters
+-- (QuestData.lua). While the pointer is on it, the other camps show faintly: the pin's own icon,
+-- drawn on the map's sheet, gone when the pointer leaves (the user 2026-11-17: no setting for it).
+local CAMP_ALPHA, CAMP_MAX = 0.4, 80
+local campHolders = {}  -- [canvas] = { frame, textures }
+local function ShowCamps(pin, on)
+    local map = pin.GetMap and pin:GetMap()
+    local canvas = map and map.GetCanvas and map:GetCanvas()
+    if not canvas then return end
+    local h = campHolders[canvas]
+    local camps = on and pin.icon and pin.icon.camps
+    if not camps then
+        if h then h.frame:Hide() end
+        return
+    end
+    if not h then
+        h = { frame = CreateFrame("Frame", nil, canvas), tex = {} }
+        h.frame:SetAllPoints(canvas)
+        -- (pins are pooled and the map redraws under the pointer: the camps go by themselves when
+        -- their mark is gone, is another quest's now, or the pointer has left it)
+        h.frame:SetScript("OnUpdate", function(f)
+            local o = h.owner
+            if not (o and o:IsVisible() and o.icon == h.icon and o:IsMouseOver()) then f:Hide() end
+        end)
+        campHolders[canvas] = h
+    end
+    h.owner, h.icon = pin, pin.icon
+    h.frame:SetFrameLevel(math.max(pin:GetFrameLevel() - 1, 1))
+    local cw, ch = canvas:GetSize()
+    local w, hgt = pin:GetSize()
+    local s = pin:GetScale()
+    local src = pin.Icon
+    local atlas = src.GetAtlas and src:GetAtlas()
+    local n = math.min(#camps, CAMP_MAX)
+    for i = 1, n do
+        local t = h.tex[i]
+        if not t then
+            t = h.frame:CreateTexture(nil, "ARTWORK")
+            h.tex[i] = t
+        end
+        if atlas then
+            t:SetAtlas(atlas)
+        else
+            t:SetTexture(src:GetTexture())
+            t:SetTexCoord(src:GetTexCoord())
+        end
+        t:SetDesaturated(src:IsDesaturated())
+        t:SetVertexColor(src:GetVertexColor())
+        t:SetAlpha(CAMP_ALPHA)
+        t:SetSize(w * s, hgt * s)
+        t:ClearAllPoints()
+        t:SetPoint("CENTER", canvas, "TOPLEFT", camps[i][1] * cw, -camps[i][2] * ch)
+        t:Show()
+    end
+    for i = n + 1, #h.tex do h.tex[i]:Hide() end
+    h.frame:SetAlpha(pin:GetAlpha())
+    h.frame:Show()
 end
 
 -- After one of our pins is rescaled: pin offsets are in the pin's own scaled
@@ -868,11 +924,13 @@ function BFIQuestiePinMixin:OnEnter()
     GameTooltip:Show()
     -- an objective spot: all of its quest's spots glow (Tracker.lua)
     if self.bfiGroup == "spots" and ns.HoverQuestGlow then ns.HoverQuestGlow(self.questId) end
+    ShowCamps(self, true)
 end
 
 function BFIQuestiePinMixin:OnLeave()
     ns.QuestTooltipLeave()
     if ns.HoverQuestGlow then ns.HoverQuestGlow(nil) end
+    ShowCamps(self, false)
 end
 -- one quest icon's tooltip, for Cave.lua's minimap-style caves (owner: a frame with an
 -- OnEnter method, for Shift's refresh)

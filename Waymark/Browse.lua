@@ -46,7 +46,8 @@ end
 
 local function Show(map, id)
     ourSet = true
-    pcall(map.SetMapID, map, id)
+    -- (timed whole for /bfi check: the game's own map change and everything hooked to it)
+    ns.Safe("Browse SetMapID", map.SetMapID, map, id)
     ourSet = false
 end
 

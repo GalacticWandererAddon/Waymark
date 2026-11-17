@@ -308,8 +308,10 @@ function ns.SetupDetail(map)
     host.bfiOwn = true
     if map.OnMapChanged then
         hooksecurefunc(map, "OnMapChanged", function()
+            local t0 = debugprofilestop()
             Release()
             ns.UpdateDetail()
+            ns.CostAdd("Detail map change", t0)
             -- (the game lays out the new map's art just after: sharpen it then)
             C_Timer.After(0.1, ns.SharpenMapArt)
         end)

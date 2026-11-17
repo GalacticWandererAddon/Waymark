@@ -4143,6 +4143,21 @@ local function DropShipped()
     -- (the easy pulls' "!" under their pins, gone 2026-11-02: out of your copies too)
     -- (and the "?" under the quest pins, gone 2026-11-16. Only a tool writes gen: ink drawn by hand has
     -- none, so a "?" or "!" of your own is never touched.)
+    -- ("Van Cleef" is VanCleef, 2026-11-16: the wanderer's Deadmines copy still wrote it as two words, and
+    -- "yours where you changed it" put it back into the file at every export. The word is put right in the
+    -- copy and its base; a copy that then matches the page is dropped below, as any other.)
+    local function OneWord(t)
+        for k, v in pairs(t) do
+            if type(v) == "string" then
+                if v:find("Van Cleef", 1, true) then t[k] = (v:gsub("Van Cleef", "VanCleef")) end
+            elseif type(v) == "table" then
+                OneWord(v)
+            end
+        end
+    end
+    for _, t in ipairs({ a, bases }) do
+        if type(t.deadmines) == "table" then OneWord(t.deadmines) end
+    end
     for _, t in ipairs({ a, bases }) do
         for id, c in pairs(t) do
             for _, list in pairs(id ~= "flyleafMarks" and type(c) == "table" and c.mapMarks or {}) do

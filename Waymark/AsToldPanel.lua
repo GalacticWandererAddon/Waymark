@@ -52,6 +52,10 @@ local SOFT = { 0.66, 0.64, 0.58 }
 local FAINT = { 0.46, 0.44, 0.40 }
 local WAY = { 0.85, 0.81, 0.71 }
 local GOLD = { 0.73, 0.55, 0.32 }
+-- (what the game asks, under the telling: a warm parchment gold, and its small heading in the rule's gold. A
+-- player, 2026-11-17: "can you change the text a bit for the Asked section so that it stands out a little more?
+-- Maybe change the font color?" It was the way's pale colour under a grey heading, a shade off the telling.)
+local ASK = { 0.96, 0.84, 0.58 }
 local FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 
 local function Cfg() return ns.ToldCfg() end
@@ -209,8 +213,8 @@ local function Details(rows, it)
         asked = Clean(q.obj)
     end
     if asked ~= "" then
-        Row(rows, "ASKED", 10, FAINT, 0, 8)
-        Row(rows, asked, 12, WAY, 0, 3)
+        Row(rows, "ASKED", 10, GOLD, 0, 8)
+        Row(rows, asked, 12, ASK, 0, 3)
     end
     local before = ns.ToldBefore(id)
     if #before > 0 then

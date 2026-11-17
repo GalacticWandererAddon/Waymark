@@ -60,6 +60,7 @@ end
 local host                -- on the canvas, with the map's art: holds every zone's frame
 local zones = {}          -- [continent] = { zone, ... } (see ZonesOf)
 local shownFor            -- the continent the zone frames are shown for
+local fadeNow = 0         -- how far the zone maps are in on the continent shown (0 to 1), for ns.ZoneArtFade
 
 local function IsOverview(id)
     local info = id and C_Map.GetMapInfo(id)
@@ -308,7 +309,9 @@ local function LayBase(z, sx, sy)
     end
 end
 
-local function Build(z)
+-- hold: only say whether there is laying to do (true), and leave it (Update's budget)
+local KEYS_EAGER = 3  -- seconds after the map opens that a zone with nothing explored is asked every time
+local function Build(z, hold)
     local f = z.frame
     -- (asked of the game at most every 2 s a zone: every zone is looked at on each
     -- step of a pan, and asking them all each time was a spike of up to 18 ms)
@@ -316,9 +319,12 @@ local function Build(z)
     if not z.keys or now - z.keysAt >= 2 then
         z.keys, z.keysAt, z.keysN = ns.ExploredOverlayKeys(z.id), now, 0
         for _ in pairs(z.keys) do z.keysN = z.keysN + 1 end
+        z.keysFirst = z.keysFirst or now
         -- (nothing yet, as on a map's first open after a reload: asked again next
-        -- time, or zones stayed bare for the 2 s)
-        if z.keysN == 0 then z.keysAt = now - 2 end
+        -- time, or zones stayed bare for the 2 s. Only for the first seconds after the
+        -- map opens (its OnShow starts them over): a zone you have never been to has
+        -- nothing for good, and was asked on every zoom step, all session)
+        if z.keysN == 0 and now - z.keysFirst < KEYS_EAGER then z.keysAt = now - 2 end
     end
     local keys, n = z.keys, z.keysN
     local ec = ns.db.explore
@@ -326,7 +332,9 @@ local function Build(z)
     local want = n .. "|" .. tostring(fog) .. "|" .. tostring(ec.fogStyle) .. "|" .. tostring(ec.fogAlpha)
         .. "|" .. f:GetWidth()
     if z.builtFor == want then return end
+    if hold then return true end
     z.builtFor = want
+    z.bN, z.bFog, z.bStyle, z.bAlpha, z.bW = n, fog, ec.fogStyle, ec.fogAlpha, f:GetWidth()  -- (Stale's)
     z.usedBase, z.usedPieces = 0, 0
 
     local aw, ah = ns.MapArtSize(z.id)
@@ -966,7 +974,51 @@ local function SmoothContinent(map)
     end
 end
 
-local function Update()
+-- Whether a laid zone would be laid differently now: Build's own test without its string and the
+-- timed call round it. Asked of every zone in view on every step of a zoom, that was 0.05 ms a
+-- zone, over 1 ms a frame while the wheel turned (/bfi check, 2026-11-17, after the steps below).
+local function Stale(z)
+    if not (z.builtFor and z.keys) then return true end
+    local now = GetTime()
+    if now - z.keysAt >= 2 then return true end  -- (what you've explored is asked again: Build's)
+    local ec = ns.db.explore
+    return z.bN ~= z.keysN or z.bFog ~= ns.IsShown("explore") or z.bStyle ~= ec.fogStyle
+        or z.bAlpha ~= ec.fogAlpha or z.bW ~= z.frame:GetWidth()
+end
+
+-- Laying the zones' maps in small steps. A zone's map is some 50 masked textures, a continent's
+-- zones over a thousand: laid in one call (the first open of a continent, wheeling out onto one)
+-- they were a call of 20 to 30 ms, the hitch in /bfi check's "ZoneArt zones" and most of the
+-- wheel's (2026-11-17). So: the zones in view are laid for BUILD_MS a call, the rest on the next
+-- frame; the zones off the view wait in a line, one a frame (BuildQueued, the tick's); and after
+-- a login the player's continent goes through that line before the map is ever opened (Warm).
+local BUILD_MS = 4
+local queue, again = {}, false
+local function Queue(z)
+    if z.queued or z.builtFor then return end
+    z.queued = true
+    queue[#queue + 1] = z
+end
+local function BuildQueued()
+    local z = queue[#queue]
+    if not (z and host) or HostSize() <= 0 then return end
+    queue[#queue], z.queued = nil, nil
+    if z.builtFor then return end
+    local shown = z.frame and z.frame:IsShown()
+    if not z.placed then Place(z) z.placed = true end
+    if not shown then z.frame:Hide() end  -- (a new frame is shown: Update shows it once in view)
+    ns.Safe("ZoneArt Build", Build, z)
+end
+
+local Update
+local function UpdateAgain()
+    again = false
+    ns.Safe("ZoneArt", Update)
+end
+
+local warmFrame           -- (Warm's, below; its count goes into the first-open trace)
+local traced = {}         -- [continent] = true: its first showing this session is written down for /bfi check
+function Update()
     local map = BattlefieldMapFrame
     if not (host and map) then return end
     local c = Cfg()
@@ -1003,6 +1055,7 @@ local function Update()
     -- s: the zone's frame (and the wash in it, when on: covering the continent's
     -- art); veil: the base map in it, so the wash shows through; a: the two
     local s = Smooth(near, from, full)
+    fadeNow = s
     local veil = VEIL + (1 - VEIL) * detail
     local a = s * veil
     local wash = c.zoneWash
@@ -1010,10 +1063,32 @@ local function Update()
     local global = map.GetGlobalAlpha and map:GetGlobalAlpha() or 1
     ns.CostAdd("ZoneArt head", t0)
     t0 = debugprofilestop()
+    if a > 0.01 and not traced[id] and ns.CostTrace then
+        traced[id] = true
+        ns.CostTrace(string.format("continent %d first shown (art warmed %s of %s)", id,
+            tostring(warmFrame and warmFrame.at or 0), tostring(warmFrame and warmFrame.of or 0)), 150)
+    end
+    -- Only the zones in the view (and the margin round it, as the patches: the tick calls this
+    -- again before a pan gets past the margin) are shown. Zoomed in on a continent all its
+    -- zones' maps were drawn every frame, a thousand masked textures and more for the two or
+    -- three zones you were looking at; the game draws them off the view too (Park, above).
+    local vl, vt, vr, vb = ViewBox()
+    local waiting = false
     for _, z in ipairs(list) do
-        if a > 0.01 then
+        local inView = a > 0.01 and (not vl or (z.r > vl and z.l < vr and z.b > vt and z.t < vb))
+        if a > 0.01 and not inView then Queue(z) end
+        local wait
+        if inView then
             if not z.frame or not z.placed then Place(z) z.placed = true end
-            ns.Safe("ZoneArt Build", Build, z)  -- (only once it shows, and again when it changes)
+            -- (only once it shows, and again when it changes; past the call's budget it waits a frame)
+            if Stale(z) then
+                local ok, more = ns.Safe("ZoneArt Build", Build, z, debugprofilestop() - t0 > BUILD_MS)
+                wait = ok and more == true
+                waiting = waiting or wait
+            end
+        end
+        -- (waiting to be laid for the first time: not shown; laid before and changed: as it was)
+        if inView and (z.builtFor or not wait) then
             z.frame:SetAlpha(s * global)
             if z.veil ~= veil or z.veilFor ~= z.builtFor then
                 for i = 1, z.usedBase do z.baseTex[i]:SetAlpha(veil) end
@@ -1038,6 +1113,10 @@ local function Update()
         elseif z.frame then
             z.frame:Hide()
         end
+    end
+    if waiting and not again then
+        again = true
+        C_Timer.After(0, UpdateAgain)
     end
     ns.CostAdd("ZoneArt zones", t0)
     t0 = debugprofilestop()
@@ -1108,6 +1187,15 @@ ns.UpdateZoneArt = Update
 -- the highest frame level of the zone maps (their explored areas), for what
 -- goes over them (Detail.lua); nil while they're not drawn. Read off the frames:
 -- a child keeps its level when the host's changes after it was made.
+-- How far the painted zone maps are in on the continent now, 0 to 1. For what lies on them (Relief.lua): zoomed
+-- all the way out they are not in yet and the game's own continent shows, whose coasts lie elsewhere; the relief
+-- at full strength over that was shade on the wrong land (the user's pair of shots, 2026-11-17: "I think its the
+-- real cont view").
+function ns.ZoneArtFade()
+    if not (host and host:IsShown() and shownFor) then return 0 end
+    return fadeNow
+end
+
 function ns.ZoneArtTop()
     if not (host and host:IsShown() and shownFor) then return end
     local top = host:GetFrameLevel()
@@ -1238,7 +1326,7 @@ end
 -- every other continent's, all kept (a file stays loaded while some texture holds it).
 local WARM_PER_FRAME = 8
 local WARM_HOLD = 60  -- frames a warm texture stays drawn at most (hidden sooner once its file is loaded)
-local warmFrame, warmTicker, warmFor
+local warmTicker, warmFor
 local warmTex = {}
 
 local function PlayerContinent()
@@ -1286,6 +1374,8 @@ local function Warm()
     local cont = PlayerContinent()
     if not (cont and ns.db and Cfg().zoneArt) or warmFor or ns.Perf("art") or ns.Perf("warm") then return end
     warmFor = cont
+    -- (and this continent's zone maps laid, hidden, one a frame: the first open finds them made)
+    for _, z in ipairs(ZonesOf(cont)) do Queue(z) end
     if not warmFrame then
         -- (shown, a pixel in the screen's corner, all but see-through: a client may only
         -- load what it really draws, so not hidden, off the screen or at alpha 0)
@@ -1315,8 +1405,12 @@ local function Warm()
     -- game let the art go and the map drew slowly for the user, so out of it they stay shown.
     local light = ns.db and ns.db.perf and ns.db.perf.on
     local i, hid, n, at = 0, 0, 0, {}
+    warmFrame.at, warmFrame.of = 0, #files  -- (for the first-open trace in /bfi check)
     warmTicker:SetScript("OnUpdate", function(self)
         n = n + 1
+        warmFrame.at = i
+        -- (what the warm-up itself costs a frame, for /bfi check: past the loading screen's own long frames)
+        if n == 40 and ns.CostTrace then ns.CostTrace("art warm-up, from its frame 40 (" .. #files .. " files)", 150) end
         while light and hid < i do
             local t = warmTex[hid + 1]
             local loaded = t.IsObjectLoaded and t:IsObjectLoaded()
@@ -1407,13 +1501,20 @@ function ns.SetupZoneArt(map)
         bakedW = nil
         ns.Safe("ZoneArt", Update)
     end)
-    map:HookScript("OnShow", function() ns.Safe("ZoneArt", Update) end)
+    map:HookScript("OnShow", function()
+        -- (what you've explored asked afresh, eagerly for a few seconds: see Build)
+        for _, list in pairs(zones) do
+            for _, z in ipairs(list) do z.keys, z.keysFirst = nil, nil end
+        end
+        ns.Safe("ZoneArt", Update)
+    end)
 
     -- now and then too: areas you discover, the map's opacity, the fog's settings
     -- and once the view has moved a good way (the patches off it are hidden)
     local elapsed, seenX, seenY = 0, nil, nil
     local ticker = ns.TimedFrame("ZoneArt tick")
     ticker:SetScript("OnUpdate", function(_, dt)
+        if queue[1] then BuildQueued() end
         local sc = map.ScrollContainer
         if host:IsShown() and sc and sc.currentScrollX then
             local l, t, r, b = ViewBox()

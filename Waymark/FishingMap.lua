@@ -83,12 +83,23 @@ end
 -- skill there, the number in the header's own text colour (a coloured number read doubled against the
 -- plate's shadow, and the strong colours stood out: the user, 2026-11-09); nil if you don't fish,
 -- the mode is off, or there's no water
-function ns.FishingHeaderText(id)
+local UNKNOWN = { 0.6, 0.56, 0.48 }  -- (water with no level known yet: a soft ink brown)
+
+-- the fish's colour for map id, the header's and the map button's: the wash's for your skill there;
+-- nil if you don't fish or the map has no water of its own
+function ns.FishingTint(id)
     local skill = Skill()
-    if not (skill and id and ns.IsShown("fishing")) then return end
-    local lvl, floor = ns.FishingLevel(id)
+    if not (skill and id) then return end
+    local lvl = ns.FishingLevel(id)
     if not lvl and not ns.FishingWaterFile(id) then return end
-    local c = lvl and TINT[State(lvl, skill)] or { 0.6, 0.56, 0.48 }
+    return lvl and TINT[State(lvl, skill)] or UNKNOWN
+end
+
+function ns.FishingHeaderText(id)
+    if not (id and ns.IsShown("fishing")) then return end
+    local c = ns.FishingTint(id)
+    if not c then return end
+    local lvl, floor = ns.FishingLevel(id)
     local text = lvl and (floor and (lvl - 1) .. "+" or tostring(lvl)) or "?"
     -- (twice the header's text height: the user; a size in pixels, as the inline texture wants it)
     local px = 2 * ((ns.db.zoneName and ns.db.zoneName.fontSize) or 13)
@@ -239,7 +250,11 @@ end)
 
 BFIFishingProviderMixin = CreateFromMixins(MapCanvasDataProviderMixin)
 function BFIFishingProviderMixin:RemoveAllData() end
-function BFIFishingProviderMixin:RefreshAllData() ns.Safe("Fisherman's mode", Draw, self:GetMap()) end
+function BFIFishingProviderMixin:RefreshAllData()
+    ns.Safe("Fisherman's mode", Draw, self:GetMap())
+    -- (the map button's fish takes the header's colour for the map on view: Options.lua RefreshToggles)
+    if ns.RefreshToggles then ns.RefreshToggles() end
+end
 function BFIFishingProviderMixin:OnMapChanged() self:RefreshAllData() end
 
 function ns.SetupFishing(map)

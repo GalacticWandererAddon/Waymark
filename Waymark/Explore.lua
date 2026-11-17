@@ -677,7 +677,11 @@ function ns.SetupExplore(map)
     ns.debugFrames.unexplored, ns.debugFrames.flash, ns.debugFrames.hoverLabel = fogHost, flashHost, hoverLabel
 
     if map.OnMapChanged then
-        hooksecurefunc(map, "OnMapChanged", function() ReleaseFog() ReleaseFlash() seenFor = nil ns.UpdateExplore() end)
+        hooksecurefunc(map, "OnMapChanged", function()
+            local t0 = debugprofilestop()
+            ReleaseFog() ReleaseFlash() seenFor = nil ns.UpdateExplore()
+            ns.CostAdd("Explore map change", t0)
+        end)
     end
     -- (the hour's tint again at once: the fog laid anew has its own plain colour, and MapHour's tick came
     -- some milliseconds later, so the unexplored land flashed to daylight all through a corner drag at night)

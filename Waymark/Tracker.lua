@@ -2950,7 +2950,12 @@ local function PlaceQuestWindow()
     local onRight
     if c.side == "right" then onRight = true
     elseif c.side == "left" then onRight = false
-    else onRight = r + QW_W * k + 8 < UIParent:GetWidth() end
+    else
+        -- right if it fits there, else left if it fits there, else the side with more room (a big map
+        -- dragged nearly as wide as the screen: the window then lies over the map's edge on that side)
+        local need, sw = QW_W * k + 8, UIParent:GetWidth()
+        onRight = r + need < sw or (l - need < 0 and sw - r >= l)
+    end
     local gap = c.gap or 0
     if onRight then
         qw:SetPoint("TOPLEFT", map, "TOPRIGHT", (r - mr) / k + gap, (t - mt) / k)
@@ -3574,6 +3579,37 @@ local function OpenFromKey(id)
     if id then ns.ShowQuestWindow(id) end
 end
 
+-- questlog.withBig (the user 2026-11-17: "a mode docking the log to the big map"): the window opens
+-- when the map goes big and closes when it goes small or shuts (MapControls.lua tells us, its
+-- EscapeWatch). Only a window this opened is closed by it: one you opened yourself stays. With no
+-- quest in the log there is nothing to open. The big map leaves the window's width free at the
+-- screen's edge (ns.QuestLogSideRoom, read by MapControls' ScreenRoom).
+ns.questBig = {}  -- (now: the map is big; opened: this opened the window. On ns: this file is at Lua's 200 locals)
+function ns.QuestLogFollowBig(big)
+    local c = ns.db and ns.db.questlog
+    if not c then return end
+    big = big and true or false
+    if big == ns.questBig.now then return end
+    ns.questBig.now = big
+    if not (c.shown and c.withBig) then ns.questBig.opened = nil return end
+    if big then
+        if not (qw and qw:IsShown()) then
+            ns.Safe("Quest log with the big map", OpenFromKey)
+            ns.questBig.opened = qw and qw:IsShown() or nil
+            -- (the map is still gliding to its big size: placed again when it has arrived)
+            if ns.questBig.opened and C_Timer then C_Timer.After(0.55, function() ns.PlaceQuestWindow() end) end
+        end
+    elseif ns.questBig.opened then
+        ns.questBig.opened = nil
+        if qw then qw:Hide() end
+    end
+end
+function ns.QuestLogSideRoom()
+    local c = ns.db and ns.db.questlog
+    if not (c and c.shown and c.withBig and not c.detached) then return 0 end
+    return QW_W * (c.scale or 1) * ns.AddonScale() + 8 + math.max(c.gap or 0, 0)
+end
+
 -- the tracker header's menu (above in this file): the quest log as its key opens
 -- it, our window when it's in use (on the quest last shown), else the game's
 function ns.QuestWindowShown() return qw and qw:IsShown() and true or false end
@@ -3642,6 +3678,12 @@ function ns.ApplyQuestWindow(key)
         pcall(HookGameLog)
     end
     if (key == "shown" or key == "fromPins") and ns.RedrawQuestie then ns.RedrawQuestie() end  -- (pins' right-click)
+    if key == "withBig" or key == "shown" then
+        -- (ticked with the map big: the window comes now)
+        local big = ns.MapIsBig and ns.MapIsBig() and BattlefieldMapFrame and BattlefieldMapFrame:IsShown() and not (ns.Docked and ns.Docked())
+        ns.questBig.now = nil
+        ns.QuestLogFollowBig(big)
+    end
     if not qw then return end
     ApplyEscape()
     ApplyQuestFrame()

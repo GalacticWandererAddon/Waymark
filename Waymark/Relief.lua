@@ -509,10 +509,12 @@ local function Continent(map, c, mapID, data)
     local l, r, t, b = ContinentPlace(mapID, data)
     if not l then return HideContinent() end
     local x0, x1, y0, y1, part = ViewPart(map, l, r, t, b)
-    local key = table.concat({ mapID, math.floor(mapAlpha * 50), math.floor(close * 25), canvas:GetWidth(), tostring(c.cast), tostring(c.shade), c.shadeAlpha or 0, tostring(steady), hour, tostring(Bright(true)), part }, ":")
+    -- (it comes in with the painted zone maps it lies on: ZoneArt.lua's own fade)
+    local inArt = ns.ZoneArtFade and ns.ZoneArtFade() or 1
+    local key = table.concat({ mapID, math.floor(mapAlpha * 50), math.floor(close * 25), canvas:GetWidth(), tostring(c.cast), tostring(c.shade), c.shadeAlpha or 0, tostring(steady), hour, tostring(Bright(true)), part, math.floor(inArt * 25) }, ":")
     if key == contKey then return end
     contKey = key
-    local shadeA = c.shade and mapAlpha * (V("CONTINENT", CONTINENT) * (1 - close) + V("CLOSE", CLOSE) * close) * (c.shadeAlpha or 100) / 100 or 0
+    local shadeA = c.shade and mapAlpha * inArt * (V("CONTINENT", CONTINENT) * (1 - close) + V("CLOSE", CLOSE) * close) * (c.shadeAlpha or 100) / 100 or 0
     if shadeA <= 0.02 then
         for _, L in pairs(cont) do L.host:Hide() end
         contShown = 0
@@ -748,7 +750,7 @@ ticker:SetScript("OnUpdate", function(_, e)
         end
     end
     -- (while the map zooms, every frame: the depth and the rim follow the close-up, not a second behind it)
-    if mapFrame and mapFrame:IsShown() and rimHost and mapFrame.GetCanvasScale then
+    if mapFrame and mapFrame:IsShown() and (rimHost or cont.LT) and mapFrame.GetCanvasScale then
         local s = mapFrame:GetCanvasScale()
         if s ~= lastScale then
             lastScale = s
