@@ -170,6 +170,7 @@ function ns.UpdateStyle()
     if ns.UpdateZoneName then ns.UpdateZoneName() end  -- the header sits on the frame's edge
     if ns.ApplyQuestFrame then ns.ApplyQuestFrame() end  -- (it can take the map's border)
     ns.ApplyFrameAlpha()
+    if ns.GripFollowBorder then ns.GripFollowBorder() end  -- (the corner grip sits in the frame's corner)
 end
 
 -- Frame opacity (ns.FrameAlpha): our border, the game's own border frame (it

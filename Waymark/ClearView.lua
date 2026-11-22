@@ -128,7 +128,9 @@ end
 local function Editing() return ns.CutEditing and ns.CutEditing() end
 -- clear view's cut k (zoneOnly, dungeons) wanted: not on the big map with bigUncut
 local function Cutting(k)
+    -- (the world map is never cut: clear view is the small map's look. The user's pick, 2026-11-22)
     return ns.ClearView() and Cfg()[k] and not (Cfg().bigUncut and ns.MapIsBig and ns.MapIsBig())
+        and not (ns.WorldMapUp and ns.WorldMapUp())
 end
 local function Revealing() return ns.CutRevealing and ns.CutRevealing() end
 local function Peeking() return ns.CutPeeking and ns.CutPeeking() or Revealing() end

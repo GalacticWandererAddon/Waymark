@@ -161,10 +161,6 @@ ns.PRESET_SETTINGS["simple"] = {
 		big = false,
 		bigH = 708,
 		bigSize = 360,
-		bigTR = {
-			764.33331298828125,
-			940.6671142578125,
-		},
 		bigW = 836,
 		buttonPos = {},
 		corner = false,

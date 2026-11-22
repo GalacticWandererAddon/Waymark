@@ -441,9 +441,34 @@ function ns.SetupBrowse(map)
 
     -- the game puts the map back on you (zone change, UI widgets, opening
     -- it): straight back to what you were looking at, in the same frame
+    -- Where you stand has no zone map (the Deeprun Tram, a strip between two zones, open sea): the game
+    -- puts the map on the whole world or the continent. Clear view cuts only zone maps, so the cut-out
+    -- became the world in the tram and "the rectangle version out of nowhere" elsewhere (Rubzje, Reddit,
+    -- 2026-11-19; the user: "we should fix the map going to continent on the tram", and of the rectangle:
+    -- "could be clearview in forced continent view?"). The zone you came from stays instead, until the
+    -- game has a zone map for you again. Only when the game follows you there: a continent you wheel out
+    -- to is browsing, and stays as ever. Not in a dungeon (its own view, Dungeon.lua), and not at login,
+    -- when there is no zone to keep. Carried by a boat or zeppelin (Boats.lua) the continent is the right
+    -- map, with the ships on it: it shows as before, and comes as soon as the ride is known (the ticker
+    -- below). (browse.holdZone = false: off; no settings row.)
+    local lastZone
+    local WIDE = { [T.Cosmic or -1] = true, [T.World or -2] = true, [T.Continent or -3] = true }
+    local function Riding() return ns.BoatRiding and ns.BoatRiding() or false end
+    ns.BrowseRiding = Riding
     hooksecurefunc(map, "SetMapID", function(self, id)
-        if ourSet or not browsed or id == browsed then return end
-        Show(self, browsed)
+        if ourSet then return end
+        if browsed then
+            if id ~= browsed then Show(self, browsed) end
+            return
+        end
+        local info = id and C_Map.GetMapInfo(id)
+        local kind = info and info.mapType
+        if kind == T.Zone and T.Zone then
+            lastZone = id
+        elseif kind and WIDE[kind] and lastZone and Cfg().holdZone ~= false and not IsInInstance()
+               and id == HomeMap() and not (kind == T.Continent and Riding()) then
+            Show(self, lastZone)
+        end
     end)
     -- (a real map change, anyone's: the wheel's overshoot guard)
     if map.OnMapChanged then
@@ -523,6 +548,12 @@ function ns.SetupBrowse(map)
             local shown, home = map:GetMapID(), HomeMap()
             local a, h = shown and C_Map.GetMapInfo(shown), home and C_Map.GetMapInfo(home)
             if a and h and shown ~= home and a.mapType == T.Continent and h.mapType and h.mapType >= T.Zone then
+                Show(map, home)
+                Changed()
+            -- (a zone kept while you stand where there is none, above, and now a boat carries you: the
+            -- continent after all)
+            elseif a and h and shown ~= home and h.mapType == T.Continent and a.mapType == T.Zone
+                   and ns.BrowseRiding and ns.BrowseRiding() then
                 Show(map, home)
                 Changed()
             end

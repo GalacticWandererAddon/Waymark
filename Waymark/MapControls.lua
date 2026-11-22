@@ -88,12 +88,45 @@ local function RestorePosition(map)
         -- (undocking once pushed it thousands of units off the left edge). Kept on as shown, not as saved:
         -- at load the screen's size isn't final (the UI scale comes seconds later), and writing the clamp
         -- back pulled a map in a corner toward the middle at every load (players on CurseForge, 2026-11-08)
-        PinTopLeft(map, Clamp(pos.x, 0, UIParent:GetWidth() - 40), Clamp(pos.y, 40, UIParent:GetHeight()))
+        -- All of it on, at the size it has now (2026-11-18, a player's map stood a quarter above his screen
+        -- and stayed there): it was "a corner's worth". A map bigger than the screen keeps its top-left on.
+        local s = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        local w, h = map:GetWidth() * s, map:GetHeight() * s
+        local sw, sh = UIParent:GetWidth(), UIParent:GetHeight()
+        PinTopLeft(map, Clamp(pos.x, 0, math.max(0, sw - w)), Clamp(pos.y, math.min(h, sh), sh))
     end
     PlaceTab(map)
 end
 function ns.RestoreMapPosition()
     if BattlefieldMapFrame then RestorePosition(BattlefieldMapFrame) end
+end
+
+-- "Reset the map's place" (Options, Shape page; the header's menu): the map opens in the middle of the
+-- screen. Docked over the minimap: the square back on the minimap's spot, the big map beside it.
+function ns.ResetMapPlace()
+    local map = BattlefieldMapFrame
+    if not (map and ns.db) then return end
+    if ns.db.dock then ns.db.dock.bigTR = nil end
+    -- (the world map's own place too, shown or not: fix 8 of reports/2026-11-22 world map switch behaviour.md)
+    Cfg().worldPos = nil
+    if ns.WorldMapUp and ns.WorldMapUp() and ns.NormalMapSize then
+        -- (the small map's own place, centred for its own size: the critic's find)
+        local s = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        local nw, nh = ns.NormalMapSize(map)
+        nw, nh = (nw or 300) * s, (nh or 200) * s
+        local sw, sh = UIParent:GetWidth(), UIParent:GetHeight()
+        Cfg().smallPos = { kind = "topleft", x = math.max(0, (sw - nw) / 2), y = math.min(sh, (sh + nh) / 2), w = nw, right = false }
+    end
+    if ns.Docked and ns.Docked() then
+        if ns.DockSpotReset then ns.DockSpotReset() end
+        return
+    end
+    if not map:IsShown() and ToggleBattlefieldMap then pcall(ToggleBattlefieldMap) end
+    local s = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    local w, h = map:GetWidth() * s, map:GetHeight() * s
+    local sw, sh = UIParent:GetWidth(), UIParent:GetHeight()
+    Cfg().pos = { kind = "topleft", x = math.max(0, (sw - w) / 2), y = math.min(sh, (sh + h) / 2), w = w, right = false }
+    RestorePosition(map)
 end
 
 -- ...and placed again when the UI scale lands (it doesn't always come with a size change; the clock
@@ -402,6 +435,9 @@ local function AddZoomLevels(sc)
     local base = sc.bfiBase
     local z = ns.db.zoom
     local fit = ZoneFit(sc)
+    -- (the world map: fully out is the zone's whole map, not the zone's own outline fitted, which cut off its edges,
+    -- Darnassus off Teldrassil, at any shape of window. The user, 2026-11-22. Azeroth's own fit stays)
+    if fit and ns.WorldMapUp and ns.WorldMapUp() and not IsWorld(sc.mapID) then fit = nil end
     local lo = math.max(base[1].scale, fit or 0, CoverScale(sc) or 0)
     local hi = math.max(lo * ZOOM_STEP, ScaleForX(sc, (z.closestX or 8) * BigReach(sc)))
     -- a continent: as far as a little past where every zone opens (ZoneArt.lua),
@@ -433,6 +469,7 @@ end
 local function CenterZoneFit(sc)
     local levels = sc.zoomLevels
     if not (levels and levels[1]) or Follows(sc) then return end
+    if ns.WorldMapUp and ns.WorldMapUp() and not IsWorld(sc.mapID) then return end   -- (the whole map, its own middle)
     if (sc.targetScale or sc:GetCanvasScale()) > levels[1].scale * 1.01 then return end
     local _, cx, cy = ZoneFit(sc)
     if not cx or not sc.SetPanTarget then return end
@@ -581,6 +618,7 @@ local function ApplyView(sc, s, x, y)
     sc:SetPanTarget(x, y)
 end
 ns.ApplyMapView = ApplyView  -- (Browse.lua: the view across a map change)
+ns.MapZoneClamp = ZoneClamp   -- (Dock.lua: a view on you starts on the zone's useful part, as following would glide to)
 
 local function AnimateTo(map, toScale)
     local sc = map.ScrollContainer
@@ -726,7 +764,11 @@ local function RestoreView(map, quiet)
     local x, y = v.x, v.y
     if Cfg().center or (AnyAutoZoom() and v.want) then
         local pos = C_Map.GetPlayerMapPosition(map:GetMapID(), "player")
-        if pos and pos.x and (pos.x > 0 or pos.y > 0) then x, y = pos.x, pos.y end
+        -- (to the view following you would glide to: the arrow held inside the zone's useful part, as
+        -- CenterOnPlayer's ZoneClamp does, not dead centre. Else it opened on the arrow, then panned there:
+        -- the user, 2026-11-22, back from the world map to the docked square, "We want it to start on the useful
+        -- part, not on the player arrow in the middle")
+        if pos and pos.x and (pos.x > 0 or pos.y > 0) then x, y = ZoneClamp(sc, v.scale, pos.x, pos.y) end
     end
     -- a centre that's valid at this zoom: too near the edge leaves a gap that
     -- the game then scrolls away (the "settling")
@@ -764,6 +806,21 @@ local function IsZoneMap(mapID)
     return info and Enum and Enum.UIMapType and info.mapType == Enum.UIMapType.Zone or false
 end
 
+-- Over a reload or a login (kotanna on CurseForge, 2026-11-10: "would be great if it remembered zoom level
+-- between reloads"): the closeness is written to the character's saved file as it changes and read back once.
+local zoomRead
+local PutZoom       -- (defined below KeepZoom)
+local function ReadKept()
+    if zoomRead then return end
+    zoomRead = true
+    local z = WaymarkCharDB and WaymarkCharDB.mapZoom
+    if type(z) ~= "table" then return end
+    if z.out then kept = { out = true }
+    elseif z.top then kept = { top = true }
+    elseif type(z.x) == "number" and z.x > 0 then kept = { x = z.x } end
+    return kept ~= nil
+end
+
 -- every half second: how close you are now
 local function KeepZoom(map)
     local sc = map.ScrollContainer
@@ -772,10 +829,21 @@ local function KeepZoom(map)
     if anim or lastWant or not (sc and sc.zoomLevels and IsZoneMap(mapID)) then return end
     if ns.Browsing and ns.Browsing() then return end  -- (another zone's zoom isn't yours)
     if carry and carry.mapID == mapID and GetTime() < carry.untilT then return end  -- (still settling)
+    if ReadKept() then  -- (the first look after a reload: put the saved closeness on, don't read the fresh map's)
+        carry = { mapID = mapID, spot = kept, untilT = GetTime() + CARRY_SETTLE }
+        PutZoom(map, kept)
+        return
+    end
     kept = ZoomSpot(sc, sc.targetScale or sc:GetCanvasScale()) or kept
+    if kept then
+        WaymarkCharDB = WaymarkCharDB or {}
+        local z = WaymarkCharDB.mapZoom
+        if type(z) ~= "table" then z = {}; WaymarkCharDB.mapZoom = z end
+        z.out, z.top, z.x = kept.out, kept.top, kept.x
+    end
 end
 
-local function PutZoom(map, spot)
+function PutZoom(map, spot)
     local sc = map.ScrollContainer
     local s = ScaleAtSpot(sc, spot)
     if not s then return end
@@ -795,6 +863,7 @@ local function CarryZoom(map)
     local mapID = map:GetMapID()
     local changed = mapID ~= lastMap
     lastMap = mapID
+    ReadKept()
     -- (the same map reopened is RestoreView's; a zone you browse opens fully
     -- zoomed out, and coming back to yours gets your closeness again)
     if not (changed and kept and map:IsShown() and IsZoneMap(mapID)) then return end
@@ -903,6 +972,7 @@ local STOP_GRACE = 0.4    -- seconds of standing still before it counts as stopp
 local fadeAlpha, lastMoved = 1, 0
 
 local function FadeTarget(map)
+    if ns.WorldMapUp and ns.WorldMapUp() then return 1 end   -- (the world map never fades: the switch's picks)
     local f = ns.db.fade
     if f.hover and (ns.MouseOnMap and ns.MouseOnMap(map) or map:IsMouseOver()) then return 1 end
     local want = 1
@@ -1219,13 +1289,19 @@ end
 
 ns.NormalMapSize = NormalSize
 
+-- (the world map keeps its own size, worldW / worldH, apart from the big map's: fix 3 of the switch's report)
 local function BigSize(map)
     local c = Cfg()
-    if not c.bigWidth then
-        local w, h = NormalSize(map)
-        return FitScreen(map, w, h, BIG_DEFAULT)
+    local w, h = c.bigWidth, c.bigHeight
+    local world = ns.MapKind and ns.MapKind() == "world"
+    -- (no size of its own yet: the big map's tuned size to start from, so the first world map is not the default)
+    if world then w, h = c.worldW or c.bigWidth, c.worldH or c.bigHeight end
+    local most = 1
+    if not w then
+        w, h = NormalSize(map)
+        most = BIG_DEFAULT
     end
-    return FitScreen(map, c.bigWidth, c.bigHeight, 1)
+    return FitScreen(map, w, h, most)
 end
 
 local RIBBON_MIN = 40  -- the band's least height, map units
@@ -1304,6 +1380,12 @@ local function SetShape(map, w, h)
         -- corner follows the cursor. With the right edge kept the drag went the wrong way, as if the
         -- grip were still in the docked map's left corner; the user, 2026-11-14)
         keepRight = pos.right and not shapeDragging
+        -- (the grip in another corner, mapFrame.gripCorner: the corner opposite it stands still)
+        if shapeDragging then
+            local gc = Cfg().gripCorner
+            keepRight = gc == "BL" or gc == "TL"
+            keepBottom = gc == "TR" or gc == "TL"
+        end
     end
     map:SetSize(w, h)
     -- docked: centred on the minimap (Dock.lua); your own place and its width stay as saved
@@ -1318,7 +1400,9 @@ local function SetShape(map, w, h)
     if keepRight and pos.w then pos.x = pos.x + pos.w - w * k end
     if pos.w or settled then pos.w = w * k end
     if keepBottom then pos.y = pos.y + (h - oldH) * k end
-    if keepRight or keepBottom then RestorePosition(map) end
+    -- (always, not only when a kept edge moved the place: the new size may reach past the screen, and
+    -- RestorePosition holds the map on it. Not under a drag: the frame is the cursor's then)
+    if keepRight or keepBottom or not mapMoving then RestorePosition(map) end
     -- (the zoom is refitted from the scroll area's OnSizeChanged: its size only
     -- updates on the next layout pass, so reading it here gets the old one)
 end
@@ -1455,6 +1539,9 @@ function ns.KeepScreenSize(k)
     if c.bigWidth then
         c.bigWidth, c.bigHeight = math.max(MIN_W, c.bigWidth * k), math.max(MIN_H, c.bigHeight * k)
     end
+    if c.worldW then
+        c.worldW, c.worldH = math.max(MIN_W, c.worldW * k), math.max(MIN_H, c.worldH * k)
+    end
     for id, s in pairs(c.dungeonSizes or {}) do
         c.dungeonSizes[id] = { math.max(MIN_W, s[1] * k), math.max(MIN_H, s[2] * k) }
     end
@@ -1477,9 +1564,18 @@ function ns.SetMapSize(w, h, dragging)
     local perZone = PerZone(map)
     local mapID = perZone and c.rememberShapes and map:GetMapID()
     if c.big then
+        local world = ns.MapKind and ns.MapKind() == "world"
         if w then
             w, h = math.max(MIN_W, w), math.max(MIN_H, h)
-            c.bigWidth, c.bigHeight = w, h
+            if world then c.worldW, c.worldH = w, h else c.bigWidth, c.bigHeight = w, h end
+        elseif world then
+            -- (right-click on the grip: the zone art's own shape, 3:2 in its picture, at the height it has now, so
+            -- the whole zone fills it. The user: "right click on the cornergrab, it resets to the aspect")
+            local sc = map.ScrollContainer
+            local bw = sc and (map:GetWidth() - sc:GetWidth()) or 0
+            local bh = sc and (map:GetHeight() - sc:GetHeight()) or 0
+            local ph = math.max(MIN_H, map:GetHeight()) - bh
+            c.worldW, c.worldH = math.max(MIN_W, ph * 1002 / 668 + bw), ph + bh
         else
             c.bigWidth, c.bigHeight = nil, nil
         end
@@ -1515,6 +1611,56 @@ function ns.SetMapSize(w, h, dragging)
 end
 
 local bigButton  -- the red arrow beside the X: shrink while the map is big, grow while small
+-- Which big map (2026-11-22, the user: "yo, you like this type of big map, or this other type? Pick one"): "big",
+-- your map made bigger (the arrow, the glide), or "world", the world map of our own (Lab/WorldPanel.lua: your map
+-- in a window with the quest log). One setting; stored as the Lab's worldLog.on while it is in the Lab. The
+-- settings window (Settings small fixes) asks and sets it through ns.SetMapKind. "world" only where the world
+-- map is built in (Lab/WorldPanel.lua loaded).
+-- The world map is the big map (the user, 2026-11-22: "We have no need for "bigmap" without it being worldmap"):
+-- no pick in the settings any more. A save that has not said (no worldLog.on) is "world", as Lab/WorldLog.lua's
+-- DEFAULTS; a save from before, set to the big map by the old pick, is moved to the world map once (onlyWorld).
+-- worldLog.on stays a dev switch: the bench's world map tab, /worldlog.
+function ns.MapKind()
+    if not ns.WorldMapHideNow then return "big" end
+    local lab = WaymarkDB and WaymarkDB.lab
+    local c = lab and lab.worldLog
+    if c and not c.onlyWorld then c.onlyWorld, c.on = true, true end
+    local on = c and c.on
+    if on == nil then on = true end
+    return on and "world" or "big"
+end
+-- the world map is up now (never docked: ToggleBigMap lends the dock out for it)
+function ns.WorldMapUp()
+    local map = BattlefieldMapFrame
+    return ns.MapKind() == "world" and Cfg().big and map and map:IsShown() and not (ns.Docked and ns.Docked()) and true or false
+end
+-- (the arrow stays with the world map picked, with its own icon: RefreshBigButton. The user, 2026-11-22: "bring
+-- back the arrow, other icon when worldmap is switched on"; it was gone that morning, "no arrow to grow")
+function ns.WorldArrowGone() return false end
+function ns.ApplyRedButtons()
+    local map = BattlefieldMapFrame
+    local close = map and map.BorderFrame and map.BorderFrame.CloseButton
+    local red = ns.db and ns.db.toggles and ns.db.toggles.hideRed and true or false
+    for i = 1, 2 do
+        local f = i == 1 and close or bigButton
+        -- (the world map on: no arrow to grow, there is no big map. The user, 2026-11-22, "no arrow to grow when
+        -- using worldmap, and esc always closes it")
+        local hide = red or (i == 2 and ns.WorldArrowGone and ns.WorldArrowGone())
+        -- (shown again only if it was this switch that hid it: a folded map keeps its own count, Collapse.lua)
+        if not f then
+            -- (no such button on this client)
+        elseif hide then
+            if f:IsShown() then
+                f.bfiRedHidden = true
+                f:Hide()
+            end
+        elseif f.bfiRedHidden then
+            f.bfiRedHidden = nil
+            f:Show()
+        end
+    end
+    if ns.UpdateQuickButton then ns.UpdateQuickButton() end
+end
 local CLOSE_ART = 0.7  -- the close X's art: this much of its button (SetupBigButton)
 local closeHome  -- where the close X sits by default; .art: its art there (SetupBigButton)
 
@@ -1541,10 +1687,49 @@ end
 
 local function RefreshBigButton()
     local big = IsBig()
-    if not bigButton or bigButton.big == big then return end
-    bigButton.big = big
-    ns.SetArt(bigButton:GetNormalTexture(), big and "redbutton-condense-2x" or "redbutton-expand-2x")
-    ns.SetArt(bigButton:GetPushedTexture(), big and "redbutton-condense-pressed-2x" or "redbutton-expand-pressed-2x")
+    -- (with the world map picked: the game's red button with a globe, the Lab's art (Lab/WorldPanel.lua names it,
+    -- ns.WORLD_ARROW_ART, so a release, which has neither, holds no path to it). It opens the world map; it never
+    -- reads as grow. The world map's own window has its close)
+    local art = ns.MapKind and ns.MapKind() == "world" and ns.WORLD_ARROW_ART
+    local look = art and "world" or big and "big" or "small"
+    if not bigButton or bigButton.look == look then return end
+    bigButton.big, bigButton.look = big, look
+    -- (the game's own red button with its rim, as the X beside it wears (the user, 2026-11-22: "it needs same border
+    -- as X"): the X's own art, its middle covered by a piece of its own red face, the folded map laid on that)
+    local b = bigButton
+    if art and not b.mapFace then
+        b.mapFace = b:CreateTexture(nil, "OVERLAY", nil, 1)
+        b.mapGlyph = b:CreateTexture(nil, "OVERLAY", nil, 2)
+        b:HookScript("OnMouseDown", function(self)
+            if self.look ~= "world" then return end
+            ns.SetArtPart(self.mapFace, "redbutton-exit-pressed-2x", 0.16, 0.26, 0.16, 0.26)
+            self.mapGlyph:SetPoint("CENTER", 1, -1)
+        end)
+        b:HookScript("OnMouseUp", function(self)
+            if self.look ~= "world" then return end
+            ns.SetArtPart(self.mapFace, "redbutton-exit-2x", 0.16, 0.26, 0.16, 0.26)
+            self.mapGlyph:SetPoint("CENTER", 0, 0)
+        end)
+    end
+    if b.mapFace then
+        b.mapFace:SetShown(art and true or false)
+        b.mapGlyph:SetShown(art and true or false)
+    end
+    if art then
+        ns.SetArt(b:GetNormalTexture(), "redbutton-exit-2x")
+        ns.SetArt(b:GetPushedTexture(), "redbutton-exit-pressed-2x")
+        ns.SetArtPart(b.mapFace, "redbutton-exit-2x", 0.16, 0.26, 0.16, 0.26)
+        b.mapFace:ClearAllPoints()
+        b.mapFace:SetPoint("TOPLEFT", b, "TOPLEFT", b:GetWidth() * 0.2, -b:GetHeight() * 0.2)
+        b.mapFace:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -b:GetWidth() * 0.2, b:GetHeight() * 0.2)
+        b.mapGlyph:SetTexture(art.glyph)
+        b.mapGlyph:ClearAllPoints()
+        b.mapGlyph:SetPoint("CENTER", 0, 0)
+        b.mapGlyph:SetSize(b:GetWidth() * 0.82, b:GetHeight() * 0.82)
+    else
+        ns.SetArt(b:GetNormalTexture(), big and "redbutton-condense-2x" or "redbutton-expand-2x")
+        ns.SetArt(b:GetPushedTexture(), big and "redbutton-condense-pressed-2x" or "redbutton-expand-pressed-2x")
+    end
     -- (the gear and the toggles line up left of it: Options)
     if ns.UpdateQuickButton then ns.UpdateQuickButton() end
     if ns.LayoutToggles then ns.LayoutToggles() end
@@ -1590,6 +1775,8 @@ end
 -- back to small without the grow animation (the map closed, or about to show)
 local function SmallNow()
     local c = Cfg()
+    -- (a small map's place waiting while the world map was up: back, whatever made the map small)
+    if c.smallPos then c.pos, c.smallPos = c.smallPos, nil end
     if not c.big then return end
     c.big = false
     StopGlide()
@@ -1598,17 +1785,227 @@ local function SmallNow()
     EscapeWatch()
 end
 
+-- The world map (Lab/WorldPanel.lua) is a thing of its own, not a grown map: with it on there is no big map,
+-- the key and the arrow open it straight, at its own place, and closing it closes it (the user, 2026-11-22:
+-- "make it something of its own", "Either have bigmap, or worldmap on, cant have both", "worldmap doesnt grow
+-- and shrink to docked map etc, it just closes"). No glide either way. The window goes first, so it never
+-- wraps the small map for a blink. A small map that was up before comes back as it was, at its own place.
+-- What the world map leaves alone (the user, 2026-11-22, "All six, go"): folding, fading, clicks through, soft edges,
+-- clear view's cuts and the map's opacity are the small map's; each asks ns.WorldMapUp, and here they hear it changed
+local ApplyOpacity   -- (below, in Setup)
+-- On the world map a zone opens whole, fully out at its middle, however it was reached (a click on the continent,
+-- the log, the place path): the user, 2026-11-22, "Clicking from continent to a zone in worldmap should open the zone
+-- fully zoomed out". After the game's own view for the new map, a moment later, as WorldAround's opening
+local worldMapHooked
+-- the whole zone, fully out: at the middle of the art, or, when the map follows you, at the spot following would
+-- glide to (the arrow held in the zone's useful part, CenterOnPlayer's ZoneClamp), so it does not open and then pan.
+-- The user, 2026-11-22: "Worldmap actually blinks, then pans. because it zooms out first from my docked zoom"
+local function WorldWholeView(map, sc)
+    local lv = sc.zoomLevels
+    if not (lv and lv[1]) then return end
+    local x, y = 0.5, 0.5
+    if (Cfg().center or ribbon) and not IsWorld(sc.mapID) then
+        local pos = map:GetMapID() and C_Map.GetPlayerMapPosition(map:GetMapID(), "player")
+        if pos and pos.x and (pos.x > 0 or pos.y > 0) then x, y = ZoneClamp(sc, lv[1].scale, pos.x, pos.y) end
+    end
+    pcall(ApplyView, sc, lv[1].scale, x, y)
+end
+local function WorldZoneWhole(map)
+    if worldMapHooked or not (map and map.OnMapChanged) then return end
+    worldMapHooked = true
+    hooksecurefunc(map, "OnMapChanged", function()
+        if not (ns.WorldMapUp and ns.WorldMapUp() and C_Timer) then return end
+        C_Timer.After(0.05, function()
+            if not ns.WorldMapUp() then return end
+            local sc = map.ScrollContainer
+            local info = sc and sc.mapID and C_Map.GetMapInfo(sc.mapID)
+            if not (info and Enum and Enum.UIMapType and info.mapType == Enum.UIMapType.Zone) then return end
+            pcall(AddZoomLevels, sc)
+            WorldWholeView(map, sc)
+        end)
+    end)
+end
+local function WorldAround(map)
+    WorldZoneWhole(map)
+    if ns.UnfoldForWorld and ns.WorldMapUp() then ns.Safe("World map unfold", ns.UnfoldForWorld) end
+    ns.Safe("MapControls ApplyOpacity", ApplyOpacity, map)
+    if ns.ApplyClickThrough then ns.Safe("World map clicks", ns.ApplyClickThrough) end
+    if ns.UpdateSoftEdges then ns.UpdateSoftEdges() end
+    if ns.PlaceSearch then ns.Safe("World map search", ns.PlaceSearch) end   -- (the magnifier rests: the log's box finds it all)
+    if ns.ApplyClearView and ns.ClearView and ns.ClearView() then ns.Safe("World map clear view", ns.ApplyClearView) end
+    -- (its zoom steps again: the world map's furthest is the whole zone, the small map's covers its pane. Opened,
+    -- it shows the whole zone, a moment later, once the window has given the map its size)
+    local sc = map.ScrollContainer
+    if sc then
+        pcall(AddZoomLevels, sc)
+        if ns.WorldMapUp() and C_Timer then
+            -- (at once too, at the size it has so far: else the docked square's zoom showed for a moment first, the
+            -- "blink"; the moment later sets it again at the window's own size)
+            WorldWholeView(map, sc)
+            C_Timer.After(0.05, function()
+                if not ns.WorldMapUp() then return end
+                pcall(AddZoomLevels, sc)
+                WorldWholeView(map, sc)
+            end)
+        end
+    end
+end
+-- (mapFrame.worldBack: the world map opened over a small map that was showing, kept over a /reload; mapFrame.
+-- dockLent: it opened from the docked square, which is lent out meanwhile and docked again when it closes)
+local function WorldOpen(map, fromSmall)
+    local c = Cfg()
+    -- (the small or docked map's own view, kept for when the world map closes: hidden on the way out, the map
+    -- saves the world map's view, and the small map came back at its zoom. The user, 2026-11-22: "Map carried the
+    -- zoom level from worldmap to docked"; the trace: RestoreView put the world map's 0.78 over the docked 1.45)
+    if map:IsShown() then pcall(SaveView, map) end
+    map.wmSmallView = savedView
+    -- (a square browsing out on a continent or the world: the world map opens on your own zone, as a middle-click
+    -- brings it home. The user, 2026-11-22: "Continent zoom carried from docked to worldmap too", then "Yes, my zone")
+    local info = C_Map.GetMapInfo(map:GetMapID() or 0)
+    local T = Enum and Enum.UIMapType
+    map.wmSmallMap = nil
+    if info and T and info.mapType < T.Zone and ns.Browsing and ns.Browsing() and ns.BrowseHome then
+        map.wmSmallMap = map:GetMapID()   -- (the square goes back to it when the world map closes)
+        ns.Safe("World map opens home", ns.BrowseHome)
+    end
+    if fromSmall and map:GetLeft() then SavePosition(map) end
+    c.smallPos = c.pos
+    if c.worldPos then c.pos = c.worldPos end
+    c.big = true
+    StopGlide()
+    growCorner = nil
+    ns.Safe("MapControls UpdateShape", UpdateShape, true, true)
+    RestorePosition(map)
+    c.worldBack = fromSmall and true or nil
+    RefreshBigButton()
+    EscapeWatch()
+    WorldAround(map)
+    if ns.WorldMapShowNow then ns.Safe("World map open", ns.WorldMapShowNow) end
+end
+local worldClosing
+-- The game's minimap kept out of sight while the docked square is lent to the world map: undocking puts it back at
+-- its default place, and it blinked into the top right while the world map was up, wherever the square is kept. The
+-- user, 2026-11-22: "minimap blinks into existence in the top right, even if one uses the docked in the leftside",
+-- then "A, empty corner". Shown again as the world map closes (the dock then takes it again)
+local minimapHid
+local function MinimapAside(hide)
+    local c = MinimapCluster
+    if not c then return end
+    if hide then
+        if c:IsShown() then c:Hide() minimapHid = true end
+    elseif minimapHid then
+        minimapHid = nil
+        c:Show()
+    end
+end
+local function WorldClose(map)
+    if worldClosing then return end   -- (its own ToggleBattlefieldMap below comes back through the map's OnHide)
+    worldClosing = true
+    if ns.WorldMapHideNow then ns.Safe("World map close", ns.WorldMapHideNow) end
+    local c = Cfg()
+    if map:GetLeft() and c.big then SavePosition(map) c.worldPos = c.pos end
+    c.pos = c.smallPos or c.pos
+    c.smallPos = nil
+    local back, lent = c.worldBack, c.dockLent
+    c.worldBack, c.dockLent = nil, nil
+    openedBig, keyGrew = nil, nil
+    if not back and map:IsShown() and ToggleBattlefieldMap then pcall(ToggleBattlefieldMap) end
+    -- (the small or docked map's own view back, kept at WorldOpen: its OnShow restores this one, not the world's)
+    if map.wmSmallView then savedView = map.wmSmallView end
+    map.wmSmallView = nil
+    -- (the square was out on a continent: back on it, its own view with it. The user, 2026-11-22: "Worldmap brings
+    -- docked back to zone when switching back")
+    if map.wmSmallMap and ns.BrowseTo then ns.Safe("World map, the square's map back", ns.BrowseTo, map.wmSmallMap) end
+    map.wmSmallMap = nil
+    SmallNow()
+    RestorePosition(map)
+    if back and map:IsShown() then pcall(RestoreView, map) end   -- (over a small map that stayed up: its view now)
+    worldClosing = nil
+    EscapeWatch()
+    WorldAround(map)
+    -- (opened from the docked square: docked again. In a fight the dock waits for its end, Dock.lua)
+    MinimapAside(false)
+    if lent and ns.db and ns.db.dock then
+        ns.db.dock.on = true
+        if ns.ApplyDock then ns.Safe("World map dock back", ns.ApplyDock) end
+    end
+end
+function ns.CloseWorldMap()
+    local map = BattlefieldMapFrame
+    if map and ns.WorldMapUp() then WorldClose(map) end
+end
+-- After a /reload or a login with the dock lent out (Dock.lua's login asks this before it docks): docked again,
+-- the small map's place back, nothing left big
+function ns.DockLentBack()
+    local c = ns.db and ns.db.mapFrame
+    if not (c and c.dockLent) then return end
+    c.dockLent, c.worldBack, c.big = nil, nil, false
+    c.pos = c.smallPos or c.pos
+    c.smallPos = nil
+    if ns.db.dock then ns.db.dock.on = true end
+end
+-- Docked, the key opens the world map at its own place and the square goes back to the game's minimap meanwhile
+-- (the user's pick, 2026-11-22): the dock is lent out as the dock key would, and comes back on close. In a fight
+-- the dock can't change: the world map opens when the fight ends.
+local worldAfterFight
+local function WorldFromDock()
+    if InCombatLockdown and InCombatLockdown() then
+        if not worldAfterFight then
+            worldAfterFight = CreateFrame("Frame")
+            worldAfterFight:SetScript("OnEvent", function(self)
+                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                -- (a moment later: the dock's own wait docks it first)
+                C_Timer.After(0.2, function()
+                    if ns.Docked and ns.Docked() and ns.MapKind() == "world" then ns.Safe("World map from the dock", WorldFromDock) end
+                end)
+            end)
+        end
+        worldAfterFight:RegisterEvent("PLAYER_REGEN_ENABLED")
+        return
+    end
+    if ns.MapIsBig() and ns.DockToggleBig then ns.DockToggleBig() end   -- (a docked big map from before the pick: small first)
+    local c = Cfg()
+    ns.db.dock.on = false
+    if ns.ApplyDock then ns.ApplyDock() end
+    local map = BattlefieldMapFrame
+    if not map then c.dockLent = nil ns.db.dock.on = true return end
+    if not map:IsShown() and ToggleBattlefieldMap then pcall(ToggleBattlefieldMap) end
+    if map:IsShown() then
+        WorldOpen(map, false)
+        c.dockLent = true
+        MinimapAside(true)
+    else
+        ns.db.dock.on = true
+        if ns.ApplyDock then ns.ApplyDock() end
+    end
+end
+
 -- (fromKey: the key binding, Keys.lua; the arrow button and menus only grow and shrink, and a
 -- grow or shrink by them keeps the map open on the next press)
 function ns.ToggleBigMap(fromKey)
     -- (docked over the minimap, Dock.lua: its own big map, grown from the
     -- square's corner; saving the position below would keep the docked spot as yours)
-    if ns.Docked and ns.Docked() then
+    -- (a dock waiting for a fight's end to come back counts as docked for the world map: the critic's find)
+    local dockDue = ns.MapKind() == "world" and ns.db and ns.db.dock and ns.db.dock.on and not (ns.Docked and ns.Docked())
+        and InCombatLockdown and InCombatLockdown()
+    if (ns.Docked and ns.Docked()) or dockDue then
+        if ns.MapKind() == "world" then WorldFromDock() return end
         ns.DockToggleBig()
         RefreshBigButton()
         return
     end
     local map = BattlefieldMapFrame
+    if map and defaultW and ns.MapKind() == "world" then
+        if map:IsShown() and Cfg().big then
+            WorldClose(map)
+        elseif map:IsShown() then
+            WorldOpen(map, true)
+        else
+            if ToggleBattlefieldMap then pcall(ToggleBattlefieldMap) end
+            if map:IsShown() then WorldOpen(map, false) end
+        end
+        return
+    end
     if map and map:IsShown() and openedBig and fromKey then
         openedBig = nil
         if ToggleBattlefieldMap then pcall(ToggleBattlefieldMap) end
@@ -1649,6 +2046,56 @@ function ns.ToggleBigMap(fromKey)
 end
 
 function ns.MapIsBig() return IsBig() end
+
+-- (M and the map you picked: the settings window's own question binds M to the Big map key, Options.lua; the
+-- key opens whichever kind is picked, ToggleBigMap. Nothing here binds a key.)
+
+-- The switch (the settings window calls it; /worldlog too): which big map is yours. Safe at any time, in a fight,
+-- docked, mid-glide: a big or world map that is up is put away the old kind's way first, then the kind changes,
+-- so no place, size or window is left half one and half the other (fix 2 of the switch's report). Each kind keeps
+-- its own place and size for when it comes back.
+function ns.SetMapKind(kind)
+    kind = kind == "world" and "world" or "big"
+    if kind == ns.MapKind() then return end
+    if kind == "world" and not ns.WorldMapHideNow then return end   -- (no world map in this build)
+    local map = BattlefieldMapFrame
+    -- (a big map closed big, as the game's key leaves it: small for next time, so the new kind opens its own way)
+    if map and not map:IsShown() and Cfg().big and not (ns.Docked and ns.Docked()) then SmallNow() end
+    if map and map:IsShown() and IsBig() then
+        if ns.Docked and ns.Docked() then
+            ns.DockToggleBig()
+        elseif ns.MapKind() == "world" then
+            WorldClose(map)
+        else
+            local key = openedBig
+            StopGlide()
+            SmallNow()
+            if key and ToggleBattlefieldMap then pcall(ToggleBattlefieldMap) end
+        end
+    end
+    openedBig, keyGrew = nil, nil
+    if not (WaymarkDB and ns.LabCfg) then return end
+    ns.LabCfg("worldLog").on = kind == "world"
+    ns.Safe("Map kind", function()
+        ns.ApplyRedButtons()
+        RefreshBigButton()
+        EscapeWatch()
+        if ns.BigMapKeyNames then ns.BigMapKeyNames() end   -- (Keys.lua, the settings session)
+        if ns.ApplyQuestWindow then ns.ApplyQuestWindow("keyL") end   -- (L is off with the world map: Tracker.lua)
+        if ns.PlaceSearch then ns.PlaceSearch() end
+        if ns.WorldPanelChanged then ns.WorldPanelChanged() end
+    end)
+end
+-- (the corner grip, before a drag from a corner other than the bottom right: the map is placed by its
+-- top-left corner from here on, as when you drag it, so the corner that stands still can move it)
+function ns.EnsureMapPlaced()
+    local map, c = BattlefieldMapFrame, Cfg()
+    if not map or (ns.Docked and ns.Docked()) then return end
+    if not (c.pos and c.pos.kind == "topleft") and map:GetLeft() then
+        SavePosition(map)
+        RestorePosition(map)
+    end
+end
 -- (Dock.lua: docking changes what big means; and whatever made the map big or small, Escape's watch follows)
 ns.RefreshBigButton = function() RefreshBigButton() EscapeWatch() end
 
@@ -1693,6 +2140,10 @@ local function SetupBigButton(map)
         closeHome.art = CreateFrame("Frame", nil, closeHome)
         closeHome.art:SetPoint("CENTER")
         closeHome.art:SetSize(edge:GetSize())
+        -- (the X's right edge: what the gear lines up against with the two red buttons hidden)
+        closeHome.edge = CreateFrame("Frame", nil, closeHome)
+        closeHome.edge:SetSize(1, 1)
+        closeHome.edge:SetPoint("LEFT", closeHome.art, "RIGHT")
         ns.closeHome = closeHome
     end
     local b = CreateFrame("Button", nil, map)
@@ -1718,6 +2169,18 @@ local function SetupBigButton(map)
     end
     ns.HoldToMove(b, "bigMap")
     PlaceBigButton()
+    -- "Hide the close and grow buttons" (toggles.hideRed; asked on CurseForge, 2026-11-17): both gone for
+    -- good, the map's key, the header's menu and Escape still shut and grow it. Whatever shows one again
+    -- (the game's border, a fold opening) finds it hidden again.
+    for _, f in ipairs(close and { close, b } or { b }) do
+        f:HookScript("OnShow", function(self)
+            if ns.db and ns.db.toggles and ns.db.toggles.hideRed or (self == b and ns.WorldArrowGone and ns.WorldArrowGone()) then
+                self.bfiRedHidden = true
+                self:Hide()
+            end
+        end)
+    end
+    ns.ApplyRedButtons()
 end
 
 -- Hold to move -------------------------------------------------------------
@@ -1920,12 +2383,13 @@ end
 
 -- The map's own opacity (Blizzard keeps it in BattlefieldMapOptions and sets it
 -- from the tab's menu). Ours starts from whatever it is now.
-local function ApplyOpacity(map)
+function ApplyOpacity(map)
     if not (BattlefieldMapOptions and map.RefreshAlpha) then return end
     local c = Cfg()
     if c.opacity == nil then c.opacity = 1 - (BattlefieldMapOptions.opacity or 0) end
-    -- (clear view has its own; mapFrame.opacity is kept for when it's off)
+    -- (clear view has its own; mapFrame.opacity is kept for when it's off. The world map is always whole)
     local op = ns.ClearView and ns.ClearView() and ns.db.clearView.opacity or c.opacity
+    if ns.WorldMapUp() then op = 1 end
     local want = 1 - op
     if BattlefieldMapOptions.opacity ~= want then
         BattlefieldMapOptions.opacity = want
@@ -1979,13 +2443,36 @@ function ns.SetupMapControls(map)
         heldAt = nil  -- (a freshly opened map follows you again)
         EscapeWatch()
     end)
-    map:HookScript("OnHide", function() openedBig, keyGrew = nil, nil EscapeWatch() end)
+    map:HookScript("OnHide", function()
+        -- (the world map shut some other way, the game's own key: closed as its own close does, so the small map
+        -- comes back small at its own place next time, not as the world map)
+        -- (the game's own key hid the frame: only the world map closes, the small map that was up before comes
+        -- back, a frame later, outside the hide. The user's pick, 2026-11-22: Shift-M closes only the world map)
+        -- (map:IsShown() still true: its parent hid, Alt-Z or a cinematic; the world map stays as it was)
+        if Cfg().big and ns.MapKind() == "world" and not (ns.Docked and ns.Docked()) and not map:IsShown() then
+            local back = Cfg().worldBack
+            WorldClose(map)
+            if back and C_Timer then
+                C_Timer.After(0, function()
+                    -- (not against a "hide the map" profile, inside a dungeon, or in a fight: the critic, 2026-11-22)
+                    if map:IsShown() or Cfg().big or not ToggleBattlefieldMap then return end
+                    if (ns.MapHiddenByProfile and ns.MapHiddenByProfile()) or IsInInstance() or InCombatLockdown() then return end
+                    pcall(ToggleBattlefieldMap)
+                end)
+            end
+        end
+        openedBig, keyGrew = nil, nil
+        EscapeWatch()
+    end)
     -- into a dungeon the map is small, however it was left (the user, 2026-11-03: it came back
     -- big after being closed big)
     local enter = CreateFrame("Frame")
     enter:RegisterEvent("PLAYER_ENTERING_WORLD")
     enter:SetScript("OnEvent", function()
-        if IsInInstance() and not (ns.Docked and ns.Docked()) then SmallNow() end
+        -- (the world map: closed its own way, so the small map keeps its place: fix 1 of the switch's report)
+        if IsInInstance() and not (ns.Docked and ns.Docked()) then
+            if ns.WorldMapUp() then WorldClose(map) else SmallNow() end
+        end
     end)
 
     local sc = map.ScrollContainer

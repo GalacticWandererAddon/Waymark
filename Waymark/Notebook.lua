@@ -1777,6 +1777,12 @@ function ns.NotebookPingGiver(id)
     end)
 end
 
+-- the giver's glow put out at once (the world map's log: a giver's name clicked again)
+function ns.NotebookPingStop()
+    pingToken = pingToken + 1
+    if ping then ping.ag:Stop() ping:Hide() end
+end
+
 local function ShowGiver(id, grown)
     local ok, e = pcall(ns.QuestEnds or function() end, id)
     local f = ok and e and e.from

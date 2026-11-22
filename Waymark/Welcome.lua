@@ -142,6 +142,13 @@ local function BuildPage()
             ns.RefreshControls()
         end)
     end
+    -- the world map on M: the first-run question about M (the user, 2026-11-22; the pick of big map or world map
+    -- went the same day: the world map is the big map). Only where Waymark's world map is (Lab for now).
+    if ns.MapKinds and ns.MapKinds.Here() then
+        col.y = col.y - 6
+        col:CheckWith("Open the world map with M", ns.MapKinds.OnM, ns.MapKinds.SetM)
+        col:Tip(ns.MapKinds.M_TIP)
+    end
     col:Header("Want more on the map?")
     Switch(col, "Townsfolk", "townsfolk", "shown", "Trainers, vendors and innkeepers.")
     col:CheckWith("Quest objectives", ns.ObjectivesOn, function(v)

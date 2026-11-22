@@ -1631,6 +1631,154 @@ end
 
 ns.MapRole, ns.SetMapRole = MapRole, SetMapRole  -- (the welcome page: Welcome.lua)
 
+-- The big map is Waymark's world map (Lab\WorldLog.lua, Lab\WorldPanel.lua; Lab only for now). There was a pick,
+-- "Which big map do you like?"; the user, 2026-11-22: "We have no need for "bigmap" without it being worldmap.
+-- Because its basically the same thing just better". So no pick: where the world map is built in, it is the big
+-- map (MapControls.lua ns.MapKind; the Lab's worldLog.on stays as a dev switch on the bench). A release has no
+-- world map and keeps the big map. Each side's rows are made by a plain if when a page is built.
+local MapKinds = {}
+function MapKinds.Here() return ns.WorldLog and true or false end   -- (the world map is in this build)
+function MapKinds.Get()
+    if ns.MapKind then return ns.MapKind() end
+    return ns.WorldLog and ns.WorldLog.Cfg().on and "world" or "big"
+end
+function MapKinds.World() return MapKinds.Here() and MapKinds.Get() == "world" end
+-- the new quest log is yours: the world map's log, alone on L (Lab\WorldAlone.lua ns.QuestLogKind; the user,
+-- 2026-11-22: "New stardard is worldmap with the new questlog ... Option for old questlog remains available").
+-- Classic: Tracker.lua's quest window, and its rows on the Quest log page. Never two L rows: each kind has one.
+function MapKinds.NewLog()
+    return MapKinds.World() and ns.QuestLogKind and ns.QuestLogKind() == "new" or false
+end
+-- the world map's column switched off ("Quest log beside it"): the map alone, as the big map was
+function MapKinds.MapAlone()
+    return MapKinds.World() and ns.WorldSidebarOff and ns.WorldSidebarOff() or false
+end
+-- M on the Big map key, beside any key it has (the game takes M off its own world map; the key opens whichever
+-- kind is yours, MapControls.lua). As the Key bindings page does it: saved in the character's or account's set;
+-- never in a fight, so then once the fight is over. The one place M is bound (agreed with the world map session).
+function MapKinds.PutOnM()
+    if not (SetBinding and SaveBindings) then return end
+    if InCombatLockdown and InCombatLockdown() then
+        local wait = CreateFrame("Frame")
+        wait:RegisterEvent("PLAYER_REGEN_ENABLED")
+        wait:SetScript("OnEvent", function(self)
+            self:UnregisterAllEvents()
+            MapKinds.PutOnM()
+        end)
+        ns.Log("M opens the world map once this fight is over.")
+        return
+    end
+    if SetBinding("M", "BFI_BIGMAP") then SaveBindings(GetCurrentBindingSet()) end
+    ns.RefreshControls()
+end
+-- M back on the game's world map (the tickbox "Open it with M" taken off); never in a fight
+function MapKinds.TakeOffM()
+    if not (SetBinding and SaveBindings) or (InCombatLockdown and InCombatLockdown()) then return end
+    if MapKinds.OnM() and SetBinding("M", "TOGGLEWORLDMAP") then SaveBindings(GetCurrentBindingSet()) end
+    ns.RefreshControls()
+end
+-- the tickbox, on the World map page and the welcome page: M opens the world map, or the game's
+function MapKinds.SetM(v)
+    if v then MapKinds.PutOnM() else MapKinds.TakeOffM() end
+end
+MapKinds.M_TIP = "M opens Waymark's world map. Off: M opens the game's world map, and the World map key opens ours."
+-- M opens it already: M is one of the Big map key's keys
+function MapKinds.OnM()
+    if not GetBindingKey then return false end
+    for _, k in ipairs({ GetBindingKey("BFI_BIGMAP") }) do
+        if k == "M" then return true end
+    end
+    return false
+end
+ns.MapKinds = MapKinds   -- (Welcome.lua, Keys.lua, ZoneName.lua)
+
+-- One choice as pictures side by side, a red button under each: Start here's "The map". spec = { label, tip, choices = { { value, text, picture } }, get, set, pics = { [picture] = { file,
+-- l, r, t, b } } from Media\<dir>, w, h, holders = true: a dark box saying what goes there where a picture is
+-- missing }. No pictures and no holders: the buttons alone, at the rows' control column. Placed at col.y from
+-- x = left; col.y moves under it. Returns the row (in controls: Refresh) and its top.
+local function PicturePick(p, col, left, spec)
+    local top = col.y
+    local PIC_W, PIC_H = spec.w or 176, spec.h or 132
+    local pics = spec.pics
+    local withPics = pics ~= nil or spec.holders
+    local picOff = withPics and (PIC_H + 10 + 20) or 0   -- (and a line for the label, above them)
+    local label = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    Ink(p, label)
+    if withPics then label:SetPoint("LEFT", p, "TOPLEFT", left, top - 10) else label:SetPoint("LEFT", p, "TOPLEFT", left, top - 15) end
+    label:SetText(spec.label)
+    local hover = CreateFrame("Frame", nil, p)
+    hover:SetAllPoints(label)
+    hover:EnableMouse(true)
+    local buttons, prev = {}, nil
+    for _, ch in ipairs(spec.choices) do
+        local b = RedButton(p)
+        b:SetText(ch[2])
+        b:SetSize(withPics and PIC_W or ((b:GetFontString():GetStringWidth() or 60) + 30), 22)
+        if prev then b:SetPoint("LEFT", prev, "RIGHT", withPics and 6 or 4, 0) else
+            -- (with pictures: from the page's left edge, the label on a line above, not at the rows' control
+            -- column, where the third picture ran off the page's right edge. The user's screenshot, 2026-11-15)
+            b:SetPoint("LEFT", p, "TOPLEFT", withPics and (left + 2) or ROW_LABEL, top - picOff - 15)
+        end
+        b:SetScript("OnClick", function()
+            spec.set(ch[1])
+            ns.RefreshControls()
+        end)
+        b.value = ch[1]
+        local cut = pics and pics[ch[3] or ch[1]]
+        if cut or spec.holders then
+            local pic = CreateFrame("Button", nil, p)
+            pic:SetSize(PIC_W, PIC_H)
+            pic:SetPoint("BOTTOM", b, "TOP", 0, 6)
+            local tex = pic:CreateTexture(nil, "ARTWORK")
+            tex:SetPoint("TOPLEFT", 2, -2)
+            tex:SetPoint("BOTTOMRIGHT", -2, 2)
+            if cut then
+                tex:SetTexture(ns.MEDIA .. (spec.dir or "Roles\\") .. cut.file)
+                tex:SetTexCoord(cut[1], cut[2], cut[3], cut[4])
+            else
+                -- (no picture yet: a plain box that says so, never art made up for it)
+                tex:SetColorTexture(0.06, 0.06, 0.07, 0.9)
+                local fs = pic:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+                fs:SetPoint("CENTER")
+                fs:SetWidth(PIC_W - 20)
+                fs:SetText("A picture of the " .. ch[2]:lower() .. " goes here")
+            end
+            b.edge = pic:CreateTexture(nil, "BACKGROUND")
+            b.edge:SetAllPoints()
+            pic:SetHighlightTexture("Interface\\Buttons\\WHITE8X8", "ADD")
+            pic:GetHighlightTexture():SetVertexColor(1, 0.82, 0, 0.12)
+            pic:SetScript("OnClick", function() b:Click() end)
+        end
+        buttons[#buttons + 1] = b
+        prev = b
+    end
+    for _, on in ipairs({ hover, unpack(buttons) }) do
+        on:HookScript("OnEnter", function()
+            GameTooltip:SetOwner(on, "ANCHOR_RIGHT")
+            GameTooltip:SetText(spec.label, 1, 0.82, 0)
+            GameTooltip:AddLine(spec.tip, 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        on:HookScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    local row = CreateFrame("Frame", nil, p)
+    row.Refresh = function()
+        local now = spec.get()
+        for _, b in ipairs(buttons) do
+            if b.value == now then b:LockHighlight() else b:UnlockHighlight() end
+            -- (the picture of the one in use: a gold edge; the others a dim one)
+            if b.edge then
+                if b.value == now then b.edge:SetColorTexture(1, 0.82, 0, 1) else b.edge:SetColorTexture(0.4, 0.37, 0.33, 0.9) end
+            end
+        end
+    end
+    controls[#controls + 1] = row
+    row.Refresh()
+    col.y = top - (30 + picOff)
+    return row, top
+end
+ns.PicturePick = PicturePick   -- (the welcome page: Welcome.lua)
+
 -- Pages -----------------------------------------------------------------
 
 local CONTENT_W = 640
@@ -1986,77 +2134,11 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
     -- With pictures (Data\RoleShots.lua, made by tools\role_shots.py from /wmshots): one above each choice,
     -- a real corner of a screen with the map in that place. "three screenshots here? one for each mode, would
     -- show alot", the user 2026-11-15. Without them the row is the three buttons alone.
-    local top = w.y
-    local PIC_W, PIC_H = 176, 132
-    local pics = ns.ROLE_SHOTS
-    local picOff = pics and (PIC_H + 10 + 20) or 0   -- (and a line for the label, above them)
-    local roleH = 30 + picOff
-    local label = p:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    Ink(p, label)
-    if pics then label:SetPoint("LEFT", p, "TOPLEFT", left, top - 10) else label:SetPoint("LEFT", p, "TOPLEFT", left, top - 15) end
-    label:SetText("The map")
-    local roleTip = "Window: a map you can move. Clear view: no frame, just the map over the world. Minimap: the map replaces your minimap."
-    local hover = CreateFrame("Frame", nil, p)
-    hover:SetAllPoints(label)
-    hover:EnableMouse(true)
-    local roles, prev = {}, nil
-    for _, r in ipairs({ { "window", "Window", "window" }, { "clear", "Clear view", "clearview" },
-                         { "dock", "Minimap", "minimap" } }) do
-        local b = RedButton(p)
-        b:SetText(r[2])
-        b:SetSize(pics and PIC_W or ((b:GetFontString():GetStringWidth() or 60) + 30), 22)
-        if prev then b:SetPoint("LEFT", prev, "RIGHT", pics and 6 or 4, 0) else
-            -- (with pictures: from the page's left edge, the label on a line above, not at the rows' control
-            -- column, where the third picture ran off the page's right edge. The user's screenshot, 2026-11-15)
-            b:SetPoint("LEFT", p, "TOPLEFT", pics and (left + 2) or ROW_LABEL, top - picOff - 15)
-        end
-        b:SetScript("OnClick", function()
-            SetMapRole(r[1])
-            ns.RefreshControls()
-        end)
-        b.role = r[1]
-        local cut = pics and pics[r[1]]
-        if cut then
-            local pic = CreateFrame("Button", nil, p)
-            pic:SetSize(PIC_W, PIC_H)
-            pic:SetPoint("BOTTOM", b, "TOP", 0, 6)
-            local tex = pic:CreateTexture(nil, "ARTWORK")
-            tex:SetPoint("TOPLEFT", 2, -2)
-            tex:SetPoint("BOTTOMRIGHT", -2, 2)
-            tex:SetTexture(ns.MEDIA .. "Roles\\" .. cut.file)
-            tex:SetTexCoord(cut[1], cut[2], cut[3], cut[4])
-            b.edge = pic:CreateTexture(nil, "BACKGROUND")
-            b.edge:SetAllPoints()
-            pic:SetHighlightTexture("Interface\\Buttons\\WHITE8X8", "ADD")
-            pic:GetHighlightTexture():SetVertexColor(1, 0.82, 0, 0.12)
-            pic:SetScript("OnClick", function() b:Click() end)
-        end
-        roles[#roles + 1] = b
-        prev = b
-    end
-    for _, on in ipairs({ hover, unpack(roles) }) do
-        on:HookScript("OnEnter", function()
-            GameTooltip:SetOwner(on, "ANCHOR_RIGHT")
-            GameTooltip:SetText("The map", 1, 0.82, 0)
-            GameTooltip:AddLine(roleTip, 1, 1, 1, true)
-            GameTooltip:Show()
-        end)
-        on:HookScript("OnLeave", function() GameTooltip:Hide() end)
-    end
-    local roleRow = CreateFrame("Frame", nil, p)
-    roleRow.Refresh = function()
-        local now = MapRole()
-        for _, b in ipairs(roles) do
-            if b.role == now then b:LockHighlight() else b:UnlockHighlight() end
-            -- (the picture of the place the map is in: a gold edge; the others a dim one)
-            if b.edge then
-                if b.role == now then b.edge:SetColorTexture(1, 0.82, 0, 1) else b.edge:SetColorTexture(0.4, 0.37, 0.33, 0.9) end
-            end
-        end
-    end
-    controls[#controls + 1] = roleRow
-    roleRow.Refresh()
-    w.y = top - roleH
+    local _, top = PicturePick(p, w, left, {
+        label = "The map", pics = ns.ROLE_SHOTS, dir = "Roles\\", get = MapRole, set = SetMapRole,
+        tip = "Window: a map you can move. Clear view: no frame, just the map over the world. Minimap: the map replaces your minimap.",
+        choices = { { "window", "Window" }, { "clear", "Clear view" }, { "dock", "Minimap" } },
+    })
     -- (the arrow: the settings of the place the map is in now. It was fixed when the page was built, and for
     -- a window it went to Clear view. "Arrow takes me to the one i selected. inteded?", the user 2026-11-15)
     Go(top, function()
@@ -2069,6 +2151,8 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
     end
     w:Header("On your map")
     if ns.ReliefSetting then Feature("The lie of the land", "Hills, valleys and shadows from the game's real terrain.", "relief", "on", "look") end
+    if ns.ReliefSetting and ns.WorldReliefSet then Feature("Shaded land on the game's world map", "The same hills on the game's world map.", "relief", "world", "look") end
+    if ns.WorldArtSet then Feature("Painted continents on the game's world map", "Waymark's continents on the game's world map.", "worldArt", "on", "look") end
     if ns.PencilSetting then Feature("Land you've seen, in pencil", "Land you've seen is sketched in pencil. It gets its colour once you walk there.", "pencil", "on", "look") end
     Feature("Townsfolk", "Trainers, vendors, innkeepers, flight masters.", "townsfolk", "shown", "people")
     Feature("Rares and chests", "Rares, rare elites and treasure chests.", "wilds", "shown", "rares")
@@ -2088,7 +2172,8 @@ PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, bu
     w:Feature({ "Where your quest mobs are", "Objectives marked on the map.", "", "spots", "shown", "quests",
         get = function() return ns.ObjectivesOn() end, set = function(v) ns.SetObjectives(v) ns.RefreshControls() end })
     Feature("Quest tracker", "This zone's quests, nearest first, in place of the game's.", "tracker", "shown", "tracker")
-    Feature("Quest log", "A quest's page in a window of its own.", "questlog", "shown", "questlog")
+    -- (the classic quest log's switch: with the new log it would switch a window the player never sees)
+    if not MapKinds.NewLog() then Feature("Quest log", "A quest's page in a window of its own.", "questlog", "shown", "questlog") end
     if ns.ToldNow then w:Note("As told and quest objectives are two ways to find your quest. As told gives you the giver's words and pencils in the places they named. Objectives mark where the mobs and items are. Most players pick one.") end
 
     w:Header("The book", ns.ToggleIcon and ns.ToggleIcon("book"))
@@ -2218,26 +2303,20 @@ PAGES[#PAGES + 1] = { key = "window", label = "Size & shape", build = function(p
     -- header, an attached tracker) has settings of its own: "it doesnt resize anything on or near the map",
     -- the user. The saved value stays and is still applied, so no map changes. Its floor for pins is the
     -- Layers tab's "Size of all pins".
-    a:Note("Drag the map's bottom-right corner to resize it. Right-click the corner to reset: first to this zone's own shape, then to the game's default size.")
-    a:Check("Changes shape per zone", "mapFrame", "autoWidth")
-    a:Tip("The map changes shape to fit the zone: taller for the Barrens, wider for Duskwood. It stays about the size you set.")
-    a:Requires("mapFrame", "autoWidth")
-    a:Advanced(true)
-    a:Slider("How much of the zone's shape", 0, 1, 0.05, "mapFrame", "shapeFollow", function(v)
+    a:Note("Drag the map's corner grip to resize it. Right-click the grip to reset: first to this zone's own shape, then to the game's default size.")
+    a:Choice("Resize from", "mapFrame", "gripCorner", {
+        { "BR", "Bottom right" }, { "BL", "Bottom left" }, { "TR", "Top right" }, { "TL", "Top left" },
+    }, function() return ns.GripCorner and ns.GripCorner() or "BR" end,
+       function(v) if ns.SetGripCorner then ns.SetGripCorner(v) end end)
+    a:Tip("The corner the resize grip sits in. The opposite corner stays where it is while you drag. The window and the minimap's place each remember their own corner: this sets the one the map is in now.")
+    a:Slider("Resize grip: opacity", 0, 1, 0.05, "mapFrame", "gripAlpha", function(v)
         return string.format("%d%%", v * 100 + 0.5)
     end)
-    a:Tip("100%: exactly the zone's shape. Lower: closer to your own shape, so the map changes less from zone to zone.")
-    a:Slider("Room to grow", 0, 0.5, 0.05, "mapFrame", "shapeGrow", function(v)
-        return string.format("up to %d%%", v * 100 + 0.5)
-    end, "none")
-    a:Tip("Lets the map grow for zones that are much taller or wider than your shape, so you see more of them.")
-    a:Choice("Shapes you drag", "mapFrame", "rememberShapes", {
-        { true, "Remember it for that zone" }, { false, "Forget it when you leave" },
-    })
-    a:Tip("Remember: a zone keeps the shape you drag it to. Forget: it goes back to its own shape when you leave.")
-    a:Button("Reset shape to defaults", function() ns.ConfirmResetGroup("shape") end)
-    a:Advanced()
-    a:Requires()
+    a:Tip("How strongly the grip in the map's corner is drawn. At 0% it is invisible and still works.")
+    -- ("Changes shape per zone" and its sliders are on How it acts, What the map does by itself, since
+    -- 2026-11-19. The tick stood here and there, the sliders only here; a player sent to "the one with the
+    -- sliders" did not find them, and the user: "Sliders under this one how it acts")
+    a:Button("Go to: Changes shape per zone", function() ns.ShowOption("mapFrame", "autoWidth") end)
     a:Header("Soft edges")
     a:Check("Fade the map into the world at its edges", "softEdges", "on")
     a:Tip("Hides the border. Doesn't apply on continent maps or while docked. If clear view is cutting the zone out, only when zoomed in.")
@@ -2255,6 +2334,9 @@ PAGES[#PAGES + 1] = { key = "window", label = "Size & shape", build = function(p
     b:Header("Placement")
     b:Check("Lock the map", "mapFrame", "locked")
     b:Tip("The map stays where it is: dragging its header (or edge) doesn't move it. Also in the header's right-click menu.")
+    b:Button("Reset the map's place", function() if ns.ResetMapPlace then ns.ResetMapPlace() end end)
+    b:Tip(MapKinds.World() and "Puts the map in the middle of the screen. In the minimap's place: back on the minimap's spot."
+        or "Puts the map in the middle of the screen. In the minimap's place: back on the minimap's spot, the big map beside it.")
     -- (fine-tuning since the settings pass, 2026-11-14: both are on in every preset and set once at most)
     b:Advanced(true)
     b:Requires(function() return not ns.db.mapFrame.locked end)
@@ -2285,6 +2367,23 @@ PAGES[#PAGES + 1] = { key = "acts", label = "What the map does by itself", build
     w:Tip("Keeps you in the middle of the map. Dragging or zooming the map pauses this until you move again. While you look at another zone it waits until the map comes back to you: Looking at another zone, below.", "Hold Shift to pause it.")
     w:Check("Changes shape per zone", "mapFrame", "autoWidth")
     w:Tip("A tall zone like the Barrens gets a taller, narrower map, a wide one like Duskwood a wider, shorter one, at about your size. Off: the map keeps the shape you dragged it to.")
+    w:Requires("mapFrame", "autoWidth")
+    w:Advanced(true)
+    w:Slider("How much of the zone's shape", 0, 1, 0.05, "mapFrame", "shapeFollow", function(v)
+        return string.format("%d%%", v * 100 + 0.5)
+    end)
+    w:Tip("100%: exactly the zone's shape. Lower: closer to your own shape, so the map changes less from zone to zone.")
+    w:Slider("Room to grow", 0, 0.5, 0.05, "mapFrame", "shapeGrow", function(v)
+        return string.format("up to %d%%", v * 100 + 0.5)
+    end, "none")
+    w:Tip("Lets the map grow for zones that are much taller or wider than your shape, so you see more of them.")
+    w:Choice("Shapes you drag", "mapFrame", "rememberShapes", {
+        { true, "Remember it for that zone" }, { false, "Forget it when you leave" },
+    })
+    w:Tip("Remember: a zone keeps the shape you drag it to. Forget: it goes back to its own shape when you leave.")
+    w:Button("Reset shape to defaults", function() ns.ConfirmResetGroup("shape") end)
+    w:Advanced()
+    w:Requires()
     w:Requires("townView", "enabled")
     w:Check("Zooms in on towns", "townView", "zoom")
     w:Tip("Zooms in when you enter a town and back out when you leave. Not while you've moved or zoomed the map yourself.")
@@ -2391,8 +2490,11 @@ PAGES[#PAGES + 1] = { key = "clearview", label = "Clear view", build = function(
     b:Tip("A city's map cut to the city, where it has an outline.")
     b:Check("Cut dungeon maps too", "clearView", "dungeons")
     b:Tip("Cuts a dungeon map to its rooms, so you see the game around it instead of black.")
-    b:Check("Whole map when big", "clearView", "bigUncut")
-    b:Tip("No cutting while the map is big (the big map button or key): the whole map shows.")
+    -- ("Whole map when big": the big map's own, so only where there is no world map: a release)
+    if not MapKinds.Here() then
+        b:Check("Whole map when big", "clearView", "bigUncut")
+        b:Tip("No cutting while the map is big (the big map button or key): the whole map shows.")
+    end
     -- (the optional views made in the outline editor, CutEdit.lua: one box each)
     b:Advanced()
     -- (the optional outlines made in the outline editor, CutEdit.lua: one box each)
@@ -2409,6 +2511,91 @@ PAGES[#PAGES + 1] = { key = "clearview", label = "Clear view", build = function(
     end
 end }
 
+-- World map (2026-11-22): the world map's settings, what you set once (what shows on it lives only in its cog's
+-- legend, Lab\WorldPanel.lua FillOptions: one home each), in the cog's words; the cog's "All settings..." opens
+-- this page. Only where the world map is in the build (Lab). It was "Big map or world map", with a pick of two
+-- pictures at its top, until the user, 2026-11-22: "We have no need for "bigmap" without it being worldmap".
+PAGES[#PAGES + 1] = { key = "bigworld", label = "World map", build = function(p)
+    local a = Column(p, 0, 0, CONTENT_W)
+    if not MapKinds.Here() then return end   -- (no world map in this build: the page is not listed either)
+    a:Header("World map")
+    a:CheckWith("Open it with M", MapKinds.OnM, function(v)
+        MapKinds.SetM(v)
+        if ns.RebuildOptionsPages then ns.RebuildOptionsPages() end
+    end)
+    a:Tip(MapKinds.M_TIP)
+    -- the world map's: its saved values are the Lab's still (ns.LabCfg("worldLog")), so rows with their own get
+    -- and set; out of the Lab they become a group of their own (desk/notes/settings-window.md)
+    local function C() return ns.WorldLog.Cfg() end
+    local function Changed(resized)
+        if resized and ns.WorldPanelResized then ns.WorldPanelResized()
+        elseif ns.WorldPanelChanged then ns.WorldPanelChanged() end
+    end
+    local function Switch(label, key, tip)
+        a:CheckWith(label, function() return C()[key] ~= false end, function(v)
+            C()[key] = v and true or false
+            Changed()
+        end)
+        if tip then a:Tip(tip) end
+    end
+    local function Pick(label, key, choices, resized, tip)
+        local list = {}
+        for i, ch in ipairs(choices) do list[i] = { ch[1], ch[2] } end
+        a:Choice(label, nil, nil, list, function()
+            local v = C()[key]
+            for _, ch in ipairs(choices) do if ch[1] == v then return v end end
+            return choices[1][1]
+        end, function(v)
+            C()[key] = v
+            Changed(resized)
+        end)
+        if tip then a:Tip(tip) end
+    end
+    -- (what shows on the map and in its log, objectives and loose ends, lives in the cog on the map only: one home
+    -- each, agreed with the world map session, 2026-11-22. The continent pick went: painted zones only)
+    a:Header("The quest log")
+    -- (the sidebar, worldLog.sidebar (the world map session's switch, 2026-11-22): off, the map alone, as the big
+    -- map was. Only with the classic quest log: the new log is this column, and off it has nowhere to be (the
+    -- critic, 2026-11-22). Shown with the new log only while it is off, so it can be put back)
+    local alone = MapKinds.MapAlone()
+    if not MapKinds.NewLog() or alone then
+        a:CheckWith("Quest log beside it", function() return C().sidebar ~= false end, function(v)
+            C().sidebar = v and true or false
+            if ns.ApplyQuestWindow then ns.ApplyQuestWindow("shown") end
+            Changed(true)
+            if ns.RebuildOptionsPages then ns.RebuildOptionsPages() end
+        end)
+        a:Tip("The world map's own quest log beside the map. Off: the map alone, as the big map was.")
+    end
+    if alone and MapKinds.NewLog() then
+        a:Note("Your quest log is the new one, which is this column: tick it, or pick Classic on the Quest log page.")
+    elseif alone then
+        a:Note("The classic quest log can open with the map: the Quest log page.")
+        a:Button("Go to: Quest log", function() if ns.OpenOptionsPage then ns.OpenOptionsPage("questlog") end end)
+    else
+        a:Note("Objectives always shown, and loose ends: the cog on the map.")
+    end
+    Switch("Before you go, at the flight master", "before", "At a flight master's map and while your hearthstone casts: a quest you would leave behind here.")
+    a:Header("Its frame")
+    Pick("Frame", "frame", { { "glass", "Plain glass" }, { "engraver", "Engraver's" }, { "parchment", "Parchment and bronze" } }, true)
+    Pick("Top", "top", { { "glass", "Land through glass" }, { "neat", "Neatline" }, { "cartouche", "Cartouche" } })
+    Pick("Zone's name", "title", { { "morpheus", "Morpheus" }, { "caps", "Engraved capitals" }, { "felipa", "Cut in glass" }, { "plain", "Plain" } })
+    -- ("World > zone line" went: the user, 2026-11-22, "Lettered only". The path is always lettered on the map)
+    -- ("Folded margin" went with the folded rail's drawing, 2026-11-22: the drawing lies behind the log's glass
+    -- now, no setting. The world map session, 27fbbafe)
+end }
+-- (the page's reset: the world map's rows above back to as they come; its other saved state stays)
+if type(ns.PageResets) ~= "table" then ns.PageResets = {} end
+ns.PageResets.bigworld = function()
+    if not (ns.WorldLog and ns.WorldLog.Cfg) then return end
+    local c = ns.WorldLog.Cfg()
+    for _, k in ipairs({ "sidebar", "before", "frame", "top", "title" }) do c[k] = nil end
+    ns.WorldLog.Cfg()   -- (fills the defaults back in)
+    if ns.ApplyQuestWindow then ns.ApplyQuestWindow("shown") end   -- (L follows the sidebar)
+    if ns.WorldPanelResized then ns.WorldPanelResized() end
+    if ns.WorldPanelChanged then ns.WorldPanelChanged() end
+end
+
 PAGES[#PAGES + 1] = { key = "minimap", label = "Minimap replacement", build = function(p)
     local b = Column(p, 0, 0, HALF)
     b:Header("Minimap replacement")
@@ -2419,7 +2606,8 @@ PAGES[#PAGES + 1] = { key = "minimap", label = "Minimap replacement", build = fu
     -- it even be an option at all?". Off was the old way, the game's minimap picture up close, and left a
     -- line of it outside the frame. The switch lives on as /waymark blips, for a bug reply.)
     b:Slider("Size", 100, 400, 10, "dock", "size", "%d")
-    b:Tip("The square's size; on the big map, the big map's.", "Or drag its corner grip (bottom left); right-click the grip for 160.")
+    b:Tip(MapKinds.World() and "The square's size." or "The square's size; on the big map, the big map's.",
+        "Or drag its corner grip (bottom left); right-click the grip for 160.")
     local shapes = { { "square", "Square" }, { "54", "5:4" }, { "43", "4:3" }, { "1610", "16:10" },
                      { "45", "4:5" }, { "34", "3:4" }, { "1016", "10:16" } }
     b:Choice("Shape", "dock", "shape", shapes)
@@ -2447,9 +2635,15 @@ PAGES[#PAGES + 1] = { key = "minimap", label = "Minimap replacement", build = fu
     local n = Column(p, HALF, 0, HALF)
     n:Header("Its keys")
     n:KeyBind("Dock/undock the map", "BFI_DOCK")
-    n:KeyBind("Big map", "BFI_BIGMAP")
-    n:Note("Tip: put Big map on M. Shift M does nothing while docked.")
-    n:Note("Big map key or arrow: the big map beside the square. Drag its edge to move it, its corner grip to size it.")
+    -- (the Big map key opens the world map when that is the one you use: its words follow, 2026-11-22)
+    if MapKinds.World() then
+        n:KeyBind("World map", "BFI_BIGMAP")
+        n:Note(MapKinds.OnM() and "Shift M does nothing while docked." or "Tip: put World map on M. Shift M does nothing while docked.")
+    else
+        n:KeyBind("Big map", "BFI_BIGMAP")
+        n:Note("Tip: put Big map on M. Shift M does nothing while docked.")
+        n:Note("Big map key or arrow: the big map beside the square. Drag its edge to move it, its corner grip to size it.")
+    end
     n:Advanced(true)
     n:Note("Hold any of the minimap's buttons to move it; right-click while holding puts it back.")
     n:Advanced()
@@ -2490,7 +2684,7 @@ local EXTRAS_SWITCHES = {
     { "Quest tracker", "This zone's quests, nearest first, in place of the game's.", "", "tracker", "shown", "tracker" },
     { "Quest log", "A quest's page in a window of its own.", "", "questlog", "shown", "questlog" },
     { "Clock", "A clock on the map.", "", "clock", "shown", "clock" },
-    { "Your ink on the world map", "Routes, marks and notes you drew.", "", "ink", "shown", "ink" },
+    { "Your ink on the map", "Routes, marks and notes you drew.", "", "ink", "shown", "ink" },
 }
 
 PAGES[#PAGES + 1] = { key = "shownhome", label = "What's shown", summary = true, build = function(p)
@@ -2538,7 +2732,9 @@ end }
 PAGES[#PAGES + 1] = { key = "extrashome", label = "Extras", summary = true, build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Beside the map")
-    for _, f in ipairs(EXTRAS_SWITCHES) do a:Feature(f) end
+    for _, f in ipairs(EXTRAS_SWITCHES) do
+        if not (f[4] == "questlog" and MapKinds.NewLog()) then a:Feature(f) end   -- (the classic log's: as on Start here)
+    end
     a:Button("Open the book", function() if ns.ToggleNotebook then ns.ToggleNotebook() end end)
 end }
 
@@ -2735,9 +2931,22 @@ PAGES[#PAGES + 1] = { key = "look", label = "The map's look", build = function(p
         a:Check("Shadows thrown by ridges", "relief", "cast")
         a:Tip("Mountains and ridges cast shadows over the land behind them.")
         a:Requires()
+        if ns.WorldReliefSet then
+            a:Check("Shaded land on the game's world map", "relief", "world")
+            a:Tip("The same hills and shadows on the game's world map. Zone maps only.")
+            a:Requires("relief", "world")
+            a:Check("Show unexplored land there too", "relief", "worldUnseen")
+            a:Tip("The game's map leaves land you haven't found bare. This shows it.")
+            a:Requires()
+        end
     end
     a:Check("Painted continents", "browse", "zoneArt")
     a:Tip("Zoomed in on a continent, each zone's own sharper map replaces the game's blocky one. The lie of the land needs this on to show on continents.")
+    if ns.WorldArtSet then
+        -- (WorldArt.lua: only the art. Out of the Lab for 1.3.2, the user 2026-11-19; off as it comes)
+        a:Check("Painted continents on the game's world map", "worldArt", "on")
+        a:Tip("On a continent, the game's world map shows Waymark's painted continent: each zone's own map, our sea and coasts. The hills show there with Shaded land on the game's world map.")
+    end
     a:Advanced(true)
     a:Requires("browse", "zoneArt")
     a:Stops("How they come in", "browse",
@@ -2754,8 +2963,9 @@ PAGES[#PAGES + 1] = { key = "look", label = "The map's look", build = function(p
     a:Requires("detail", "shown")
     a:Slider("Opacity when zoomed in", 0.1, 1, 0.05, "detail", "strength")
     a:Advanced(true)
-    a:Check("On the big map too", "detail", "bigMap")
-    a:Tip("Off: the detail shows on the small map only, the big map keeps to the map art.")
+    a:Check(MapKinds.World() and "On the world map too" or "On the big map too", "detail", "bigMap")
+    a:Tip(MapKinds.World() and "Off: the detail shows on the small map only, the world map keeps to the map art."
+        or "Off: the detail shows on the small map only, the big map keeps to the map art.")
     a:Slider("Starts to show at", 1, 16, 0.1, "detail", "fromZoom", Closer)
     a:Tip("How far you zoom in before the detail starts to show.")
     a:Slider("Full detail at", 1, 16, 0.1, "detail", "fullZoom", Closer)
@@ -2911,6 +3121,7 @@ PAGES[#PAGES + 1] = { key = "header", label = "Header & border", build = functio
     local a = Column(p, 0, 0, CONTENT_W)
     a:Header("The look, for each place the map lives")
     a:Note("The map can look different as a window, in clear view and as your minimap. Pick one to switch the map to it and change its look.")
+    if MapKinds.World() then a:Note("The world map has a frame of its own, on the World map page.") end
     do
         local tabs = {}
         local function TabLook()
@@ -3100,6 +3311,18 @@ PAGES[#PAGES + 1] = { key = "controls", label = "Buttons", build = function(p)
     a:Check("City view button", nil, "cityButton", nil, ns.ToggleIcon("city"))
     a:Tip("The button with your faction's crest. Turns the whole-city zoom on or off.")
     a:Requires()
+    -- (asked on CurseForge, 2026-11-17: a player had patched them out of his own copy. Not under "Show the
+    -- map's buttons": that switch is for ours, and these two are how a new player shuts the map)
+    if MapKinds.World() then
+        a:Check("Close button (the red X)", "toggles", "hideRed", true)
+        a:Tip("Untick to take the red X off the map for good. The map's key still shuts it, and the header's right-click menu still opens the world map.")
+    else
+        a:Check("Close and grow buttons (the two red ones)", "toggles", "hideRed", true)
+        a:Tip("Untick to take the two red buttons off the map for good. The map's key still shuts it, and the header's right-click menu still makes it big.")
+    end
+    a:Requires(function() return not ns.db.toggles.hideRed end)
+    a:Slider("Their size", 0.5, 2, 0.05, "toggles", "redScale", "%.2fx")
+    a:Requires()
     a:Button("Put the map's buttons back", function() ns.ResetButtonPositions() end)
     a:Tip("Press and hold any button on the map to move it; right-click while holding puts that one back.")
     if not AddonCompartmentFrame then
@@ -3268,7 +3491,13 @@ PAGES[#PAGES + 1] = { key = "keys", label = "Key bindings", build = function(p)
         end
         -- (Waymark's quest log has no key of its own: it opens on the game's quest log key, by two ticks
         -- on its own tab. Nothing on this page said so, and the user looked for it here, 2026-11-16.)
-        if g.title == "The keys worth having" and ns.db.questlog then
+        -- (the new quest log, 2026-11-22: L opens it when its own key row is on; else the classic window's line)
+        if g.title == "The keys worth having" and MapKinds.NewLog() then
+            w:Note(ns.WorldLog.Cfg().aloneL ~= false and not MapKinds.MapAlone()
+                and "Waymark's quest log opens on your quest log key (L); M in it opens the world map."
+                or "Waymark's quest log can open on your quest log key (L): the Quest log page.")
+            w:Button("Go to: Quest log", function() if ns.OpenOptionsPage then ns.OpenOptionsPage("questlog") end end)
+        elseif g.title == "The keys worth having" and ns.db.questlog then
             w:Note("Waymark's quest log needs no key of its own: it opens on your quest log key (L).")
             w:Button("Go to: Open it with the quest log key", function() ns.ShowOption("questlog", "keyL") end)
         end
@@ -3705,6 +3934,34 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     local attached = function() return q().shown and not q().detached end
     local a = Column(p, 0, 0, HALF)
     a:Header("Quest log")
+    -- new or classic (with the world map only): one pick; the new one's rows are its key and a way to its look,
+    -- the classic one's are all the rest of this page (the user: "we hide its settings for tuning it unless its
+    -- enabled. Its either or, new log or classic log")
+    if MapKinds.World() and ns.SetQuestLogKind then
+        a:Choice("Your quest log", nil, nil, { { "new", "New" }, { "classic", "Classic" } },
+            function() return ns.QuestLogKind() end, function(v)
+                -- (the new log is the world map's column: picking it puts the column back, "Quest log beside it")
+                if v == "new" and ns.WorldLog.Cfg().sidebar == false then
+                    ns.WorldLog.Cfg().sidebar = nil
+                    if ns.WorldPanelResized then ns.WorldPanelResized() end
+                end
+                ns.SetQuestLogKind(v)
+                if ns.RebuildOptionsPages then ns.RebuildOptionsPages() end
+            end)
+        a:Tip("New: Waymark's quest log on L; M in it opens the world map. Classic: L opens the game's quest log, or Waymark's quest page (below).")
+    end
+    if MapKinds.NewLog() then
+        local W = ns.WorldLog
+        a:CheckWith("Open it with the quest log key", function() return W.Cfg().aloneL ~= false end, function(v)
+            W.Cfg().aloneL = v and true or false
+            if W.AloneApplyKey then ns.Safe("Quest log key", W.AloneApplyKey) end
+            if ns.ApplyQuestWindow then ns.ApplyQuestWindow("keyL") end
+        end)
+        a:Tip("Your quest log key (L) opens it. Off: L opens the game's quest log.")
+        a:Note("How it looks and what it shows: the World map page, and the cog on the map.")
+        a:Button("Go to: World map", function() if ns.OpenOptionsPage then ns.OpenOptionsPage("bigworld") end end)
+        return
+    end
     a:Check("Use Waymark's quest log", "questlog", "shown")
     a:Tip("A quest's page beside the map: objectives, description, rewards and buttons. Off: the game's quest log instead.", "Right-click a quest in the tracker: view details.")
     a:Requires("questlog", "shown")
@@ -3713,8 +3970,17 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     -- (with the window's own settings, not its buttons: moved here 2026-11-03)
     a:Check("Light up its spots and areas while open", "questlog", "glow")
     a:Tip("Highlights the open quest's spots and turn-in on the map, like hovering it in the tracker.")
-    a:Check("Open it with the big map", "questlog", "withBig")
-    a:Tip("The quest log opens beside the map when the map goes big, and closes when it goes small. The big map leaves room for it.")
+    -- (with the big map, in a release: "Open it with the big map". The quest log key's two rows are the classic
+    -- log's; the new log has its own one above)
+    -- (with the world map: only with its column off, the map alone, so two logs never stand beside it. Tracker.lua
+    -- QuestLogFollowBig asks the same)
+    if not MapKinds.Here() then
+        a:Check("Open it with the big map", "questlog", "withBig")
+        a:Tip("The quest log opens beside the map when the map goes big, and closes when it goes small. The big map leaves room for it.")
+    elseif MapKinds.MapAlone() then
+        a:Check("Open it with the world map", "questlog", "withBig")
+        a:Tip("The quest log opens beside the world map, and closes with it. The world map leaves room for it.")
+    end
     a:Check("Open it with the quest log key", "questlog", "keyL")
     a:Tip("While the map shows, your quest log key (L) opens this window instead of the game's quest log.")
     a:Check("Replace the game's quest log", "questlog", "replaceGame")
@@ -4229,7 +4495,7 @@ end }
 PAGES[#PAGES + 1] = { key = "ink", label = "The book & map ink", build = function(p)
     local a = Column(p, 0, 0, HALF)
     a:Header("Your map ink", ns.ToggleIcon("quill"))
-    a:Check("On the world map", "ink", "shown")
+    a:Check("On the map", "ink", "shown")
     a:Tip("Routes, marks and notes you drew on the zone maps. The ink button on the map switches it.", "Ctrl-drag a mark to move it (with the quill out, just drag); right-click it for more.")
     a:Check("Dungeons too", "ink", "dungeons")
     a:Tip("The ink button hides your ink on dungeon floors as well. Off: it stays on them whatever the button says.")
@@ -4837,6 +5103,7 @@ local function MinimalScrollBar(bar)
     Arrow(bar.ScrollUpButton, "top")
     Arrow(bar.ScrollDownButton, "bottom")
 end
+ns.MinimalScrollBar = MinimalScrollBar  -- (the test bench's pages scroll the same way: Lab/TestBench.lua)
 
 local function BuildPage(def)
     local f = pageFrames[def.key]
@@ -5626,7 +5893,7 @@ local function BuildPanel()
     -- DevBar.lua is: releases leave it out)
     for i = #PAGES, 1, -1 do
         local key = PAGES[i].key
-        if (key == "combat" and not WaymarkCombat) or (key == "dev" and not ns.DevCommands) or (key == "traversal" and not ns.SetupTransports) or (key == "told" and not ns.ToldNow) or (key:find("^lab") and not ns.LabPage) then table.remove(PAGES, i) end
+        if (key == "combat" and not WaymarkCombat) or (key == "dev" and not ns.DevCommands) or (key == "traversal" and not ns.SetupTransports) or (key == "told" and not ns.ToldNow) or (key:find("^lab") and not ns.LabPage) or (key == "bigworld" and not MapKinds.Here()) then table.remove(PAGES, i) end
     end
     -- ("What the map does by itself" last: a map button's right-click goes to the first page with its
     -- setting (ns.ShowOption), and that should be the setting's own page where it has one)
@@ -5658,7 +5925,7 @@ local function BuildPanel()
     -- (Traversal, Frames, the Lab's, Dev, Combat's) is left out; an entry with none left is too.
     local ENTRIES = {
         { "Start here", "Presets, and all Waymark can do", "overview" },
-        { "How it looks", "Shaded land, frame, clear view, buttons", "look", "header", "clearview", "window", "controls", "tipsmenus" },
+        { "How it looks", "Shaded land, frame, clear view, buttons", "look", "header", "clearview", "bigworld", "window", "controls", "tipsmenus" },
         { "How it acts", "Follows you, zooms in towns, folds", "acts", "town", "browse" },
         { "On the map", "Townsfolk, rares, herbs and ore, boats", "shownhome", "people", "group", "rares", "explore", "traversal", "clock" },
         { "Quests", ns.ToldNow and "Givers, their words, tracker, quest log" or "Givers, tracker, quest log", "quests", "told", "tracker", "questlog" },
@@ -5674,7 +5941,7 @@ local function BuildPanel()
     local TAB = { look = "The map", labframes = "Themes", controls = "Buttons",
                   acts = "All of it", browse = "Zoom & other zones", shownhome = "Layers",
                   group = "Group", rares = "Rares & nodes", quests = "Quest pins", tracker = "Tracker",
-                  setups = "Your presets", clock = "Clock & coords" }
+                  setups = "Your presets", clock = "Clock & coords", bigworld = "World map" }
     local TAB_ICON = { dungeon = "dungeons", ink = "book" }
     -- the tabs' row, between the title and the divider; an entry of one page has its line there instead
     local strip = CreateFrame("Frame", nil, inner)
@@ -6512,7 +6779,7 @@ local TOGGLES = {
     { "detail",    "shown",    "cursor_inspect_128",                             "Close-up detail" },
     { "detailAll", "always",   "Interface\\WorldMap\\UI-World-Icon",             "Full detail at every zoom", "detail" },
     { "zoom",      "center",   "Interface\\Minimap\\UI-Minimap-ZoomInButton-Up",  "Follows you", "mapFrame" },  -- (id "zoom" kept for your saved order; Shift-click: auto-zoom)
-    { "ink",       "shown",    "cursor_palette_128",                             "Your ink on the world map" },
+    { "ink",       "shown",    "cursor_palette_128",                             "Your ink on the map" },
     -- (not a layer: the quill taken up or put down, lit while it's in hand; Notebook.lua)
     { "quill",     "shown",    ns.MEDIA .. "Quill",                              "The quill (write and draw)", "ink" },
     -- (not a layer either: the book, opened; its right-click is its own menu, Notebook.lua)
@@ -7199,9 +7466,11 @@ function ns.ApplyChromeScale()
     if not map then return end
     local inv = ns.AddonScale() / math.max(0.1, map:GetScale())
     local close = map.BorderFrame and map.BorderFrame.CloseButton
-    if close then close:SetScale(inv) end
-    if ns.closeHome then ns.closeHome:SetScale(inv) end
-    if ns.bigMapButton then ns.bigMapButton:SetScale(inv) end
+    -- (the two red ones have a size of their own, toggles.redScale: the user, 2026-11-19)
+    local red = inv * math.max(0.3, math.min(3, tonumber(ns.db.toggles.redScale) or 1))
+    if close then close:SetScale(red) end
+    if ns.closeHome then ns.closeHome:SetScale(red) end
+    if ns.bigMapButton then ns.bigMapButton:SetScale(red) end
     if quickButton then quickButton:SetScale(inv) end
     if townButton then townButton:SetScale(inv) end
     if cityButton then cityButton:SetScale(inv) end
@@ -7228,6 +7497,10 @@ function ns.ApplyButtonLevels()
     local close = map.BorderFrame and map.BorderFrame.CloseButton
     for _, f in ipairs({ close, ns.bigMapButton, quickButton, townButton, cityButton, dockButton,
                          d.coords, d.coordsCursor, d.clock, d.dockMapOnly }) do
+        -- (a clock off the map isn't one of its buttons: Clock.lua keeps it in the map's layer, under the game's
+        -- windows. Lifted here to the border's HIGH, it lay over the quest window after the world map, the user
+        -- 2026-11-22)
+        if f == d.clock and ns.ClockFree and ns.ClockFree() then f = nil end
         -- (undocked, their strata too: docking lays the map's parts in other stratas, and one
         -- left under the map after undocking wasn't helped by its level)
         if f and strata and f:GetFrameStrata() ~= strata then f:SetFrameStrata(strata) end
@@ -7399,6 +7672,8 @@ end
 local function RightOfButtons()
     local big = ns.bigMapButton
     if InRow(big) then return big end
+    -- (the two red buttons hidden, toggles.hideRed: up against where the X's right edge was)
+    if ns.db.toggles.hideRed and ns.closeHome and ns.closeHome.edge then return ns.closeHome.edge end
     local close = BattlefieldMapFrame.BorderFrame and BattlefieldMapFrame.BorderFrame.CloseButton
     if close and not ns.ButtonMoved(close) then return close end
     return ns.closeHome

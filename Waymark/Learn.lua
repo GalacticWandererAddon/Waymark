@@ -12,13 +12,14 @@ local _, ns = ...
 --                        spots = { [uiMapID] = { x, y, n } },  -- n: visits averaged
 --                        offers = { [questID] = true }, takes = { [questID] = true } } },
 --   quests = { [questID] = { title, level, factions = { Alliance = true, ... },
---                            repeatable } },
+--                            repeatable, seenAt (the lowest character level it was offered to) } },
 -- }
 -- key: "c<npcID>" for a creature, "o<objectID>" for an object.
 
 local TEMPLATE = "BFILearnedPinTemplate"
 local AVAILABLE_ICON = "Interface\\GossipFrame\\AvailableQuestIcon"
 local TURNIN_ICON = "Interface\\GossipFrame\\ActiveQuestIcon"
+local QUESTIE_ICONS = "Interface\\AddOns\\Questie\\Icons\\"   -- (as QuestData.lua's, where Questie's art is used)
 local MAX_N = 12  -- visits averaged into a spot (later ones still move it a little)
 
 local function Cfg() return ns.db.learned end
@@ -84,6 +85,7 @@ local function Remember(key, name, kind)
     g.name = name or g.name
     for mapID, p in pairs(Spots()) do
         local s = g.spots[mapID]
+        if g.forgot then g.forgot[mapID] = nil end   -- (met here again: yours again)
         if not s then
             g.spots[mapID] = { p[1], p[2], 1 }
         else
@@ -103,6 +105,8 @@ local function NoteQuest(id, title, level, repeatable)
     q.title = title or q.title
     if level and level > 0 then q.level = level end
     if repeatable ~= nil then q.repeatable = repeatable or nil end
+    local me = UnitLevel("player")
+    if me and me > 0 and (not q.seenAt or me < q.seenAt) then q.seenAt = me end
     local faction = UnitFactionGroup("player")
     if faction then q.factions[faction] = true end
     DB().quests[id] = q
@@ -241,8 +245,9 @@ function ns.MergeLearned(t)
                 ng = ng + 1
             end
             for mapID, s in pairs(type(g.spots) == "table" and g.spots or {}) do
+                -- (never a spot you told it to forget: the next version's shipped data brought it back)
                 if type(mapID) == "number" and type(s) == "table" and Num01(s[1]) and Num01(s[2])
-                   and not mine.spots[mapID] then
+                   and not mine.spots[mapID] and not (mine.forgot and mine.forgot[mapID]) then
                     mine.spots[mapID] = { s[1], s[2], math.min(tonumber(s[3]) or 1, MAX_N) }
                 end
             end
@@ -297,7 +302,8 @@ end
 
 local events = CreateFrame("Frame")
 for _, e in ipairs({ "GOSSIP_SHOW", "QUEST_GREETING", "QUEST_DETAIL", "QUEST_COMPLETE",
-                     "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED" }) do
+                     "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED",
+                     "PLAYER_LEVEL_UP" }) do   -- (a level more: quests that were too high may show)
     pcall(events.RegisterEvent, events, e)
 end
 events:SetScript("OnEvent", function(_, event)
@@ -368,7 +374,8 @@ local function Trivial(level)
     return UnitLevel("player") - level > green
 end
 
-local function Show(id, q, key)
+-- offer: a quest this giver offers (not one you hand in here: a quest in your log is yours, whatever your level)
+local function Show(id, q, key, offer)
     local c = Cfg()
     if not q then return false end
     local faction = UnitFactionGroup("player")
@@ -378,8 +385,20 @@ local function Show(id, q, key)
     if c.mode == "gaps" and QuestieKnows(id) and not (key and ns.DataGiverDiffers and ns.DataGiverDiffers(id, key)) then
         return false
     end
+    -- (a turn-in shows whatever its level: the release check, 2026-11-22, a complete quest's "?" went for a
+    -- character more than two levels under it)
+    if not offer then return true end
     -- (grey ones by the givers' own Low-level box: a second box here went unseen, the user, 2026-11-07)
     if not (ns.GetTrivialQuests and ns.GetTrivialQuests()) and Trivial(q.level) then return false end
+    -- not yet yours to take: the data's level, race and class where it knows the quest; else offered to
+    -- a character of your level or lower, or no more than two levels above you (a level 1 saw the
+    -- level 6 "The Adventurer", the user 2026-11-22)
+    local fits = ns.QuestFitsMe and ns.QuestFitsMe(id)
+    if fits == false then return false end
+    if fits == nil then
+        local me = UnitLevel("player") or 0
+        if q.level and me < q.level - 2 and not (q.seenAt and q.seenAt <= me) then return false end
+    end
     return true
 end
 
@@ -393,7 +412,7 @@ local function PinsFor(mapID)
             local available, turnins = {}, {}
             for id in pairs(g.offers) do
                 local q = db.quests[id]
-                if Show(id, q, key) and not Completed(id) and InLog(id) == nil then   -- (repeatables too, as other givers)
+                if Show(id, q, key, true) and not Completed(id) and InLog(id) == nil then   -- (repeatables too, as other givers)
                     available[#available + 1] = id
                 end
             end
@@ -442,17 +461,27 @@ function BFILearnedPinMixin:OnAcquired(p)
     local tex = self.Icon
     -- a "?" wins: something to hand in here
     local turnin = #p.turnins > 0
-    tex:SetTexture(turnin and TURNIN_ICON or AVAILABLE_ICON)
-    tex:SetDesaturated(false)
-    tex:SetVertexColor(1, 1, 1)
-    if not turnin and ns.db.questie.color then
-        -- the easiest quest it offers sets the colour
-        local low
-        for _, id in ipairs(p.available) do
-            local q = DB().quests[id]
-            if q and q.level and (not low or q.level < low) then low = q.level end
-        end
-        local r, g, b = LevelColor(low)
+    -- the easiest quest it offers sets the colour
+    local low
+    for _, id in ipairs(p.available) do
+        local q = DB().quests[id]
+        if q and q.level and (not low or q.level < low) then low = q.level end
+    end
+    if ns.DressQuestIcon then
+        -- dressed as the data's givers and turn-ins are (Pin.lua): the same icon set and level colour,
+        -- not the gossip window's old "!" (the user 2026-11-22)
+        local art = ns.QuestieArt and ns.QuestieArt()
+        local file = art and (QUESTIE_ICONS .. (turnin and "complete" or "available") .. ".blp") or nil
+        ns.DressQuestIcon(self, tex, turnin and "turnins" or "questie", {
+            level = not turnin and low or nil,
+            kind = file and "file" or nil, value = file, l = 0, r = 1, t = 0, b = 1,
+        })
+    else
+        tex:SetTexture(turnin and TURNIN_ICON or AVAILABLE_ICON)
+        tex:SetDesaturated(false)
+        tex:SetVertexColor(1, 1, 1)
+        local r, g, b
+        if not turnin and ns.db.questie.color then r, g, b = LevelColor(low) end
         if r then
             tex:SetDesaturated(true)
             tex:SetVertexColor(r, g, b)
@@ -479,9 +508,12 @@ function BFILearnedPinMixin:OnEnter()
     for _, id in ipairs(p.available) do Add(id, false) end
     local spot = p.giver.spots and p.giver.spots[self:GetMap():GetMapID()]
     local visits = spot and spot[3] or 1
-    ns.QuestTooltip(self, { npc }, {}, allKnown, {
-        string.format("Learned by Waymark (%d visit%s)", visits, visits == 1 and "" or "s"),
-    })
+    ns.QuestTooltip(self, { npc }, {}, allKnown, {})
+    -- (where it came from: only with Shift held. The user, 2026-11-22: "hide this behind shift modifier")
+    if IsShiftKeyDown() then
+        GameTooltip:AddLine(string.format("Learned by Waymark (%d visit%s)", visits, visits == 1 and "" or "s"), 0.5, 0.5, 0.5)
+    end
+    -- (both ways: the hints themselves show only with Shift, so the menu's hint never came up. The release check)
     ns.PinHints()
     GameTooltip:Show()
 end
@@ -492,7 +524,43 @@ BFILearnedPinMixin.OnMouseEnter = BFILearnedPinMixin.OnEnter
 BFILearnedPinMixin.OnMouseLeave = BFILearnedPinMixin.OnLeave
 
 function BFILearnedPinMixin:OnMouseUp(button)
-    if button == "RightButton" then ns.PinMenu(self, nil, self.info.giver and self.info.giver.name) return end  -- (its menu: Controls.lua)
+    if button == "RightButton" then
+        -- (its menu had no rows without TomTom, so a right-click did nothing: the user, 2026-11-22, "Quests learned,
+        -- rightclick dropdown doesnt work". The menu outlives the pin, so the rows hold what they need)
+        local key, mapID = self.info.key, self:GetMap() and self:GetMap():GetMapID()
+        local items = {
+            { "not here: forget this spot", function()
+                local g = key and DB().givers[key]
+                if g and g.spots and mapID then
+                    g.spots[mapID] = nil
+                    g.forgot = g.forgot or {}
+                    g.forgot[mapID] = true   -- (kept, so no shipped data or import puts it back: MergeLearned)
+                end
+                if ns.RedrawLearned then ns.RedrawLearned() end
+            end },
+            { "hide learned quest givers", function() ns.ToggleLayer("learned", "shown") end },
+        }
+        -- (dev only, DevBar.lua: the report row the data's quest pins have, the user 2026-11-22: "Report menu
+        -- missing from learned givers")
+        if ns.ReportMenu then
+            local quests, names = {}, {}
+            for _, list in ipairs({ self.info.available or {}, self.info.turnins or {} }) do
+                for _, id in ipairs(list) do
+                    quests[#quests + 1] = id
+                    local q = DB().quests[id]
+                    names[#names + 1] = q and q.title
+                end
+            end
+            local x, y = self.normalizedX, self.normalizedY
+            items[#items + 1] = { "report...", function()
+                ns.ReportMenu({ questName = #quests == 1 and names[1] or nil, quests = quests, group = "learned",
+                    who = self.info.giver and self.info.giver.name, map = mapID,
+                    x = x and math.floor(x * 1000) / 10, y = y and math.floor(y * 1000) / 10 })
+            end }
+        end
+        ns.PinMenu(self, items, self.info.giver and self.info.giver.name)
+        return
+    end
     if ns.PinAltClick then ns.PinAltClick(self, button) end  -- line target (Line.lua)
 end
 
@@ -518,7 +586,7 @@ end
 
 function ns.SetupLearned(map)
     -- what players learned and sent in, shipped with the addon (Data\LearnedShipped.lua,
-    -- toolsake_learned.lua): added to yours once per version, as an import is
+    -- tools/bake_learned.lua): added to yours once per version, as an import is
     local db, ship = DB(), ns.LearnedShipped
     if ship and (db.shipped or 0) < (ship.version or 0) then
         ns.Safe("Learn shipped", ns.MergeLearned, ship)

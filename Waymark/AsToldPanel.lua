@@ -69,6 +69,7 @@ local fighting
 local shownSig
 local spans = {}        -- rows that can be clicked, as laid: { top, bottom, id }
 local markId            -- the name under the pointer in the list
+local beforeOpen        -- the quest whose "before this" is unfolded: the names alone till then
 local function Aside() return fighting and Cfg().fight == "aside" end
 
 -- Words -------------------------------------------------------------------------------------------------------
@@ -218,13 +219,18 @@ local function Details(rows, it)
     end
     local before = ns.ToldBefore(id)
     if #before > 0 then
-        Row(rows, "BEFORE THIS", 10, FAINT, 0, 8)
+        -- (folded, the quests' names alone; a click on the head unfolds what they told. The user, 2026-11-22: "the
+        -- \"before this\" part is too long unprompted. Maybe a click on before this to unfold more there")
+        local open = beforeOpen == id
+        Row(rows, "BEFORE THIS", 10, FAINT, 0, 8, "before", open and "fold" or "unfold", FAINT)
         for i = #before, 1, -1 do
             local b = ns.ToldQuest(before[i])
             if b then
                 Row(rows, (b.title or ""):upper(), 10, SOFT, 0, 4)
-                Row(rows, StoryOf(before[i], b) or First(b.text), 11, SOFT, 8, 2)
-                if b.last then Row(rows, First(b.last), 11, SOFT, 8, 2) end
+                if open then
+                    Row(rows, StoryOf(before[i], b) or First(b.text), 11, SOFT, 8, 2)
+                    if b.last then Row(rows, First(b.last), 11, SOFT, 8, 2) end
+                end
             end
         end
     end
@@ -553,6 +559,13 @@ function ns.ToldPanelList()
     end
 end
 function ns.ToldPanelPick(id, hold) Pick(id, hold) end
+-- (what came before, unfolded or folded on the quest that leads, as a click on "before this": for the dry run)
+function ns.ToldPanelBefore()
+    local it = ns.ToldLead and ns.ToldLead()
+    if not it then return end
+    beforeOpen = beforeOpen ~= it.id and it.id or nil
+    Show(nil, true)
+end
 -- (the pointer and the click, for the test outside the game)
 function ns.ToldPanelHover(on) if on then Enter() else Leave() end end
 function ns.ToldPanelPin()
@@ -771,6 +784,12 @@ Build = function()
         if IsShiftKeyDown and IsShiftKeyDown() then
             local link = GetQuestLink and GetQuestLink(it.id)
             if link and ChatEdit_InsertLink then ChatEdit_InsertLink(link) end
+            return
+        end
+        -- (on "before this": what came before unfolds or folds, the details stay as they are)
+        if under == "before" and not listOpen then
+            beforeOpen = beforeOpen ~= it.id and it.id or nil
+            Show(nil, true)
             return
         end
         if listOpen then

@@ -20,7 +20,13 @@ local drawsYou = false
 
 -- the minimap's own arrow is showing over the map: ours would be a second one (BattlefieldInfo.lua)
 function ns.MinimapDrawsYou() return drawsYou end
+-- Only when the minimap can really be seen. A UI addon that hides the minimap or its cluster, or fades it
+-- out, left no arrow at all: ours was put away for one that was not there (two players, 11 and 19 Nov).
+local function MinimapSeen()
+    return Minimap:IsVisible() and Minimap:GetEffectiveAlpha() > 0.05
+end
 local function DrawsYou(on)
+    on = on and MinimapSeen() or false
     if on == drawsYou then return end
     drawsYou = on
     if ns.ApplyGroups then ns.ApplyGroups() end
@@ -78,8 +84,9 @@ function ns.DockPatchInfo()
     local map = BattlefieldMapFrame
     local mm = Minimap
     local r = map and map.ScrollContainer and Can() and Ratio(map)
-    return ("%s; ratio %s; minimap %s/%d alpha %.2f size %.0f at %.0f,%.0f, map %s/%d"):format(
-        held and "on" or ("off: " .. tostring(WhyNot(map))), r and ("%.2f"):format(r) or "none",
+    return ("%s; under %s; minimap draws you %s, seen %s, parent %s; ratio %s; minimap %s/%d alpha %.2f size %.0f at %.0f,%.0f, map %s/%d"):format(
+        held and "on" or ("off: " .. tostring(WhyNot(map))), tostring(under), tostring(drawsYou), tostring(MinimapSeen()),
+        tostring(mm:GetParent() and mm:GetParent():GetName()), r and ("%.2f"):format(r) or "none",
         mm:GetFrameStrata(), mm:GetFrameLevel(), mm:GetEffectiveAlpha(), mm:GetWidth(), mm:GetLeft() or 0, mm:GetBottom() or 0,
         map and map:GetFrameStrata() or "?", map and map:GetFrameLevel() or 0)
 end

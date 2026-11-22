@@ -136,6 +136,7 @@ end
 local function Wanted(map)
     if not Cfg().on or ns.Perf("effects") then return false end
     if ns.Docked and ns.Docked() then return false end
+    if ns.WorldMapUp and ns.WorldMapUp() then return false end   -- (the world map has hard edges in its window)
     if ns.CutEditing and ns.CutEditing() then return false end
     if ns.ClearViewFloorCut and ns.ClearViewFloorCut() then return false end
     if Cover() then return true end

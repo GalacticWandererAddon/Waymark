@@ -609,6 +609,7 @@ local StockRows
 
 function BFITownsfolkPinMixin:OnEnter()
     local members = self.info.members
+    ns.ShiftRefresh(self, function(p) p:OnEnter() end)   -- (Shift shows where a learned one came from)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     if #members == 1 then
         local p = members[1]
@@ -634,7 +635,8 @@ function BFITownsfolkPinMixin:OnEnter()
     end
     local learned = 0
     for _, p in ipairs(members) do if p.learned then learned = learned + 1 end end
-    if learned > 0 then
+    -- (where it came from: only with Shift held, as on the learned quest givers, 2026-11-22)
+    if learned > 0 and IsShiftKeyDown() then
         GameTooltip:AddLine(learned == #members and "Learned by Waymark"
             or string.format("%d learned by Waymark", learned), 0.6, 0.6, 0.6)
     end

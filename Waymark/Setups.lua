@@ -332,7 +332,9 @@ end
 -- any depth; MINE: these paths). Looks, fonts and text sizes follow the preset.
 local POS = { pos = true, stockPos = true, lootPos = true, buttonPos = true, bigTR = true, bigCorner = true,
               zoneSizes = true, minimap = true, width = true, height = true, bigWidth = true, bigHeight = true,
-              bigW = true, bigH = true, bigSize = true, freeHeight = true, maxHeight = true }
+              bigW = true, bigH = true, bigSize = true, freeHeight = true, maxHeight = true,
+              -- (the world map's own place and size, and where the small map waits meanwhile: yours, 2026-11-22)
+              worldPos = true, smallPos = true, worldW = true, worldH = true }
 local MINE = { scale = true, ["dock.size"] = true, ["questlog.scale"] = true,
                ["dock.mapOnly"] = true, ["dock.face"] = true,  -- (always the map, whatever an older preset says)
                -- (two switches no preset carries, What kills here and the glance: a preset dropped them, so
@@ -405,6 +407,8 @@ end
 -- the preset's whole settings in: only what it carries is replaced (what the
 -- addon keeps as you play, dev things, aren't in it and aren't touched)
 local function ApplyWhole(base)
+    -- (the world map up: closed its own way first, so the small map keeps its place: the switch's fix 2)
+    if ns.CloseWorldMap then ns.Safe("Setup: world map", ns.CloseWorldMap) end
     local all = Copy(base)
     for k, v in pairs(all) do
         if EXCLUDE[k] then

@@ -323,12 +323,17 @@ local function Place(c)
     local area = home.ScrollContainer or home
     local point = c.where or "BOTTOMRIGHT"
     local parent = point == "FREE" and UIParent or home
-    if clock:GetParent() ~= parent then
-        clock:SetParent(parent)
-        -- (on the screen: above the map, whatever layer the dock has put that on)
-        clock:SetFrameStrata(point == "FREE" and "HIGH" or home:GetFrameStrata())
+    -- (on the screen: in the map's own layer, over the map as its buttons are, under the game's windows.
+    -- Not HIGH: it lay over the quest window, the user 2026-11-22. Set again when the dock moves the map)
+    local strata = home:GetFrameStrata()
+    local moved = clock:GetParent() ~= parent
+    if moved or clock:GetFrameStrata() ~= strata then
+        if moved then clock:SetParent(parent) end
+        clock:SetFrameStrata(strata)
         clock:SetFrameLevel(ns.ButtonLevel(home))
         Levels()
+    end
+    if moved then
         if c.look == "sun" or c.look == "arc" or c.look == "stamp" then
             Engrave(clock, (DigitFont(c)),
                 c.look ~= "stamp" and (c.plate == false or OffFoot(c)))
@@ -570,6 +575,10 @@ function ns.SetupClock(map)
     ns.db.clockTrace = nil   -- (a dev trace, gone)
     clock = Build(map)
     ns.debugFrames.clock = clock
+    -- (a detached clock keeps the map's layer when the dock moves the map)
+    hooksecurefunc(map, "SetFrameStrata", function()
+        if ns.db and Cfg().where == "FREE" and ns.UpdateClock then ns.UpdateClock() end
+    end)
     clock:RegisterForDrag("LeftButton")
     clock:SetScript("OnDragStart", StartDrag)
     clock:SetScript("OnDragStop", StopDrag)

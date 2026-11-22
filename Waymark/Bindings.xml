@@ -11,6 +11,7 @@
     <Binding name="BFI_CENTER" category="BINDING_HEADER_BFI">Waymark_Key("center")</Binding>
     <Binding name="BFI_INK" category="BINDING_HEADER_BFI">Waymark_Key("ink")</Binding>
     <Binding name="BFI_BOOK" category="BINDING_HEADER_BFI">Waymark_Key("book")</Binding>
+    <Binding name="BFI_QUESTLOG" category="BINDING_HEADER_BFI">Waymark_Key("questlog")</Binding>
     <Binding name="BFI_SETUP" category="BINDING_HEADER_BFI">Waymark_Key("setup")</Binding>
     <Binding name="BFI_OPTIONS" category="BINDING_HEADER_BFI">Waymark_Key("options")</Binding>
     <Binding name="BFI_LAYER_QUESTIE" header="BFI_LAYERS" category="BINDING_HEADER_BFI">Waymark_Key("layer_questie")</Binding>

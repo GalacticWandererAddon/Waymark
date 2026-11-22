@@ -189,7 +189,8 @@ function BFIRarePinMixin:OnEnter()
 end
 
 function BFIRarePinMixin:OnMouseUp(button)
-    if button == "RightButton" then ns.PinMenu(self, nil, self.POI and self.POI.name) return end  -- (its menu: Controls.lua)
+    -- (the same empty menu as the learned givers had without TomTom: one row at least, 2026-11-22)
+    if button == "RightButton" then ns.PinMenu(self, { { "hide rares", function() ns.ToggleLayer("rares", "shown") end } }, self.POI and self.POI.name) return end  -- (its menu: Controls.lua)
     if ns.PinAltClick then ns.PinAltClick(self, button) end  -- line target (Line.lua)
 end
 

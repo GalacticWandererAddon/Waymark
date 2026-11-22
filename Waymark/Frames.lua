@@ -186,6 +186,7 @@ function UpdateBorder()
         foldTex.host:SetAllPoints(area)
         foldTex.host:SetShown(fold and true or false)
     end
+    if ns.GripFollowBorder then ns.GripFollowBorder() end  -- (the corner grip sits in the frame's corner)
 end
 
 -- The header: more rows in its own table ----------------------------------------------------------

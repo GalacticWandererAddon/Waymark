@@ -11,7 +11,8 @@ local _, ns = ...
 --   A few textures and buttons on the zone you're looking at (two at most, the Barrens three), redrawn only when
 --   the map, its size or the setting changes. ns.db.notebook.camps = false: off.
 --   Places: CAMPS below, { zone map, x, y } in percent; WaymarkDB.campEdits[id] over them (dev: /waymark camp <id>
---   puts one where the cursor is on the map, or where you stand; /waymark camp list prints them for this table).
+--   puts one where the cursor is on the map, or where you stand; in the dev copy, Ctrl + drag a campfire;
+--   /waymark camp list prints them; tools/bake_camps.py writes them into this table for shipping).
 
 -- Where a camp goes (the user, 2026-11-14): where the page's drawing shows it. Where the drawing names no spot, a
 -- sensible place to camp outside the dungeon, or the nearest small town. Never in the middle of a busy town,
@@ -49,7 +50,9 @@ local TALL, WIDE = 20, 14   -- (Camp.tga is 44 x 64)
 local HOVER = 0.35         -- (seconds the pointer must rest on it before its tooltip: never by accident)
 
 local map, host
+local DragStart, DragStop
 local buttons, used = {}, 0
+local edits = 0  -- (a camp moved: drawn again)
 
 local function Cfg() return ns.db and ns.db.notebook end
 
@@ -132,6 +135,7 @@ end
 
 -- Left: the page; again with the book open at it, the book is put away. Right: a list with "hide campsite".
 local function Click(self, button)
+    if self.dragged and GetTime() - self.dragged < 0.3 then return end  -- (the end of a dev drag, not a click)
     GameTooltip:Hide()
     self.over = (self.over or 0) + 1  -- (no tooltip over what the click brought up)
     local dg = self.dg
@@ -153,6 +157,41 @@ local function Click(self, button)
     end
 end
 
+-- dev: Ctrl + drag a campfire to a new spot (the controls' one scheme: Ctrl + drag moves anything movable)
+local function Cursor()
+    if not (map and map.GetNormalizedCursorPosition) then return end
+    local x, y = map:GetNormalizedCursorPosition()
+    if not (x and y) then return end
+    return math.min(1, math.max(0, x)), math.min(1, math.max(0, y))
+end
+local function Follow(self)
+    local x, y = Cursor()
+    if not x then return end
+    self:ClearAllPoints()
+    self:SetPoint("BOTTOM", host, "TOPLEFT", x * self.W, -y * self.H - 3 * self.k)
+end
+DragStart = function(self)
+    if not (IsControlKeyDown() and self.W) then return end
+    self.over = (self.over or 0) + 1
+    GameTooltip:Hide()
+    self.moving = true
+    self:SetScript("OnUpdate", Follow)
+end
+DragStop = function(self)
+    if not self.moving then return end
+    self.moving = nil
+    self:SetScript("OnUpdate", nil)
+    self.dragged = GetTime()
+    local x, y = Cursor()
+    local mapID = map:GetMapID()
+    if not (x and mapID) then edits = edits + 1 return end
+    WaymarkDB.campEdits = WaymarkDB.campEdits or {}
+    WaymarkDB.campEdits[self.dg.id] = { mapID, math.floor(x * 1000 + 0.5) / 10, math.floor(y * 1000 + 0.5) / 10 }
+    edits = edits + 1
+    print(string.format("|cff33ff99Waymark camps:|r %s at %.1f, %.1f on map %d (tools/bake_camps.py ships it)",
+        self.dg.id, x * 100, y * 100, mapID))
+end
+
 local function Button()
     used = used + 1
     local b = buttons[used]
@@ -165,6 +204,13 @@ local function Button()
         b:SetScript("OnEnter", Enter)
         b:SetScript("OnLeave", Leave)
         b:SetScript("OnClick", Click)
+        -- (dev copy only, DevBar.lua loaded: Ctrl + drag moves it, saved in WaymarkDB.campEdits; the user
+        -- 2026-11-22: "a dev tool that lets me easily move the campsites", baked by tools/bake_camps.py)
+        if ns.DevCommands then
+            b:RegisterForDrag("LeftButton")
+            b:SetScript("OnDragStart", DragStart)
+            b:SetScript("OnDragStop", DragStop)
+        end
         buttons[used] = b
     end
     return b
@@ -192,7 +238,9 @@ local function Draw()
             local sc = map.ScrollContainer
             if sc and sc:GetWidth() > 0 then
                 local zoom = W * host:GetEffectiveScale() / (sc:GetWidth() * math.max(0.01, sc:GetEffectiveScale()))
-                k = k * math.max(1, zoom) ^ 0.7
+                -- (0.7 and no ceiling until 2026-11-19: zoomed in ten times, as a docked map often is, the fire stood
+                -- 100 px tall; a player on CurseForge called the marks "absolutely massive". Now 44 px at the most)
+                k = k * math.min(2.2, math.max(1, zoom) ^ 0.4)
             end
             for _, row in ipairs(list) do
                 local b = Button()
@@ -200,6 +248,7 @@ local function Draw()
                 b.glyph:SetVertexColor(row[2][1], row[2][2], row[2][3])
                 b.glyph:SetAlpha(0.85)
                 b.glyph:SetSize(WIDE * k, TALL * k)
+                b.W, b.H, b.k = W, H, k  -- (for a dev drag)
                 -- (what the pointer can touch: the fire itself and a little round it, not the smoke)
                 b:SetSize(14 * k, 12 * k)
                 b:ClearAllPoints()
@@ -212,7 +261,6 @@ local function Draw()
     if used == 0 then host:Hide() end
 end
 
-local edits = 0  -- (a camp moved: drawn again)
 local function Signature()
     local c = Cfg()
     local canvas = map:GetCanvas()
@@ -261,6 +309,12 @@ function ns.CampDev(arg)
         return
     end
     WaymarkDB.campEdits = WaymarkDB.campEdits or {}
+    if arg == "reset" then
+        WaymarkDB.campEdits = nil
+        edits = edits + 1
+        P("every moved campsite is back where Camps.lua has it")
+        return
+    end
     if arg == "list" then
         local n = 0
         for id, e in pairs(WaymarkDB.campEdits) do

@@ -1007,6 +1007,9 @@ end
 -- a soft dark band under some words (tracker.textShade, tools/text_shade_art.py): a stretched middle with
 -- feathered ends of a fixed width, so a long line's ends are as soft as a short one's
 local CAP = 12
+-- (the list starts 6 px down its scroll area, and the scroll as much higher: a band reaches 5 px over its row, and
+-- the first row's was cut at the scroll's top, a hard line over the top quest, the user 2026-11-22. No local for
+-- the 6: this file is at Lua's 200)
 local function Band(row, i, x, w, h, a)
     local b = row.bands[i]
     if not b then
@@ -1502,7 +1505,7 @@ local function Draw()
         end
         return y
     end
-    local y = 0
+    local y = 6   -- (the band's room, above)
     if not c.collapsed then
         -- (the Lab's quest routes: the next stops, over the quests)
         for _, l in ipairs(ns.RouteLines and ns.RouteLines() or {}) do
@@ -1586,7 +1589,7 @@ local function Draw()
 
     -- as tall as it needs, up to maxHeight; past that the list scrolls. On
     -- its own: the height you gave it with the corner grip (freeHeight)
-    local listH = c.collapsed and 0 or y
+    local listH = c.collapsed and 0 or math.max(0, y - 6)
     local full = pad + headH + (listH > 0 and 4 or 0) + listH + pad
     local cap = c.detached and (c.freeHeight or 260) or (c.maxHeight or 260)
     local height = math.min(full, math.max(headH + pad * 2 + 20, cap))
@@ -1770,10 +1773,22 @@ local function Build(map)
         GameTooltip:Show()
     end)
     grip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- (seen only while the mouse is over the tracker, or while dragging: still there to grab, the user
+    -- 2026-11-22. A light look ten times a second while the grip is shown)
+    local gripWatch = CreateFrame("Frame", nil, grip)
+    local gripWait = 0
+    grip:SetAlpha(0)
+    gripWatch:SetScript("OnUpdate", function(_, dt)
+        gripWait = gripWait - dt
+        if gripWait > 0 then return end
+        gripWait = 0.1
+        local on = frame:IsMouseOver() or grip:IsMouseOver() or grip:GetScript("OnUpdate") ~= nil
+        grip:SetAlpha(on and 1 or 0)
+    end)
 
     -- the list: scrolls with the mouse wheel, no scroll bar
     scroll = CreateFrame("ScrollFrame", nil, frame)
-    scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", -CAP, -4)
+    scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", -CAP, 2)   -- (4 under the header, less the band's 6 of room)
     scroll:SetPoint("BOTTOMRIGHT", -PAD, PAD)
     content = CreateFrame("Frame", nil, scroll)
     content:SetSize(1, 1)
@@ -1823,7 +1838,7 @@ end
 -- them). Attached beside the map, or detached: dragged by its top bar, scaled
 -- by its corner grip, its height by its bottom edge.
 
-local FRIZ, MORPHEUS, ARIALN = "Fonts\\FRIZQT__.TTF", "Fonts\\MORPHEUS.ttf", "Fonts\\ARIALN.TTF"
+local FRIZ, MORPHEUS, ARIALN = ns.FONT_FRIZ, ns.FONT_MORPHEUS, ns.FONT_ARIALN  -- (Fonts.lua: the client's own letters)
 local INK = { 0.18, 0.12, 0.06 }          -- the page's text
 local BLACK = { 0, 0, 0 }                 -- its headings
 local TAN = { 0.9, 0.79, 0.67 }           -- the Rewards panel's text
@@ -3528,6 +3543,8 @@ end
 -- game's log); else read on the window's page
 function ns.OpenQuest(id)
     if not id then return end
+    -- (the world map up: the quest's page in its log, the Lab's world map; Lab/WorldPanel.lua)
+    if ns.WorldPanelOpenQuest and ns.WorldPanelOpenQuest(id) then return end
     if LogIndex(id) then
         if QCfg().shown then ns.ShowQuestWindow(id) else OpenLog(id) end
     else
@@ -3591,7 +3608,12 @@ function ns.QuestLogFollowBig(big)
     big = big and true or false
     if big == ns.questBig.now then return end
     ns.questBig.now = big
-    if not (c.shown and c.withBig) then ns.questBig.opened = nil return end
+    -- (not beside the world map while its own log column is there: never two logs. Options.lua shows the row only
+    -- with the column off, 2026-11-22)
+    if not (c.shown and c.withBig) or (ns.MapKind and ns.MapKind() == "world" and not (ns.WorldSidebarOff and ns.WorldSidebarOff())) then
+        ns.questBig.opened = nil
+        return
+    end
     if big then
         if not (qw and qw:IsShown()) then
             ns.Safe("Quest log with the big map", OpenFromKey)
@@ -3628,6 +3650,11 @@ local function ApplyQuestKey()
     if InCombatLockdown() then keyPending = true return end
     keyPending = nil
     ClearOverrideBindings(keyButton)
+    -- (with the world map picked our L is off: its log is the world map's. The user, 2026-11-22: "L is off with
+    -- worldmap switched on. If you wanted to use L, you'd use bigmap+l opening on M keybind")
+    -- (one owner of L: the log the player picked, ns.QuestLogKind (Lab/WorldAlone.lua). "new": L is the new log's, never
+    -- this window's, even with the log beside the world map off. "classic", or no new log in this build: this window's)
+    if ns.QuestLogKind and ns.QuestLogKind() == "new" then return end
     local c, map = QCfg(), BattlefieldMapFrame
     if not (c.shown and (c.replaceGame or (c.keyL and map and map:IsShown()))) then return end
     for _, key in ipairs({ GetBindingKey("TOGGLEQUESTLOG") }) do
@@ -3645,6 +3672,7 @@ local function HookGameLog()
     QuestLogFrame:HookScript("OnShow", function(self)
         local c = QCfg()
         if not (c.shown and c.replaceGame) then return end
+        if ns.QuestLogKind and ns.QuestLogKind() == "new" then return end   -- (the new log picked: never this window, Lab/WorldAlone.lua)
         HideUIPanel(self)
         ns.Safe("Quest log", function()
             local index = GetQuestLogSelection and GetQuestLogSelection()

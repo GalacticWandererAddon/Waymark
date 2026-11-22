@@ -69,23 +69,6 @@ local function Mixed(own, real)
                     return v
                 end
             end
-            -- a swept quest (Data\ForeverSwept.lua) is only part of a row: what it lacks, races, earlier
-            -- steps and givers, is QuestieDB's, or it read as open to anyone, any time
-            if key == "GetAll" and f and g then
-                fn = function(id, keys, ...)
-                    local v = f(id, keys, ...)
-                    if not (ns.ForeverSwept and ns.ForeverSwept[id]) then return v end
-                    local ok, w = pcall(g, id, keys, ...)
-                    if not (ok and w) then return v end
-                    local out = {}
-                    for i = 1, #keys do
-                        local x = v and v[i]
-                        if x == nil or (type(x) == "table" and next(x) == nil) then x = w[i] end
-                        out[i] = x
-                    end
-                    return out
-                end
-            end
             t[key] = fn
             return fn
         end })
@@ -122,8 +105,23 @@ local function Mixed(own, real)
         end
         return ids
     end
+    -- a swept quest (Data\ForeverSwept.lua) is only part of a row: what it lacks, races, earlier steps and
+    -- givers, is QuestieDB's, or it read as open to anyone, any time. (Here: bf8f5473 put this in Both's GetAll,
+    -- which this function shadowed, so it never ran. A Night Elf was offered the Horde's The Adventurer, the
+    -- user 2026-11-22)
     function mixed.Quest.GetAll(id, keys)
-        return own.Quest.GetAll(id, keys) or real.Quest.GetAll(id, keys)
+        local v = own.Quest.GetAll(id, keys)
+        if not v then return real.Quest.GetAll(id, keys) end
+        if not (ns.ForeverSwept and ns.ForeverSwept[id]) then return v end
+        local ok, w = pcall(real.Quest.GetAll, id, keys)
+        if not (ok and w) then return v end
+        local out = {}
+        for i = 1, #keys do
+            local x = v[i]
+            if x == nil or (type(x) == "table" and next(x) == nil) then x = w[i] end
+            out[i] = x
+        end
+        return out
     end
     return mixed
 end
@@ -196,6 +194,12 @@ local function MapOfArea(areaID)
     local m = areaToMap[areaID]
     if not m and parentArea[areaID] then m = areaToMap[parentArea[areaID]] end
     if m and m > 0 then return m end
+end
+-- the zone's uiMap of an area, a sub-area lifted to its zone (Shadowglen, 188: Teldrassil); nil when not known.
+-- For the world map's log (Lab/WorldLog.lua), whose zone lists missed every quest filed under a sub-area
+function ns.MapOfArea(areaID)
+    if not (areaID and LoadZones()) then return nil end
+    return MapOfArea(areaID)
 end
 
 -- fn(uiMapID, x, y) for each spawn point, 0-1, outside dungeons. (A key "m<uiMapID>":
@@ -294,6 +298,72 @@ local function Friendly(friendly)
     local f = UnitFactionGroup("player")
     return (f == "Alliance" and friendly == "A") or (f == "Horde" and friendly == "H")
 end
+
+-- Whose town an NPC stands in, where the data does not say whose side it is on.
+-- On Forever quests and townsfolk come from ours with QuestieDB behind it, and QuestieDB's rows for
+-- Forever's new places carry no side: an Alliance player was shown every quest of the Horde's hub in the
+-- Riverglades and nearly walked into it (Rubzje, Reddit, 2026-11-17), and its innkeeper (the user,
+-- 2026-11-19). The game itself knows each flight point's side. So an NPC or object that is Forever's own
+-- (id from FOREVER_IDS up), that our own data does not list, and that has no side or both, takes the side
+-- of the flight points within HUB yards of where it stands: one side's only, it is that side's. None near,
+-- or both sides': as before, for everyone. Our own rows are never guessed at: no side there means anyone.
+local FOREVER_IDS = 100000
+local HUB = 200
+local taxi, taxiAsked = {}, {}
+local function TaxiSides(mapID)
+    local t = taxi[mapID]
+    if t then return t end
+    -- (asked again a little later while it has none: at login the game may not have the list yet)
+    local now = GetTime and GetTime() or 0
+    if taxiAsked[mapID] and now - taxiAsked[mapID] < 10 then return nil end
+    taxiAsked[mapID] = now
+    if not (C_TaxiMap and C_TaxiMap.GetTaxiNodesForMap) then return nil end
+    local ok, nodes = pcall(C_TaxiMap.GetTaxiNodesForMap, mapID)
+    if not (ok and type(nodes) == "table") then return nil end
+    local F = Enum and Enum.FlightPathFaction
+    for _, node in ipairs(nodes) do
+        local p = node.position
+        local x, y
+        if p and p.GetXY then x, y = p:GetXY() elseif p then x, y = p.x, p.y end
+        local side = F and ((node.faction == F.Horde and "H") or (node.faction == F.Alliance and "A"))
+        if x and side then
+            t = t or {}
+            t[#t + 1] = { x, y, side }
+        end
+    end
+    taxi[mapID] = t
+    return t
+end
+local function SideOfPlace(spawns)
+    local near = {}
+    EachSpawn(spawns, function(m, x, y)
+        local nodes = TaxiSides(m)
+        local w, h = ns.MapYards(m)
+        if not (nodes and w) then return end
+        for _, n in ipairs(nodes) do
+            if ((n[1] - x) * w) ^ 2 + ((n[2] - y) * h) ^ 2 <= HUB * HUB then near[n[3]] = true end
+        end
+    end)
+    if near.H and not near.A then return "H" end
+    if near.A and not near.H then return "A" end
+end
+-- friendly: what the data says; listed: our own data has this id; spawns: a function giving its places
+local function SideGuess(id, friendly, listed, spawns)
+    if not ns.FOREVER or listed or type(id) ~= "number" or id < FOREVER_IDS then return friendly end
+    if friendly == "A" or friendly == "H" then return friendly end
+    local ok, side = pcall(function() return SideOfPlace(spawns()) end)
+    return ok and side or friendly
+end
+local function OwnHas(part, id)
+    local own = ns.OwnQuestDB and ns.OwnQuestDB()
+    return own and own[part] and own[part].name and own[part].name(id) ~= nil or false
+end
+-- an NPC's side for the map: the data's, or its town's (above)
+function ns.NpcSide(npc)
+    local f = N().friendlyToFaction(npc)
+    return SideGuess(npc, f, OwnHas("Npc", npc), function() return N().spawns(npc) end)
+end
+function ns.NpcFriendly(npc) return Friendly(ns.NpcSide(npc)) end
 
 -- What changed ---------------------------------------------------------------
 
@@ -510,6 +580,7 @@ local playerRaceMask, playerClassMask
 local function PlayerMasks()
     if playerRaceMask == nil then
         local raceID = select(3, UnitRace("player"))
+        if not raceID then return nil, nil end   -- (not known yet: asked again, never kept as "no race")
         playerRaceMask = src.Enum.raceMaskById and src.Enum.raceMaskById[raceID] or false
         local classFile = select(2, UnitClass("player"))
         playerClassMask = src.Enum.classKeys and src.Enum.classKeys[classFile] or false
@@ -522,6 +593,18 @@ local function QuestLevel(q)
     local l = q.questLevel or 0
     if l <= 0 then return UnitLevel("player") end
     return l
+end
+
+-- the level you need to take it. On Forever, QuestieDB names none, or 1, for 503 of the quests after Classic's
+-- (ids from 20000) above level 3 (a level 4 saw level 40 to 60 givers all over Kalimdor, the user 2026-11-22).
+-- There: 5 under the quest's own level, where the game's red begins; two in three of those quests that name a
+-- level ask no lower. Classic's own quests (lower ids) keep theirs: a Faire turn-in or a trade quest asks 1
+local NEW_IDS = 20000
+local function NeedLevel(q, id)
+    local need = q.requiredLevel or 0
+    local level = q.questLevel or 0
+    if need <= 1 and ns.FOREVER and level > 3 and (id or 0) >= NEW_IDS then need = level - 5 end
+    return need
 end
 
 local function IsTrivial(level)
@@ -545,7 +628,7 @@ local function Available(id)
     if Done(id) and not repeatable then return false, "done" end
     if EVENT_SORTS[q.zoneOrSort or 0] then return false, "world event quest" end
     local level = UnitLevel("player")
-    if (q.requiredLevel or 0) > level then return false, "level " .. q.requiredLevel end
+    if NeedLevel(q, id) > level then return false, "level " .. NeedLevel(q, id) end
     if (q.requiredMaxLevel or 0) > 0 and level > q.requiredMaxLevel then return false, "too high level" end
     local race, class = PlayerMasks()
     if (q.requiredRaces or 0) ~= 0 and race and not HasBit(q.requiredRaces, race) then return false, "race" end
@@ -644,12 +727,16 @@ local function BuildGivers()
         if n % 100 == 0 then coroutine.yield() end
     end
     for npc, quests in pairs(byNpc) do
-        if Friendly(N().friendlyToFaction(npc)) then AddGiver(NpcSpawns(npc), N().name(npc), nil, quests, N().subName(npc), "c" .. npc) end
+        if ns.NpcFriendly(npc) then AddGiver(NpcSpawns(npc), N().name(npc), nil, quests, N().subName(npc), "c" .. npc) end
         n = n + 1
         if n % 50 == 0 then coroutine.yield() end
     end
     for obj, quests in pairs(byObject) do
-        AddGiver(O().spawns(obj), O().name(obj), "Object", quests, nil, "o" .. obj)
+        -- (a wanted poster in the other side's town: an object has no side, its town has)
+        local spawns = O().spawns(obj)
+        if Friendly(SideGuess(obj, nil, OwnHas("Object", obj), function() return spawns end)) then
+            AddGiver(spawns, O().name(obj), "Object", quests, nil, "o" .. obj)
+        end
         n = n + 1
         if n % 50 == 0 then coroutine.yield() end
     end
@@ -740,12 +827,44 @@ local function StartJob(name, fn, done)
 end
 ns.StartDataJob = StartJob
 
+-- Two guards (2026-11-21, after "a reload fixed the not showing", Rubzje on Reddit; neither proved his):
+-- each giver's side is judged while this builds, so it waits until the game knows yours (at most
+-- SIDE_WAIT seconds: built too early, every giver with a side was dropped for the session). And a build
+-- that stops on an error is tried again, GIVER_TRIES in all, instead of leaving the map empty until a reload.
+local SIDE_WAIT, GIVER_TRIES, GIVER_RETRY = 30, 3, 5
+local sideAsked, sideTimer, giverTries = nil, nil, 0
+local function Again(after)
+    C_Timer.After(after, function()
+        sideTimer = nil
+        Bump()
+        if ns.RedrawQuestie then ns.RedrawQuestie() end
+    end)
+end
+local function SideKnown()
+    local f = UnitFactionGroup("player")
+    if f == "Alliance" or f == "Horde" then return true end
+    local now = GetTime()
+    sideAsked = sideAsked or now
+    return now - sideAsked > SIDE_WAIT
+end
 local function EnsureGivers()
     if giversState or not (Source() and LoadZones()) then return giversState == "done" end
+    if not SideKnown() then
+        if not sideTimer then sideTimer = true Again(1) end
+        return false
+    end
     giversState = "building"
+    giverTries = giverTries + 1
     StartJob("Quest giver index", BuildGivers, function(ok)
+        if not ok then
+            wipe(givers)
+            if giverTries < GIVER_TRIES then
+                giversState = nil   -- (asked for again by the redraw below)
+                Again(GIVER_RETRY)
+                return
+            end
+        end
         giversState = "done"
-        if not ok then wipe(givers) end
         Bump()
         if ns.RedrawQuestie then ns.RedrawQuestie() end
     end)
@@ -1112,6 +1231,16 @@ function ns.QuestEnds(id, mapID)
     return e
 end
 
+-- The first item a quest asks you to gather (our data; nil: none, or no data): the world map's folded rail wears
+-- its icon (Lab/WorldPanel.lua, the user, 2026-11-22: "you dont know which quest it is")
+function ns.QuestObjectiveItem(id)
+    if not Source() then return nil end
+    local ok, objs = pcall(function() return Q().objectives(id) end)
+    local items = ok and objs and objs[3]
+    local first = type(items) == "table" and items[1]
+    return type(first) == "table" and tonumber(first[1]) or nil
+end
+
 -- A quest's rewards (our data only): { choice = { { itemID, name, count } },
 -- fixed = { the same }, copper }, or nil
 function ns.QuestRewards(id)
@@ -1229,6 +1358,12 @@ local function ForMe(id)
     return true
 end
 
+-- true for a quest only some classes may take (a class quest: "(Warrior)" after its title in the world map's log)
+function ns.QuestForClass(id)
+    if not (id and Source()) then return false end
+    return (Info(id).requiredClasses or 0) ~= 0
+end
+
 local function FactionName(factionID)
     if C_Reputation and C_Reputation.GetFactionDataByID then
         local ok, d = pcall(C_Reputation.GetFactionDataByID, factionID)
@@ -1291,6 +1426,24 @@ end
 -- there; what came before it is another line that only sends you here).
 -- nextQuestInChain alone is set loosely in QuestieDB, which put unrelated
 -- quests at the start of chains.
+-- [questID] = { quests that need it done first (preQuestSingle / preQuestGroup) } (built once, on first use)
+local needOf
+local function NeedOf()
+    if needOf then return needOf end
+    needOf = {}
+    for _, q in ipairs(Q().GetAllIds() or {}) do
+        local info = Info(q)
+        for _, list in ipairs({ info.preQuestSingle or {}, info.preQuestGroup or {} }) do
+            for _, pre in ipairs(list) do
+                local l = needOf[pre]
+                if not l then l = {} needOf[pre] = l end
+                l[#l + 1] = q
+            end
+        end
+    end
+    return needOf
+end
+
 local function StepBefore(p, q)
     if Info(p).breadcrumbForQuestId == q then return "crumb" end
     local info = Info(q)
@@ -1314,17 +1467,50 @@ function ns.QuestChain(id)
                 if how then prev = p break end
             end
         end
+        -- (no quest names this one as its next: the one quest for you it needs done first. A Friend in Need's chain
+        -- left out A Good Friend before it: the user's shots, 2026-11-22, "First step in chain, issues?")
+        if not prev then
+            local info = Info(cur)
+            local found = {}
+            for _, list in ipairs({ info.preQuestSingle or {}, info.preQuestGroup or {} }) do
+                for _, p in ipairs(list) do
+                    if not seen[p] and ForMe(p) then found[p] = true end
+                end
+            end
+            local only, n = nil, 0
+            for p in pairs(found) do only, n = p, n + 1 end
+            if n == 1 then prev, how = only, true end
+        end
         if not prev then break end
         table.insert(ids, 1, prev)
         seen[prev], cur = true, prev
         if how == "crumb" then break end
     end
     local index = #ids
-    local nxt = Info(id).nextQuestInChain
+    -- (forward: the next in chain; where the data names none, the one quest for you that needs this one done first:
+    -- The Balance of Nature (456) names no next, and the second Balance of Nature (457) needs it. The world map's
+    -- quest page, 2026-11-22: "Chainsteps at the bottom". Two or more such: none, no guessing)
+    local function After(q)
+        local n = Info(q).nextQuestInChain
+        if n and n > 0 then return n end
+        -- (several need it: the one of the same name (the second Balance of Nature after the first), else none)
+        local only, same, many
+        local title = Info(q).name
+        for _, c in ipairs(NeedOf()[q] or {}) do
+            if ForMe(c) and not seen[c] then
+                if Info(c).name == title then same = same or c end
+                if only then many = true end
+                only = only or c
+            end
+        end
+        if same then return same end
+        return not many and only or nil
+    end
+    local nxt = After(id)
     while nxt and nxt > 0 and not seen[nxt] and #ids < MAX_CHAIN * 2 and ForMe(nxt) do
         seen[nxt] = true
         ids[#ids + 1] = nxt
-        nxt = Info(nxt).nextQuestInChain
+        nxt = After(nxt)
     end
     local function Step(q)
         return { id = q, name = QuestName(q), level = ns.QuestLevelOf(q), done = Done(q) and true or false,
@@ -1804,6 +1990,21 @@ function ns.QDBKnowsQuest(id)
     return Info(id).name ~= nil
 end
 
+-- the data says you may take it, by level, race and class (Learn.lua: a giver you met offers it, but
+-- not yet to you; a level 1 saw the level 6 "The Adventurer", the user 2026-11-22). Unknown: nil
+function ns.QuestFitsMe(id)
+    if not Source() then return nil end
+    local q = Info(id)
+    if not q.name then return nil end
+    local level = UnitLevel("player")
+    if NeedLevel(q, id) > level then return false end
+    if (q.requiredMaxLevel or 0) > 0 and level > q.requiredMaxLevel then return false end
+    local race, class = PlayerMasks()
+    if (q.requiredRaces or 0) ~= 0 and race and not HasBit(q.requiredRaces, race) then return false end
+    if (q.requiredClasses or 0) ~= 0 and class and not HasBit(q.requiredClasses, class) then return false end
+    return true
+end
+
 -- /bfi quest <id>: why a quest does or doesn't show as available
 function ns.ExplainQuest(id)
     if not Source() then return "no quest data (neither ours nor QuestieDB)" end
@@ -1914,6 +2115,16 @@ local FLAG_KEYS = {
     ["Stable Master"] = "STABLEMASTER", Auctioneer = "AUCTIONEER", Banker = "BANKER",
     Battlemaster = "BATTLEMASTER", ["Spirit Healer"] = "SPIRIT_HEALER",
 }
+-- services that count only with a title to match: the old databases flag the mount sellers (Katie
+-- Hunter, Harb Clawhoof...) as innkeepers and Master Smith Burninate as an auctioneer (an auctioneer's
+-- pin on him, seen in game 2026-11-19; tools/world_quests.py FOLK_TITLE does the same for our list)
+local FLAG_TITLE = { Innkeeper = "Innkeeper", Auctioneer = "Auctioneer" }
+local function TitleFits(key, id)
+    local word = FLAG_TITLE[key]
+    if not word then return true end
+    local sub, name = lib.Npc.subName(id) or "", lib.Npc.name(id) or ""
+    return sub:find(word, 1, true) ~= nil or name:sub(1, #word) == word
+end
 -- profession trainers: words in their title, by skill ID
 local PROFESSION_WORDS = {
     [129] = { "First Aid" }, [164] = { "Blacksmith" }, [165] = { "Leatherwork" }, [171] = { "Alchem" },
@@ -1986,9 +2197,10 @@ local function BuildFolk()
     -- NPCs by flag and title
     for _, id in ipairs(lib.Npc.GetAllIds() or {}) do
         local f = lib.Npc.npcFlags(id) or 0
-        if f ~= 0 and Friendly(lib.Npc.friendlyToFaction(id)) then
+        if f ~= 0 and Friendly(SideGuess(id, lib.Npc.friendlyToFaction(id), OwnHas("Npc", id),
+                                        function() return lib.Npc.spawns(id) end)) then
             for key, flag in pairs(FLAG_KEYS) do
-                if flags[flag] and HasBit(f, flags[flag]) then
+                if flags[flag] and HasBit(f, flags[flag]) and TitleFits(key, id) then
                     -- stable masters are for hunters only
                     if key ~= "Stable Master" or classFile == "HUNTER" then Put(key, id) end
                 end

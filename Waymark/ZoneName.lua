@@ -15,7 +15,7 @@ local GetZonePVPInfo = GetZonePVPInfo or ns.GetZonePVPInfo
 
 local function Cfg() return ns.db.zoneName end
 
-local FRIZ = "Fonts\\FRIZQT__.TTF"  -- (the subzone's; the name's font: Fonts.lua)
+local FRIZ = ns.FONT_FRIZ  -- (the subzone's; the name's font: Fonts.lua)
 
 local INK = { 0.20, 0.12, 0.04 }
 local GOLD = { 1, 0.82, 0 }
@@ -470,7 +470,8 @@ function ns.MapFrameMenu()
     GameTooltip:Hide()
     local docked = ns.Docked and ns.Docked()
     local items = {
-        { (ns.MapIsBig and ns.MapIsBig()) and "normal size" or "big map",
+        -- (the world map, when that is the big map you use: Options.lua ns.MapKinds, 2026-11-22)
+        { (ns.MapIsBig and ns.MapIsBig()) and "normal size" or (ns.MapKinds and ns.MapKinds.World() and "world map") or "big map",
           function() if ns.ToggleBigMap then ns.ToggleBigMap() end end },
         { docked and "undock from the minimap" or "dock to the minimap",
           function() if ns.ToggleDock then ns.ToggleDock() end end },
@@ -478,8 +479,8 @@ function ns.MapFrameMenu()
         { ns.db.mapFrame.locked and "unlock the map" or "lock the map in place",
           function() if ns.ToggleMapLock then ns.ToggleMapLock() end end },
     }
-    if docked and ns.DockHasSpot and ns.DockHasSpot() then
-        items[#items + 1] = { "reset position", ns.DockSpotReset }
+    if not docked or (ns.DockHasSpot and ns.DockHasSpot()) or (ns.db.dock and ns.db.dock.bigTR) then
+        items[#items + 1] = { "reset position", ns.ResetMapPlace or ns.DockSpotReset }
     end
     -- (folding is the window's: not over the minimap)
     if not docked and ns.ToggleCollapse then

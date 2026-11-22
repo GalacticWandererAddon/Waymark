@@ -182,10 +182,6 @@ Over(ns.DEFAULTS, {
 		big = false,
 		bigH = 708,
 		bigSize = 360,
-		bigTR = {
-			764.33331298828125,
-			940.6671142578125,
-		},
 		bigW = 836,
 		buttonPos = {},
 		corner = false,
@@ -319,7 +315,6 @@ Over(ns.DEFAULTS, {
 	mapFrame = {
 		arrowSize = 0,
 		autoWidth = true,
-		big = false,
 		bigCorner = {
 			false,
 			true,

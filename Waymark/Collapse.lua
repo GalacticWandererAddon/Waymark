@@ -280,6 +280,11 @@ end
 
 local function Fold(map, on, instant)
     if not (map and map.ScrollContainer) then return end
+    -- (nothing folds the world map: a fight, the fold key, Making room, the ribbon. The user's pick, 2026-11-22)
+    if on and ns.WorldMapUp and ns.WorldMapUp() then return end
+    -- (nor the docked map: folded over the minimap, the minimap's own blips stayed over the bare ground. "Never
+    -- fold docked", the user 2026-11-22. Dock.lua opens a folded map as it docks)
+    if on and ns.Docked and ns.Docked() then return end
     ns.MapFace(map)
     if (collapsed and true or false) == on then return end
     collapsed = on
@@ -315,11 +320,19 @@ local function Fold(map, on, instant)
     end)
 end
 
+-- the world map opening over a folded map, or the map docking: open, at once, and no reason left to fold it again
+function ns.UnfoldForWorld()
+    wipe(auto)
+    wipe(waiting)
+    if collapsed then Fold(BattlefieldMapFrame, false, true) end
+end
+
 -- folded up under its header now (the header's menu says fold or unfold)
 function ns.MapFolded() return collapsed and true or false end
 
 -- the key: collapse, or open it again (also when a fight collapsed it)
 function ns.ToggleCollapse()
+    if ns.WorldMapUp and ns.WorldMapUp() then return end
     wipe(auto)
     wipe(waiting)
     Fold(BattlefieldMapFrame, not collapsed)
@@ -395,6 +408,12 @@ local function MapKey(down)
         return
     end
     if ns.Docked and ns.Docked() then mapKeyAt = nil return end
+    -- (the world map up: the map's key closes it as its X does, the small map as it was before; no glance)
+    if ns.WorldMapUp and ns.WorldMapUp() then
+        mapKeyAt = nil
+        if down and ns.CloseWorldMap then ns.CloseWorldMap() end
+        return
+    end
     if down then
         mapKeyAt = GetTime()
         ToggleMap()

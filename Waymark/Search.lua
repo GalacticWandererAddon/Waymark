@@ -288,7 +288,8 @@ local function ItemCandidates(e)
         local done = false
         if L and L.Npc then
             pcall(function()
-                if not Friendly(L.Npc.friendlyToFaction(npc)) then done = true return end
+                -- (ns.NpcSide: an NPC the data gives no side takes its town's, QuestData.lua)
+                if not Friendly(ns.NpcSide and ns.NpcSide(npc) or L.Npc.friendlyToFaction(npc)) then done = true return end
                 local name, sub = L.Npc.name(npc), L.Npc.subName(npc)
                 local function Put(m, x, y)
                     out[#out + 1] = { id = npc, name = name, sub = sub, map = m, x = x, y = y }
@@ -468,18 +469,18 @@ local function Pulse(self)
     local tex = self:CreateTexture(nil, "OVERLAY")
     tex:SetTexture(RING)
     tex:SetDesaturated(true)
-    tex:SetVertexColor(1, 0.82, 0)
+    tex:SetVertexColor(0.92, 0.76, 0.3)
     tex:SetPoint("CENTER")
     local g = tex:CreateAnimationGroup()
     local s = g:CreateAnimation("Scale")
-    if s.SetScaleTo then s:SetScaleFrom(1, 1) s:SetScaleTo(1.8, 1.8) else s:SetScale(1.8, 1.8) end
+    if s.SetScaleTo then s:SetScaleFrom(1, 1) s:SetScaleTo(1.5, 1.5) else s:SetScale(1.5, 1.5) end
     s:SetDuration(1.1)
     local a = g:CreateAnimation("Alpha")
-    if a.SetFromAlpha then a:SetFromAlpha(0.9) a:SetToAlpha(0) end
+    if a.SetFromAlpha then a:SetFromAlpha(0.55) a:SetToAlpha(0) end
     a:SetDuration(1.1)
     g:SetScript("OnFinished", function()
         self.pulses = (self.pulses or 0) + 1
-        if self.pulses < 3 then g:Play() else tex:Hide() end
+        if self.pulses < 2 then g:Play() else tex:Hide() end
     end)
     self.pulseTex, self.pulse = tex, g
 end
@@ -514,10 +515,12 @@ function BFISearchPinMixin:ApplyCurrentAlpha() self:SetAlpha(1) end
 
 function BFISearchPinMixin:OnAcquired(d, x, y)
     local hit = d.rank == 0
-    local size = hit and 34 or 26
+    -- (smaller and quieter, the user, 2026-11-22: "Find vendor marks. They huge, and loud." It was 34 and 26, full
+    -- gold, three pulses: a mark on the map, not a beacon. The closest in a muted gold, the next two pale)
+    local size = hit and 24 or 18
     self:SetSize(size, size)
     self.ring:SetSize(size, size)
-    if hit then self.ring:SetVertexColor(1, 0.82, 0, 1) else self.ring:SetVertexColor(0.95, 0.9, 0.75, 0.8) end
+    if hit then self.ring:SetVertexColor(0.92, 0.76, 0.3, 0.85) else self.ring:SetVertexColor(0.9, 0.85, 0.72, 0.55) end
     self.num:SetText(hit and "" or tostring(d.rank + 1))
     self.pulse:Stop()
     self.pulses = 0
@@ -812,7 +815,8 @@ end
 local function Place()
     if not button then return end
     local map = BattlefieldMapFrame
-    local on = ns.db.mapButtons ~= false and On() and not (ns.Docked and ns.Docked())
+    -- (the world map rests it: its log's one search box finds all of this too, ns.MapSearchFind. "Make it only 1")
+    local on = ns.db.mapButtons ~= false and On() and not (ns.Docked and ns.Docked()) and not (ns.WorldMapUp and ns.WorldMapUp())
     button:SetShown(on and true or false)
     if not ns.PlaceMoved(button) then
         button:ClearAllPoints()
@@ -896,6 +900,22 @@ local function Setup(map)
 end
 
 ns.RedrawSearch = Redraw
+
+-- For the world map's one search box (Lab/WorldPanel.lua): what the magnifier would list for q, by its groups'
+-- names, and the pick of one as the magnifier picks it (the ring, the bar under the map)
+function ns.MapSearchFind(q)
+    q = strtrim(q or ""):lower()
+    if q == "" then return {} end
+    local out = {}
+    for g, list in ipairs(Matches(q)) do
+        if #list > 0 then out[#out + 1] = { name = GROUPS[g], list = list } end
+    end
+    return out
+end
+function ns.MapSearchPick(e)
+    if not (e and box) then return end
+    Pick(e)
+end
 
 -- how far the brass switch of a cave's or a dungeon's map goes up to clear the magnifier, while it is in its
 -- own corner (Cave.lua, Dungeon.lua, on top of ns.CoordsCornerLift)

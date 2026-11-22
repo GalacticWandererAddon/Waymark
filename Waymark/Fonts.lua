@@ -11,20 +11,52 @@ local _, ns = ...
 
 ns.FONT_DEFAULT = "morpheus"
 local FRIZ = "Fonts\\FRIZQT__.TTF"
+local MORPHEUS, SKURRI, ARIALN = "Fonts\\MORPHEUS.ttf", "Fonts\\skurri.ttf", "Fonts\\ARIALN.TTF"
+local PAGETEXT, DAMAGE = "Fonts\\K_Pagetext.TTF", "Fonts\\K_Damage.TTF"
+local FELIPA = ns.MEDIA .. "Fonts\\Felipa-Regular.ttf"
+
+-- A client in another script. The files above hold Latin letters only, so on a
+-- Russian client a zone's or a quest's name came out as a row of empty squares
+-- (GitHub issue 2, 2026-11-18). There the game ships its own Cyrillic cuts of
+-- the same faces; each is tried on a hidden line first, and one that will not
+-- load gives way to the client's own text font (STANDARD_TEXT_FONT), which
+-- always has the client's letters. Korean and Chinese clients: that font for
+-- every face. Fonts another addon shares are left as the player picked them.
+local LOCALE = GetLocale and GetLocale() or "enUS"
+local OWN = STANDARD_TEXT_FONT
+local probe
+local function Loads(path)
+    if not (CreateFrame and UIParent) then return false end
+    probe = probe or CreateFrame("Frame"):CreateFontString()
+    if not pcall(probe.SetFont, probe, path, 12, "") then return false end
+    local now = probe:GetFont()
+    return now ~= nil and now:lower() == path:lower()
+end
+local function Cut(path) return Loads(path) and path or OWN end
+if LOCALE == "ruRU" and OWN then
+    FRIZ = OWN
+    MORPHEUS = Cut("Fonts\\MORPHEUS_CYR.TTF")
+    SKURRI = Cut("Fonts\\SKURRI_CYR.TTF")
+    PAGETEXT, DAMAGE, FELIPA = OWN, OWN, MORPHEUS   -- (no Cyrillic in these three)
+elseif (LOCALE == "koKR" or LOCALE == "zhCN" or LOCALE == "zhTW") and OWN then
+    FRIZ, MORPHEUS, SKURRI, ARIALN, PAGETEXT, DAMAGE, FELIPA = OWN, OWN, OWN, OWN, OWN, OWN, OWN
+end
+-- for the files that set one of the game's faces by name (Tracker.lua, ZoneName.lua)
+ns.FONT_FRIZ, ns.FONT_MORPHEUS, ns.FONT_ARIALN = FRIZ, MORPHEUS, ARIALN
 
 -- (key, name in the list, file)
 local GAME = {
-    { "morpheus", "Morpheus", "Fonts\\MORPHEUS.ttf" },   -- the classic zone and quest title font
+    { "morpheus", "Morpheus", MORPHEUS },   -- the classic zone and quest title font
     { "friz", "Friz Quadrata", FRIZ },
-    { "skurri", "Skurri", "Fonts\\skurri.ttf" },
-    { "arial", "Arial Narrow", "Fonts\\ARIALN.TTF" },
+    { "skurri", "Skurri", SKURRI },
+    { "arial", "Arial Narrow", ARIALN },
     { "2002", "2002", "Fonts\\2002.ttf" },
     { "2002b", "2002 Bold", "Fonts\\2002B.ttf" },
-    { "pagetext", "Page text", "Fonts\\K_Pagetext.TTF" },
-    { "damage", "Damage numbers", "Fonts\\K_Damage.TTF" },
+    { "pagetext", "Page text", PAGETEXT },
+    { "damage", "Damage numbers", DAMAGE },
     { "nimrod", "Nimrod", "Fonts\\NIM_____.ttf" },
     -- (Waymark's own: the book's title hand, the menus' font until 2026-11-10)
-    { "felipa", "Felipa (the book's hand)", ns.MEDIA .. "Fonts\\Felipa-Regular.ttf" },
+    { "felipa", "Felipa (the book's hand)", FELIPA },
 }
 ns.FONTS = {}
 for _, f in ipairs(GAME) do ns.FONTS[f[1]] = f[3] end

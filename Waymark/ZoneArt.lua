@@ -46,6 +46,7 @@ local T = Enum and Enum.UIMapType or {}
 local CAP = 1.8                    -- the continent's closest zoom: this much past where its zones open
 local VEIL = 0.6                   -- the base map's opacity at fadeFull (full with the areas)
 local GLOW_GONE = 0.8              -- closeness from which the zone hover glow is gone
+local TOP_FROM, TOP_GONE = 0.20, 0.36   -- closeness over which the far zoom's sea over the zone maps lets go
 local GLOW_FROM = 0.65             -- ... fading out from here
 local highlights = {}              -- the game's zone highlight pins (FixHighlight)
 
@@ -105,6 +106,15 @@ local FILL_KINDS = {   -- { kind, texture, tiles across } bottom up
 local LETTERS = {
     Forever = { [1414] = { 0.35, 0.48, 0.64, 0.54 }, [1415] = { 0.345, 0.545, 0.655, 0.65 } },
 }
+local OCEANS = { Forever = { [1414] = true, [1415] = true } }      -- (the continents with ocean<id>_0 and _1.blp)
+-- The game's own sea round our land, wherever a continent has its pictures (tools/sea_cover.py): the trial "The
+-- game's sea" of 2026-11-19, out of the Lab on 2026-11-22 for 1.3.2 (the user: "If we are to ship the continent,
+-- it needs the newer sea"). No switch: it is the continent's sea. Era has no pictures, so its old sea stays.
+-- Our own water and painted sea (cells w, s) give way to the game's sea and their copies in its colours (h, g).
+local function GameSea(cont)
+    local list = OCEANS[ns.MapEdition()]
+    return list and cont and list[cont] and true or false
+end
 -- The Paint brush's fills (CutEdit.lua, continents): our own sea in a few hues, lined
 -- up with the sea fill's tiling so it carries on seamlessly, and the hatching's dashes.
 -- { name, file, tiles across a continent, colour from the continent's tints }
@@ -171,6 +181,9 @@ end
 -- underground), far finer than the zones round them. Not drawn: the zone round
 -- each paints it small, as its own map does (its mask covers the city too).
 local CITIES = { [1453] = true, [1454] = true, [1455] = true, [1456] = true, [1457] = true, [1458] = true }
+-- (for the painted continents on the game's own world map, Lab\WorldArt.lua: the same data, laid once)
+ns.ZoneArtParts = { Fills = Fills, FILL_KINDS = FILL_KINDS, LETTERS = LETTERS, CITIES = CITIES, SHAPES = SHAPES,
+                    GameSea = GameSea }
 
 -- the zones on a continent and where each sits on it (0..1), cached
 local function ZonesOf(cont)
@@ -646,12 +659,22 @@ end
 -- the view on the continent (0-1), and half as much again round it so a pan doesn't
 -- show patches popping in; nil when it can't be told
 local VIEW_MARGIN = 0.25
+local lastX, lastY, lastFor  -- the view's last known centre, and on which map
 local function ViewBox()
     local sc = BattlefieldMapFrame and BattlefieldMapFrame.ScrollContainer
     local s = sc and sc:GetCanvasScale()
     local cw, ch = sc and sc.Child:GetWidth(), sc and sc.Child:GetHeight()
     if not (s and s > 0 and cw and cw > 0 and ch > 0) then return end
-    local x, y = sc.currentScrollX or 0.5, sc.currentScrollY or 0.5
+    -- (the game calls the map's OnCanvasScaleChanged at moments its scroll position is unset: toggling the quest
+    -- givers, every time (/bfi fillwatch, 2026-11-22). Taken as the map's middle, the box left out a zone at the
+    -- view's edge, Teldrassil at the top, and its map stood hidden till the once-a-second update: the user,
+    -- "toggeling questgivers fucks with the map rendering. It blinks as blurry". The last known centre
+    -- instead; never known: no box, every zone counts as in view)
+    local x, y = sc.currentScrollX or sc.targetScrollX, sc.currentScrollY or sc.targetScrollY
+    local id = BattlefieldMapFrame:GetMapID()
+    if x and y then lastX, lastY, lastFor = x, y, id
+    elseif lastFor == id then x, y = lastX, lastY end
+    if not (x and y) then return end
     local hw = sc:GetWidth() / s / cw / 2 * (1 + 2 * VIEW_MARGIN)
     local hh = sc:GetHeight() / s / ch / 2 * (1 + 2 * VIEW_MARGIN)
     return x - hw, y - hh, x + hw, y + hh
@@ -667,10 +690,12 @@ local patchesHidden = false  -- (ns.ZoneArtHidePatches)
 local CLONE_ART = ns.MEDIA .. "ZoneCloneArt\\"
 local bakedFrame          -- holds the cells' textures, for the continent bakedFor
 local bakedFor, bakedW
+local waterShare = 1      -- how much of our water shows (a trial holds it back at the far zoom): the painted sea's too
 local function BakedOf(cont)
     local all = ns.ZoneCloneArt and ns.ZoneCloneArt[ns.MapEdition()]
     return all and all[cont]
 end
+ns.ZoneArtParts.BakedOf, ns.ZoneArtParts.CLONE_ART = BakedOf, CLONE_ART
 
 local function LayBaked(cont, data)
     local cw, ch = HostSize()
@@ -679,7 +704,7 @@ local function LayBaked(cont, data)
     if not bakedFrame then
         bakedFrame = CreateFrame("Frame", nil, host)
         bakedFrame:SetAllPoints(host)
-        bakedFrame.tex = { f = {}, b = {}, l = {} }
+        bakedFrame.tex = { f = {}, b = {}, l = {}, s = {}, w = {}, g = {}, h = {}, x = {} }
         -- (the coast and land fills, l: their own frame, under the patches, faded with the
         -- sea fills rather than the zone maps)
         bakedFrame.fills = CreateFrame("Frame", nil, host)
@@ -687,15 +712,25 @@ local function LayBaked(cont, data)
     end
     bakedFor, bakedW = cont, cw
     local edition = ns.MapEdition()
-    for sub, layer in ipairs({ "b", "f", "l" }) do
-        local list, d = bakedFrame.tex[layer], data[layer]
-        local owner = layer == "l" and bakedFrame.fills or bakedFrame
+    -- (s: the Paint brush's strokes of our sea, over the patches, which are cut away under them)
+    -- (w: the land fills' open sea, over their land, with the fills' frame)
+    -- (g: s with the painted sea in the game's own, in its place while a trial holds our water back)
+    -- (h: w likewise)
+    -- (x: the grown sea, tools/sea_grow_stretch.py, finer than l (12288 across) and only where it lies; drawn
+    -- with l, in the fills' frame)
+    -- (only the sea's pair that shows: never loaded, the other's cells cost nothing)
+    local sea = GameSea(cont)
+    local unused = sea and { s = true, w = true } or { g = true, h = true }
+    for sub, layer in ipairs({ "b", "f", "l", "s", "w", "g", "h", "x" }) do
+        local list, d = bakedFrame.tex[layer], not unused[layer] and data[layer] or nil
+        local owner = (layer == "l" or layer == "w" or layer == "h" or layer == "x") and bakedFrame.fills or bakedFrame
         local n = 0
         for _, c in ipairs(d or {}) do
             n = n + 1
             local t = list[n]
             if not t then
-                t = owner:CreateTexture(nil, "ARTWORK", nil, sub)
+                -- (h under l: the fills' rows of hatching run on over the game's sea to their own ragged ends)
+                t = owner:CreateTexture(nil, "ARTWORK", nil, layer == "h" and 2 or layer == "x" and 3 or sub)
                 if t.SetSnapToPixelGrid then
                     t:SetSnapToPixelGrid(false)
                     t:SetTexelSnappingBias(0)
@@ -733,9 +768,16 @@ local function ShowBaked(cont, a, s, veil, detail, global, seaA)
     if bakedFrame:GetFrameLevel() ~= level + 1 then bakedFrame:SetFrameLevel(level + 1) end
     bakedFrame.fills:SetAlpha(seaA * global)
     bakedFrame.fills:SetShown(fillsOn and not patchesHidden)
+    for layer, k in pairs({ w = waterShare, h = 1 - waterShare }) do
+        local list = bakedFrame.tex[layer]
+        for i = 1, list.n or 0 do
+            list[i]:SetAlpha(k)
+            list[i]:SetShown(k > 0.01)
+        end
+    end
     if not on then bakedFrame:Hide() return end
     bakedFrame:SetAlpha(s * global)
-    for layer, k in pairs({ b = veil * (1 - detail), f = veil * detail }) do
+    for layer, k in pairs({ b = veil * (1 - detail), f = veil * detail, s = veil * waterShare, g = veil * (1 - waterShare) }) do
         local list = bakedFrame.tex[layer]
         for i = 1, list.n or 0 do
             list[i]:SetAlpha(k)
@@ -862,6 +904,7 @@ end
 
 -- a continent's median zone width (share of the continent), for the sea's fade
 local SEA_REF = 0.0986   -- (the Eastern Kingdoms' (Forever): its sea's timing is the one kept)
+local ART_REF = 0.14     -- (Kalimdor's: the zone maps' timing is the one kept)
 local medianWidth = {}
 local function MedianWidth(id, list)
     if not medianWidth[id] then
@@ -953,6 +996,7 @@ end
 -- game swaps in is caught on the next update.
 local smoothed = setmetatable({}, { __mode = "k" })  -- [texture] = the file it was smoothed with
 local function SmoothContinent(map)
+    local waiting = false  -- (true: a tile was still loading, to be smoothed on a later call: the tick's)
     for _, layer in ipairs({ map:GetCanvas():GetChildren() }) do
         if layer.layerIndex ~= nil and not layer.bfiOwn then
             for _, r in ipairs({ layer:GetRegions() }) do
@@ -961,6 +1005,7 @@ local function SmoothContinent(map)
                     -- (a tile still loading, as on the first open after a reload, is left
                     -- till it has: set again mid-load, the continent flashed empty)
                     local loading = r.IsObjectLoaded and not r:IsObjectLoaded()
+                    if fid and smoothed[r] ~= fid and loading then waiting = true end
                     if fid and smoothed[r] ~= fid and not loading then
                         local c = { r:GetTexCoord() }  -- (its crop kept)
                         r:SetTexture(fid, nil, nil, "TRILINEAR")
@@ -972,6 +1017,7 @@ local function SmoothContinent(map)
             end
         end
     end
+    return waiting
 end
 
 -- Whether a laid zone would be laid differently now: Build's own test without its string and the
@@ -1018,6 +1064,19 @@ end
 
 local warmFrame           -- (Warm's, below; its count goes into the first-open trace)
 local traced = {}         -- [continent] = true: its first showing this session is written down for /bfi check
+-- What the last Update saw, for the tick's watch (below): the map, its view (false: no view yet), and the
+-- game's continent tiles still loading (SmoothContinent leaves those for a later call). Leaving a zone map
+-- for the continent, the view is placed after the calls that bring us here, by ways that tell us nothing;
+-- the last Update had seen another view and nothing called again till the tick's once-a-second round.
+-- For that second the map showed the game's own continent art, still blocky, with none of ours on it.
+-- The user, 2026-11-21: "the oldstyle texture blinking into view for a sec".
+local seenId, seenHw, seenHh, smoothWait
+-- The far zoom's picture after a map change: held back till two frames have seen the same view
+local farWait, farHw, farN, farAt = false, nil, 0, nil
+local function HideFar()
+    local list = bakedFrame and bakedFrame.fills.sea
+    for _, tex in ipairs(list or {}) do tex:Hide() end
+end
 function Update()
     local map = BattlefieldMapFrame
     if not (host and map) then return end
@@ -1025,14 +1084,28 @@ function Update()
     local id = map:GetMapID()
     if not (c.zoneArt and not ns.Perf("art") and map:IsVisible() and IsOverview(id)) then
         host:Hide()
+        HideFar()
+        seenId, seenHw = nil, nil
         GlowAlpha(1)
         return
     end
-    ns.Safe("ZoneArt SmoothContinent", SmoothContinent, map)
+    local _, loading = ns.Safe("ZoneArt SmoothContinent", SmoothContinent, map)
+    smoothWait = loading == true
     local t0 = debugprofilestop()  -- (the pieces timed for /bfi check's frame cost)
     local sc = map.ScrollContainer
     local hw, hh = ViewHalf(sc)
-    if not hw then host:Hide() return end
+    -- (back on a continent, or another one: the far picture waits for a steady view)
+    if not host:IsShown() or seenId ~= id then farWait, farHw, farN, farAt = true, nil, 0, nil end
+    seenId, seenHw, seenHh = id, hw or false, hh
+    if not hw then host:Hide() HideFar() return end
+    if farWait then
+        if not farHw or math.abs(hw - farHw) > hw * 1e-4 then
+            farHw, farN, farAt = hw, 0, GetTime()
+        elseif GetTime() ~= farAt then
+            farN, farAt = farN + 1, GetTime()
+        end
+        if farN >= 2 then farWait = false end
+    end
     local level = ns.ArtLevel(map, 0)
     if host:GetFrameLevel() ~= level then host:SetFrameLevel(level) end
     local list = ZonesOf(id)
@@ -1042,8 +1115,13 @@ function Update()
         end
         shownFor = id
     end
-    local near = Median(list, hw, hh)
-    GlowAlpha(1 - Smooth(near, GLOW_FROM, GLOW_GONE))
+    local rawNear = Median(list, hw, hh)
+    GlowAlpha(1 - Smooth(rawNear, GLOW_FROM, GLOW_GONE))
+    -- (the zone maps and their detail come in by the zoom, as the sea does, not by the zones' size: the Eastern
+    -- Kingdoms' zones are narrower on their continent (median 0.099 against Kalimdor's 0.14), so zoomed all the
+    -- way out they never reached the detail Kalimdor shows there. The user, 2026-11-19: "EK is never actually
+    -- shown full detail when zoomed all the way out ... it works fine on kalimdor". Kalimdor's timing is kept)
+    local near = rawNear * math.max(1, ART_REF / MedianWidth(id, list))
     local from, full = c.fadeFrom or 0.1, c.fadeFull or 0.25
     -- A crossfade, so colour never drops out: the area pieces rise evenly from
     -- fadeFrom to detailFull, and the base map comes in only to VEIL by
@@ -1111,6 +1189,15 @@ function Update()
             z.pieces:SetAlpha(z.mask and detail * veil or veil)
             z.frame:Show()
         elseif z.frame then
+            -- (for /bfi fillwatch: why a shown zone went, the view it was measured against and who asked)
+            if z.frame:IsShown() and ns.ZoneArtWatching then
+                local sc = map.ScrollContainer
+                z.lastHide = string.format("hid t%.3f inView %s wait %s box %.3f,%.3f-%.3f,%.3f zone %.3f,%.3f-%.3f,%.3f"
+                    .. " scroll %.3f,%.3f sc %dx%d child %dx%d by %s", GetTime(), tostring(inView), tostring(wait),
+                    vl or -1, vt or -1, vr or -1, vb or -1, z.l, z.t, z.r, z.b, sc.currentScrollX or -1,
+                    sc.currentScrollY or -1, sc:GetWidth(), sc:GetHeight(), sc.Child:GetWidth(), sc.Child:GetHeight(),
+                    (debugstack and debugstack(3, 3, 0) or "?"):gsub("Interface/AddOns/[^/]+/", ""):gsub("\n", " < "))
+            end
             z.frame:Hide()
         end
     end
@@ -1125,8 +1212,17 @@ function Update()
     -- the baked coast and land fills come with them. By the zoom, not the zones' size:
     -- Kalimdor's zones are wider on their continent (median 0.14 against 0.099), so by
     -- `near` its sea came in a good step sooner than the Eastern Kingdoms')
-    local seaNear = near * SEA_REF / MedianWidth(id, list)
+    local seaNear = rawNear * SEA_REF / MedianWidth(id, list)
     local seaA = Smooth(seaNear, from * 0.6, (from + full) / 2)
+    -- The game's sea (GameSea, above; the user, 2026-11-19: "Seafill being soo ugly", then, of the
+    -- zone maps' sea against ours at the middle zooms, "Game's sea, sharpened"): our water, its lettering and the
+    -- painted and filled sea stay away at every zoom, and the continent's own sea lies there instead, a sharpened
+    -- copy with wave lines round our coast (tools/sea_cover.py; the ocean textures below).
+    local waterA = seaA
+    local ocean = GameSea(id)
+    -- (our own fills stay on under the picture: it has a hole where our land is, so what shows between two zone
+    -- maps inland is what showed before the trial. The user, 2026-11-20: "also affect inland")
+    waterShare = ocean and 0 or 1
     host.near, host.a, host.seaA, host.baked = near, a, seaA, bakedFrame  -- (for /bfi fillwatch)
     ShowPatches(id, a, s, veil, detail, global, seaA)
     ns.CostAdd("ZoneArt patches", t0)
@@ -1135,7 +1231,7 @@ function Update()
     local masks, tint = Fills(id)
     for _, f in ipairs(host.fills) do
         local file = masks and masks[f.kind]
-        local fa = (f.kind == "sea" or f.kind == "cool") and seaA or a
+        local fa = (f.kind == "sea" or f.kind == "cool") and waterA or a
         if file and fa > 0.01 then
             if f.maskFor ~= file then
                 f.mask:SetTexture(file, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
@@ -1165,6 +1261,8 @@ function Update()
     end
     local edition = ns.MapEdition()
     local box = LETTERS[edition] and LETTERS[edition][id]
+    -- (with the sea's strength, the trial's held-back water or not: the patch is the continent's own art with
+    -- the name's strokes filled, and without it the name stood half hidden behind our land)
     if box and seaA > 0.01 then
         local cw, ch = HostSize()
         if host.lettersFor ~= edition .. id .. "|" .. cw then
@@ -1178,6 +1276,55 @@ function Update()
         host.letters:Show()
     else
         host.letters:Hide()
+    end
+    -- (and the whole continent as one picture over the zone maps, zoomed out: a zone map drawn a fifth of its size
+    -- has wave lines and place names finer than a pixel, and the game's zone art has no smaller levels, so they
+    -- shimmer and crawl as the map is zoomed. The user, 2026-11-20, of Silverpine: "They distort, kinda scroll
+    -- when i zoom inwards"; 2026-11-21: "this happend for overlaying names/text on the zones too". The picture is
+    -- our own map as laid here, shrunk ahead of time (tools/sea_trial_render.py --bake), every zone explored.
+    -- Its own switch on the test bench, "The far zoom, steady"; only with the trial's sea, which it is drawn with.
+    -- On the fills' frame, under their cells)
+    local topFrame = bakedFrame and bakedFrame.fills
+    if topFrame then
+        local steady = ns.LabCfg and ns.LabCfg("farZoom")
+        -- (not in the first frames on a continent: farWait, above; the tick calls again till the view holds)
+        local k = not farWait and ocean and seaA > 0.01 and steady and steady.on
+            and (1 - Smooth(rawNear, TOP_FROM, TOP_GONE)) or 0
+        topFrame.sea = topFrame.sea or {}
+        for i = 1, 2 do
+            local tex = topFrame.sea[i]
+            if k > 0.01 then
+                if not tex then
+                    tex = topFrame:CreateTexture(nil, "BACKGROUND")
+                    tex:SetPoint("TOPLEFT", host, i == 1 and "TOPLEFT" or "TOP")
+                    tex:SetPoint("BOTTOMRIGHT", host, i == 1 and "BOTTOM" or "BOTTOMRIGHT")
+                    topFrame.sea[i] = tex
+                end
+                local file = SHAPES .. edition .. "\\far" .. id .. "_" .. (i - 1)
+                if tex.file ~= file then
+                    tex:SetTexture(file, "CLAMP", "CLAMP", "TRILINEAR")
+                    tex.file = file
+                end
+                tex:SetAlpha(k)
+                tex:Show()
+            elseif tex then
+                tex:Hide()
+            end
+        end
+    end
+    -- (the game's sea: the continent's whole sea in two halves, under every zone's frame)
+    for k, tex in ipairs(host.ocean) do
+        if ocean and seaA > 0.01 then
+            local file = SHAPES .. edition .. "\\ocean" .. id .. "_" .. (k - 1)
+            if tex.file ~= file then
+                tex:SetTexture(file, "CLAMP", "CLAMP", "TRILINEAR")
+                tex.file = file
+            end
+            tex:SetAlpha(seaA * global)
+            tex:Show()
+        else
+            tex:Hide()
+        end
     end
     host:Show()
     ns.CostAdd("ZoneArt fills", t0)
@@ -1196,6 +1343,32 @@ function ns.ZoneArtFade()
     return fadeNow
 end
 
+-- The game's place icons (its AreaPOI pins: the cities and towns on a continent) step aside while the painted
+-- zones show: they sat on our art as small houses over Orgrimmar and Thunder Bluff, the user 2026-11-22, "Can we
+-- remove these icons when our map art is shown on continent?". Waymark's own map only: the game's world map is
+-- never written to (WorldArt.lua). Set when the art comes or goes (the tick) and when the game lays them again
+-- (BattlefieldInfo.lua's GamePinsWait).
+function ns.ZoneArtPlaces()
+    local map = BattlefieldMapFrame
+    if not (map and ns.EachPin and host) then return end
+    local a = (host:IsShown() and shownFor) and 0 or 1
+    -- (its mouse too, so an unseen icon brings up no tooltip: the release check. Not in a fight, as the game's own
+    -- pins' mouse settings are kept out of fights here; what it had is given back)
+    local fight = InCombatLockdown()
+    ns.EachPin(map, function(pin, template)
+        if not tostring(template):find("AreaPOI", 1, true) then return end
+        if pin:GetAlpha() ~= a then pin:SetAlpha(a) end
+        if fight then return end
+        if a == 0 and pin.bfiMouse == nil then
+            pin.bfiMouse = pin:IsMouseEnabled() and true or false
+            pin:EnableMouse(false)
+        elseif a == 1 and pin.bfiMouse ~= nil then
+            pin:EnableMouse(pin.bfiMouse)
+            pin.bfiMouse = nil
+        end
+    end)
+end
+
 function ns.ZoneArtTop()
     if not (host and host:IsShown() and shownFor) then return end
     local top = host:GetFrameLevel()
@@ -1207,6 +1380,33 @@ function ns.ZoneArtTop()
     end
     if bakedFrame and bakedFrame:IsShown() then top = math.max(top, bakedFrame:GetFrameLevel()) end
     return top
+end
+
+-- for /bfi fillwatch (DevBar.lua): one zone's frame as it stands, and the levels round it
+function ns.ZoneArtZoneState(zid)
+    if not host then return "no host" end
+    local own
+    for _, z in ipairs(shownFor and zones[shownFor] or {}) do if z.id == zid then own = z end end
+    local map = BattlefieldMapFrame
+    local parts = { string.format("hostLv %d artLv %s", host:GetFrameLevel(), tostring(map and ns.ArtLevel(map, 0))) }
+    if bakedFrame then
+        parts[#parts + 1] = string.format("cellsLv %d fillsLv %d", bakedFrame:GetFrameLevel(), bakedFrame.fills:GetFrameLevel())
+    end
+    if not (own and own.frame) then
+        parts[#parts + 1] = "zone " .. tostring(zid) .. " not laid"
+        return table.concat(parts, " ")
+    end
+    local loaded = 0
+    for i = 1, own.usedPieces or 0 do
+        local t = own.pieceTex[i]
+        if not (t.IsObjectLoaded and not t:IsObjectLoaded()) then loaded = loaded + 1 end
+    end
+    parts[#parts + 1] = string.format("zone %d %s a%.2f lv %d/%d keys %d built %s base %d pieces %d/%d loaded",
+        zid, own.frame:IsVisible() and "on" or "off", own.frame:GetAlpha(), own.frame:GetFrameLevel(),
+        own.pieces:GetFrameLevel(), own.keysN or -1, tostring(own.builtFor), own.usedBase or 0, loaded,
+        own.usedPieces or 0)
+    if own.lastHide then parts[#parts + 1] = own.lastHide end
+    return table.concat(parts, " ")
 end
 
 -- after a setting change: lay everything out again
@@ -1349,7 +1549,7 @@ local function WarmList(cont)
     for _, f in pairs(Fills(cont) or {}) do Add(f) end
     Add(PAPER) Add(SEA) Add(SHAPES .. "Hatch1") Add(SHAPES .. "Hatch2")
     local data, edition = BakedOf(cont), ns.MapEdition()
-    for _, layer in ipairs({ "b", "f", "l" }) do
+    for _, layer in ipairs({ "b", "f", "l", "x" }) do
         for _, c in ipairs(data and data[layer] or {}) do
             local f = CLONE_ART .. edition .. "\\" .. cont .. "_" .. layer .. "_" .. c[1] .. "_" .. c[2]
             warmCell[f] = true
@@ -1480,6 +1680,14 @@ function ns.SetupZoneArt(map)
     -- (under the fills: it stands in for the continent's own art)
     host.letters = host:CreateTexture(nil, "BACKGROUND", nil, -1)
     host.letters:Hide()
+    host.ocean = {}       -- (over the fills, under every zone's frame: west half, east half)
+    for k = 1, 2 do
+        local tex = host:CreateTexture(nil, "BACKGROUND", nil, 7)
+        tex:SetPoint("TOPLEFT", host, k == 1 and "TOPLEFT" or "TOP")
+        tex:SetPoint("BOTTOMRIGHT", host, k == 1 and "BOTTOM" or "BOTTOMRIGHT")
+        tex:Hide()
+        host.ocean[k] = tex
+    end
 
     if map.OnMapChanged then hooksecurefunc(map, "OnMapChanged", function() ns.Safe("ZoneArt", Update) end) end
     if map.OnCanvasScaleChanged then
@@ -1513,9 +1721,38 @@ function ns.SetupZoneArt(map)
     -- and once the view has moved a good way (the patches off it are hidden)
     local elapsed, seenX, seenY = 0, nil, nil
     local ticker = ns.TimedFrame("ZoneArt tick")
+    local placesOn   -- (the art shown when the place icons were last set: ns.ZoneArtPlaces)
     ticker:SetScript("OnUpdate", function(_, dt)
         if queue[1] then BuildQueued() end
+        local on = host:IsShown() and shownFor and true or false
+        if on ~= placesOn then
+            placesOn = on
+            ns.Safe("ZoneArt places", ns.ZoneArtPlaces)
+        end
         local sc = map.ScrollContainer
+        -- The watch (seenId, above): every frame, the view and the map against what the last Update saw.
+        -- A few sums a frame; Update itself only when they differ, the far picture is waiting for a steady
+        -- view, or the game's tiles were still loading (those smoothed alone, not the whole Update).
+        if sc and map:IsVisible() and (host:IsShown() or seenHw == false) then
+            local hw, hh = ViewHalf(sc)
+            local moved = map:GetMapID() ~= seenId
+            if hw and seenHw then
+                moved = moved or math.abs(hw - seenHw) > hw * 1e-4 or math.abs(hh - seenHh) > hh * 1e-4
+            else
+                moved = moved or (hw and true or false) ~= (seenHw and true or false)
+            end
+            if moved or (farWait and seenHw) then
+                ns.Safe("ZoneArt", Update)
+                -- (and the place icons again while the art shows: a zoom may set a pin's alpha afresh)
+                if placesOn then ns.Safe("ZoneArt places", ns.ZoneArtPlaces) end
+                elapsed = 0
+                return
+            end
+            if smoothWait then
+                local _, loading = ns.Safe("ZoneArt SmoothContinent", SmoothContinent, map)
+                smoothWait = loading == true
+            end
+        end
         if host:IsShown() and sc and sc.currentScrollX then
             local l, t, r, b = ViewBox()
             local step = l and (r - l) * VIEW_MARGIN / (1 + 2 * VIEW_MARGIN) / 2

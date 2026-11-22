@@ -55,6 +55,7 @@ local function Wanted()
     local c = ns.db and Cfg()
     if not (c and c.on and BattlefieldMapFrame) then return false end
     if ns.Docked and ns.Docked() then return false end
+    if ns.WorldMapUp and ns.WorldMapUp() then return false end   -- (the world map takes its clicks: the switch's picks)
     if ns.InkDrawing and ns.InkDrawing() then return false end  -- (drawing on it: Ink.lua)
     if ns.CutEditing and ns.CutEditing() then return false end  -- (the outline editor: CutEdit.lua)
     if c.combat and not inCombat then return false end  -- (only in combat: the map yours otherwise)

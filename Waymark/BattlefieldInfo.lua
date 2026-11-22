@@ -201,7 +201,7 @@ local DEFAULTS = {
     -- (opacity isn't defaulted: it starts from Blizzard's own value, MapControls)
     -- frameAlpha: the border, header and buttons (ns.FrameAlpha)
     mapFrame   = { unlocked = false, locked = false, center = false, arrowSize = 0, groupSize = 0, pos = nil,
-                   hideTab = false, frameAlpha = 1,
+                   hideTab = false, frameAlpha = 1, gripCorner = "BR", gripAlpha = 1,
                    -- width/height: your size from the corner grip (nil = the game's);
                    -- autoWidth: auto shape, part of the zone's shape at about your
                    -- size (shapeFollow 0..1 of the way; shapeGrow: up to that much
@@ -238,7 +238,12 @@ local DEFAULTS = {
     -- The lie of the land (Relief.lua): the map shaded from the game's real heights. Players set on, hour, cast
     -- and shadeAlpha (The map's look); the rest are its own switches (/relief, the test bench)
     relief     = { on = true, shade = true, shadeAlpha = 100, hour = true, cast = true, continent = true, rim = false, rimAlpha = 100,
-                   ink = false, inkAlpha = 85, edition = 5 },
+                   ink = false, inkAlpha = 85, edition = 5,
+                   -- (WorldRelief.lua: the same depth on the game's own world map, and the unexplored land there)
+                   world = false, worldUnseen = true },
+    -- Waymark's painted continents on the game's own world map (WorldArt.lua; The map's look, off as it comes).
+    -- night: the hour's colours there too, where the map follows the hour (/worldart night, the test bench)
+    worldArt   = { on = false, night = true },
     -- Frames and themes (Frames.lua, FrameSets.lua): a look for the map's border and header, the tracker, tooltips,
     -- the quest log and the settings window. "keep" leaves a part as Waymark has it: nothing changes until chosen
     frames     = { theme = "none", border = "keep", fold = false, header = "keep", tracker = "keep", tip = "keep", log = "keep",
@@ -362,7 +367,7 @@ local DEFAULTS = {
     -- fadeOut: fade to fadeAlpha (%) while the mouse isn't on the map
     -- order: the buttons' ids from the starting end (empty: as TOGGLES has them)
     toggles    = { style = "square", size = 18, where = "topright", side = "inside", fadeOut = false, fadeAlpha = 0,
-                   fadeClose = false, saveToProfile = true, order = {},
+                   fadeClose = false, hideRed = false, redScale = 1, saveToProfile = true, order = {},
                    list = { questie = true, townsfolk = true, rares = true, gather = true,
                             zoom = true, detail = true, tracker = true, ink = true, quill = true, book = true } },
     -- saved setups by name (Setups.lua)
@@ -1306,6 +1311,12 @@ local function GamePinsWait(map)
                     return
                 end
                 self.bfiDrawnMap = map:GetMapID()
+                -- (the place icons, laid again: under our painted continent they step aside, ZoneArt.lua)
+                if name == "AreaPOIDataProviderMixin" or name == "AreaPOIEventDataProviderMixin" then
+                    orig(self, ...)
+                    if ns.ZoneArtPlaces then ns.Safe("ZoneArt places", ns.ZoneArtPlaces) end
+                    return
+                end
                 return orig(self, ...)
             end
         end
@@ -1447,26 +1458,121 @@ local function SetupResize(map)
     grip:SetSize(16, 16)
     grip:SetPoint("BOTTOMRIGHT", map, "BOTTOMRIGHT", -2, 2)
     ns.debugFrames.grip = grip
-    grip:SetFrameStrata("DIALOG")
+    -- The grip's corner (mapFrame.gripCorner: "BR", "BL", "TR", "TL"; asked on CurseForge, 2026-11-17: a map
+    -- locked in the screen's top right is pulled out by its bottom-left corner). Its art is turned to point
+    -- out of its corner, the drag grows the map toward it, and the corner opposite stands still (MapControls'
+    -- SetShape). Each place remembers its own corner: the window's is mapFrame.gripCorner, the minimap's
+    -- place's is dock.gripCorner (bottom left until chosen: the square grew from its top right), so going
+    -- from one to the other needs no visit to the settings (the user, 2026-11-19). Docked, Dock.lua turns
+    -- the drag into the square's size and keeps the opposite corner still (DockResize, ResizeBig).
+    -- mapFrame.gripAlpha: how strongly the grip is drawn, on its art so no fader undoes it.
+    local CORNERS = { BR = { "BOTTOMRIGHT", -2, 2, 1, 1 }, BL = { "BOTTOMLEFT", 2, 2, -1, 1 },
+                      TR = { "TOPRIGHT", -2, -2, 1, -1 }, TL = { "TOPLEFT", 2, -2, -1, -1 } }
+    local function Corner()
+        local k
+        if ns.Docked and ns.Docked() then
+            k = ns.db and ns.db.dock and ns.db.dock.gripCorner
+            if not CORNERS[k] then k = "BL" end
+        else
+            k = ns.db and ns.db.mapFrame and ns.db.mapFrame.gripCorner
+            if not CORNERS[k] then k = "BR" end
+        end
+        return CORNERS[k], k
+    end
+    -- the corner of the place the map is in now, and setting it ("Resize from", Options.lua)
+    function ns.GripCorner() return select(2, Corner()) end
+    function ns.SetGripCorner(k)
+        if not (CORNERS[k] and ns.db) then return end
+        if ns.Docked and ns.Docked() then ns.db.dock.gripCorner = k else ns.db.mapFrame.gripCorner = k end
+        ns.PlaceMapGrip()
+    end
+    -- In the corner of the frame that is drawn, not of the map inside it: a frame set's border and our own
+    -- border styles reach out past the map, and the grip sat short of their corner ("kinda missing the
+    -- corners of the frame. Its too far in from it", the user 2026-11-21). The game's own border: as before.
+    local function GripHome()
+        local set, own = ns.debugFrames.labBorder, ns.debugFrames.border
+        if set and set:IsShown() then return set, 0 end
+        if own and own:IsShown() and ns.BorderOutset and ns.BorderOutset() then return own, 1 end
+        return map, 2
+    end
+    function ns.PlaceMapGrip()
+        local c = Corner()
+        local alpha = ns.db and ns.db.mapFrame and tonumber(ns.db.mapFrame.gripAlpha) or 1
+        local home, inset = GripHome()
+        grip:ClearAllPoints()
+        grip:SetPoint(c[1], home, c[1], c[2] / 2 * inset, c[3] / 2 * inset)
+        local l, r = c[4] > 0 and 0 or 1, c[4] > 0 and 1 or 0
+        local t, b = c[5] > 0 and 0 or 1, c[5] > 0 and 1 or 0
+        for _, tex in ipairs({ grip:GetNormalTexture(), grip:GetPushedTexture(), grip:GetHighlightTexture() }) do
+            if tex then
+                tex:SetTexCoord(l, r, t, b)
+                tex:SetAlpha(alpha)
+            end
+        end
+    end
+    -- The grip lies over all of the map: on the DIALOG layer while the map is on a lower one. A layer set on
+    -- the map goes to its children too, the grip with them, and it then lay under the map's own picture at its
+    -- low level: gone after the map had been raised and put back (our map in the game's map window, a Lab
+    -- trial scrapped 2026-11-22), "almost not findable", the user 2026-11-19. So its layer is set again whenever the map's
+    -- is; with the map on DIALOG or higher it shares the map's layer at a level over everything on it.
+    local HIGH_STRATA = { DIALOG = true, FULLSCREEN = true, FULLSCREEN_DIALOG = true, TOOLTIP = true }
+    local gripLevel
+    local function Lift()
+        local s = map:GetFrameStrata()
+        local shared = HIGH_STRATA[s]
+        local want = shared and s or "DIALOG"
+        if grip:GetFrameStrata() ~= want then grip:SetFrameStrata(want) end
+        gripLevel = gripLevel or grip:GetFrameLevel()
+        local level = shared and 9000 or math.max(gripLevel, map:GetFrameLevel() + 1)
+        if grip:GetFrameLevel() ~= level then grip:SetFrameLevel(level) end
+    end
+    Lift()
+    hooksecurefunc(map, "SetFrameStrata", Lift)
+    hooksecurefunc(map, "SetFrameLevel", Lift)
+    map:HookScript("OnShow", Lift)
+    -- A border changed or came back: the grip goes to its corner again. Not while something else holds the
+    -- grip (the Lab's world window puts it in its own corner and gives it back through PlaceMapGrip).
+    function ns.GripFollowBorder()
+        local _, at = grip:GetPoint(1)
+        if at and at ~= map and at ~= ns.debugFrames.labBorder and at ~= ns.debugFrames.border then return end
+        if at ~= GripHome() then ns.PlaceMapGrip() end
+    end
+    map:HookScript("OnShow", function() C_Timer.After(0, ns.GripFollowBorder) end)
     grip:SetHitRectInsets(-7, -7, -7, -7)  -- (a miss lands on the map and pans it: an easier target)
     grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
     grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
     grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    ns.PlaceMapGrip()
 
     -- drag: the map's width and height (MapControls, Shape), nothing else (the
     -- scale is Size & shape's "Map scale" slider). Right-click: the game's size.
-    local startX, startY, startW, startH, sizing
+    local startX, startY, startW, startH, sizing, signX, signY
     grip:SetScript("OnMouseDown", function(_, button)
         if button ~= "LeftButton" then return end
         sizing = ns.SetMapSize ~= nil
         if not sizing then return end
+        local c, name = Corner()
+        signX, signY = c[4], c[5]
+        -- (docked: Dock.lua reads the cursor's way itself, from the size a bottom-right grip would give)
+        if ns.Docked and ns.Docked() then
+            signX, signY = 1, 1
+        elseif name ~= "BR" and ns.EnsureMapPlaced then
+            ns.EnsureMapPlaced()
+        end
         startX, startY = GetCursorPosition()
         -- (from the size it is now, so the corner stays under the cursor)
         startW, startH = map:GetWidth(), map:GetHeight()
         grip:SetScript("OnUpdate", function()
             local x, y = GetCursorPosition()
             local s = map:GetEffectiveScale()
-            ns.SetMapSize(startW + (x - startX) / s, startH + (startY - y) / s, true)
+            local w, h = startW + signX * (x - startX) / s, startH + signY * (startY - y) / s
+            -- (Shift held: the shape it had, only bigger or smaller; the drag's two ways meet halfway. The user,
+            -- 2026-11-22: "holding shift while dragging it, changes only the size in that aspect, not freesize")
+            if IsShiftKeyDown() and startH > 0 then
+                local k = (w / startW + h / startH) / 2
+                w, h = startW * k, startH * k
+            end
+            ns.SetMapSize(w, h, true)
         end)
     end)
     grip:SetScript("OnMouseUp", function(_, button)
@@ -1482,6 +1588,13 @@ local function SetupResize(map)
     grip:SetScript("OnEnter", function()
         GameTooltip:SetOwner(grip, "ANCHOR_TOPLEFT")
         GameTooltip:AddLine("Resize")
+        -- (the world map has no auto shape: one shape of its own, Shift keeps it, a right-click sets the zone maps'
+        -- own 3:2 at the height it has. The user, 2026-11-22, of the old lines on it: "Do we need to update this")
+        if ns.WorldMapUp and ns.WorldMapUp() then
+            ns.Hints({ { "Drag", "size and shape" }, { "Shift-drag", "size, the same shape" }, { "Right-click", "the map's own shape" } })
+            GameTooltip:Show()
+            return
+        end
         local auto = ns.db.mapFrame.autoWidth and ns.db.mapFrame.rememberShapes
         if auto then GameTooltip:AddLine("Auto shape: dragging saves the shape for this zone.", 1, 1, 1, true) end
         ns.Hints({ { "Drag", "size and shape" }, { "Right-click", auto and "this zone automatic again" or "default aspect" } })
@@ -1560,6 +1673,7 @@ function ns.OnSettingChanged(group, key)
         if ns.RedrawTownsfolk then ns.RedrawTownsfolk() end
     elseif group == "mapFrame" or group == "zoom" then
         if ns.ApplyMapControls then ns.ApplyMapControls(group) end
+        if (key == "gripCorner" or key == "gripAlpha") and ns.PlaceMapGrip then ns.PlaceMapGrip() end
     elseif group == "detail" then
         if ns.UpdateDetail then ns.UpdateDetail(true) end
         if key == "sharpArt" then
@@ -1613,6 +1727,8 @@ function ns.OnSettingChanged(group, key)
     elseif group == "border" then
         if ns.UpdateStyle then ns.UpdateStyle() end
     elseif group == "toggles" then
+        if key == "hideRed" and ns.ApplyRedButtons then ns.ApplyRedButtons() end
+        if key == "redScale" and ns.ApplyChromeScale then ns.ApplyChromeScale() end
         if ns.LayoutToggles then ns.LayoutToggles() end
     elseif group == "questie" and key == "iconSet" then
         if ns.RedrawQuestie then ns.RedrawQuestie() end

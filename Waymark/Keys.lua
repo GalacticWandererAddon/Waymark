@@ -28,6 +28,9 @@ local ACTIONS = {
     collapse = { "Fold the map", function(state) if ns.CollapseKey then ns.CollapseKey(state) end end, upToo = true },
     ink      = { "Draw on the map", function() if ns.ToggleInkBar then ns.ToggleInkBar() end end },
     book     = { "Open the book", function() if ns.ToggleNotebook then ns.ToggleNotebook() end end },
+    -- (Waymark's quest window, as the tracker header's menu opens it: on the quest last shown, or closed; the game's
+    -- log where ours is off. The user, 2026-11-22: "Just add one line in the keybinds list")
+    questlog = { "Waymark's quest log", function() if ns.QuestLogFromMenu then ns.QuestLogFromMenu() end end },
 }
 -- (names fit the game's Keybindings column, about 25 letters; each key
 -- toggles, a second press puts it back)
@@ -65,10 +68,25 @@ for name, a in pairs(ACTIONS) do
     _G["BINDING_NAME_BFI_" .. name:upper()] = a[1]
 end
 
+-- The Big map key opens Waymark's world map when that is the big map you use (Options.lua ns.MapKinds; the
+-- world map is Lab only for now): its name follows, here and in the game's Keybindings list. The binding keeps
+-- its name, BFI_BIGMAP: players' keys are saved under it. (Asked again when the pick changes, and at login.)
+local function WorldKey() return ns.MapKinds and ns.db and ns.MapKinds.World() end
+function ns.BigMapKeyNames()
+    ACTIONS.bigmap[1] = WorldKey() and "World map" or "Big map"
+    BINDING_NAME_BFI_BIGMAP = ACTIONS.bigmap[1]
+end
+do
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("PLAYER_LOGIN")
+    f:SetScript("OnEvent", function() ns.Safe("Big map key's name", ns.BigMapKeyNames) end)
+end
+
 -- for the Key bindings page: groups of { command, label, a line saying what it gives }, in Bindings.xml's
 -- order. The first row is the game's own key for the map, not one of ours. "Show/hide: Keep centered"
 -- (layer_zoom) does what "Keep me centred" does: it keeps its binding, so a saved key works, and has no row.
 function ns.KeyGroups()
+    ns.BigMapKeyNames()
     local function Row(name, line) return { "BFI_" .. name:upper(), ACTIONS[name][1], line } end
     local layers = { title = "Show or hide a layer" }
     for _, id in ipairs(LAYER_KEYS) do
@@ -80,7 +98,7 @@ function ns.KeyGroups()
     return {
         { title = "The keys worth having",
           { "TOGGLEBATTLEFIELDMINIMAP", "Open the map", "The game's own map key, Shift-M by default. Tap: open or close. Hold: a glance." },
-          Row("bigmap", "Enlarges the map. Press again to go back."),
+          Row("bigmap", WorldKey() and "Opens the world map. Press again to close it." or "Enlarges the map. Press again to go back."),
           Row("dock", "Docked, the map sits in the minimap's place." .. mapKey) },
         { title = "With a controller", note = "Zoom in, zoom out and back out a level, on buttons.",
           Row("zoomin"), Row("zoomout"), Row("continent") },
@@ -89,7 +107,7 @@ function ns.KeyGroups()
           -- user, 2026-11-14: "I dont think people will keybind that. In wow, keybinds are precious")
           -- (folding: the glance is on the map's own key, so this one only earns a key with the ribbon or an
           -- attached tracker. Clear view: a style you choose, not something switched many times a session)
-          Row("collapse"), Row("clearview"), Row("center"), Row("ink"), Row("book"), Row("setup"), Row("options") },
+          Row("collapse"), Row("clearview"), Row("center"), Row("ink"), Row("book"), Row("questlog"), Row("setup"), Row("options") },
         layers,
     }
 end

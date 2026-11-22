@@ -357,6 +357,11 @@ local function PlaceMinimap()
     local bx, b = Bands(SideOnMinimap())
     local spot = Cfg().spot  -- (where you dragged it by the header: its top-right, UI units)
     if spot then
+        -- (on the screen, as shown: a spot dragged at another resolution or UI scale may lie past it)
+        local e = Box():GetEffectiveScale() / UIParent:GetEffectiveScale()
+        local sw, sh = UIParent:GetWidth(), UIParent:GetHeight()
+        spot = { math.max(math.min(Box():GetWidth() * e, sw), math.min(spot[1], sw)),
+                 math.min(sh, math.max(spot[2], math.min(Box():GetHeight() * e, sh))) }
         local k = UIParent:GetEffectiveScale() / mm:GetEffectiveScale()
         mm:ClearAllPoints()
         mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", spot[1] * k + bx, spot[2] * k + b)
@@ -400,6 +405,8 @@ local function Square()
         a.offRight, a.offTop = a.right - c:GetRight() * ce, a.top - c:GetTop() * ce
     end
     applied = a
+    -- (a folded map opens as it docks: nothing folds it docked, Collapse.lua)
+    if ns.UnfoldForWorld then ns.Safe("Dock unfold", ns.UnfoldForWorld) end
     -- (clear view stands aside while docked: no rim, the zone cut away and the picture faded made the
     -- minimap a bare dark square, the user 2026-11-08; ClearView.lua asks ns.Docked)
     if ns.ApplyClearView then C_Timer.After(0, ns.ApplyClearView) end
@@ -726,13 +733,24 @@ function ns.DockPlace(map)
     map:ClearAllPoints()
     if IsBig() then
         local pos = Cfg().bigTR
+        -- (every release up to 1.3.1 shipped the creator's own dragged spot as a default, 940 units up:
+        -- above the top of any screen 768 high, and it stuck. A player's report, 2026-11-18. The defaults
+        -- carry no spot now, and whatever is saved is held on the screen below)
+        local u = UIParent:GetEffectiveScale() / map:GetEffectiveScale()
+        local x, y
         if pos then
-            local u = UIParent:GetEffectiveScale() / map:GetEffectiveScale()
-            map:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", pos[1] * u, pos[2] * u)
+            x, y = pos[1] * u, pos[2] * u
         else
             local out = type(ns.BorderOutset and ns.BorderOutset()) == "number" and ns.BorderOutset() or 0
-            map:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", l * k - BIG_GAP - 2 * out, t * k + i[3])
+            x, y = l * k - BIG_GAP - 2 * out, t * k + i[3]
         end
+        -- all of it on the screen, as shown (the saved spot stays: the screen's size isn't final at a
+        -- load). A map bigger than the screen keeps its top-left on.
+        local w, h = map:GetWidth(), map:GetHeight()
+        local sw, sh = UIParent:GetWidth() * u, UIParent:GetHeight() * u
+        x = math.max(w, math.min(x, sw))
+        y = math.min(sh, math.max(y, h))
+        map:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", x, y)
         return true
     end
     map:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", r * k + i[2], t * k + i[3])
@@ -856,32 +874,29 @@ local function LowerMap(map)
     end
 end
 
--- The corner grip goes to the bottom-left corner while docked (the square
--- grows down and left from its top-right corner), its art mirrored
+-- The corner grip while docked: in the corner chosen for this place (dock.gripCorner; bottom left until
+-- chosen, since the square grew down and left from its top-right corner), its art turned to match
+-- (ns.PlaceMapGrip, BattlefieldInfo.lua). The corner opposite the grip stands still: GripSigns below.
 local gripWas
 local function PlaceGrip(map)
     local grip = ns.debugFrames.grip
     if not grip then return end
-    local function Mirror(on)
-        for _, t in ipairs({ grip:GetNormalTexture(), grip:GetPushedTexture(), grip:GetHighlightTexture() }) do
-            if on then t:SetTexCoord(1, 0, 0, 1) else t:SetTexCoord(0, 1, 0, 1) end
-        end
-    end
     -- (its "Resize" tooltip off while docked: it came up over the minimap)
     if applied and not gripWas then
         gripWas = { enter = grip:GetScript("OnEnter") }
-        for i = 1, grip:GetNumPoints() do gripWas[i] = { grip:GetPoint(i) } end
-        grip:ClearAllPoints()
-        grip:SetPoint("BOTTOMLEFT", map, "BOTTOMLEFT", 2, 2)
         grip:SetScript("OnEnter", nil)
-        Mirror(true)
+        if ns.PlaceMapGrip then ns.PlaceMapGrip() end
     elseif not applied and gripWas then
-        grip:ClearAllPoints()
-        for _, p in ipairs(gripWas) do grip:SetPoint(p[1], p[2], p[3], p[4], p[5]) end
         grip:SetScript("OnEnter", gripWas.enter)
         gripWas = nil
-        Mirror(false)
+        if ns.PlaceMapGrip then ns.PlaceMapGrip() end  -- (the window's own corner again)
     end
+end
+-- which way the docked grip grows the map: +1 right / down, -1 left / up, and its corner's name
+local function GripSigns()
+    local g = Cfg().gripCorner
+    if g ~= "BR" and g ~= "TR" and g ~= "TL" then g = "BL" end
+    return (g == "BR" or g == "TR") and 1 or -1, (g == "BL" or g == "BR") and 1 or -1, g
 end
 
 -- While the map is big (beside the square), the square keeps a frame of its
@@ -1178,6 +1193,10 @@ local function ViewAtMinimap()
     local pos = C_Map.GetPlayerMapPosition(map:GetMapID(), "player")
     local x, y = 0.5, 0.5
     if pos and pos.x and (pos.x > 0 or pos.y > 0) then x, y = pos.x, pos.y end
+    -- (on the zone's useful part with you in it, where following you would glide to anyway: not on the arrow dead
+    -- centre and then a pan. The user, 2026-11-22, back from the world map: "We want it to start on the useful
+    -- part, not on the player arrow in the middle")
+    if s and top and ns.MapZoneClamp then x, y = ns.MapZoneClamp(sc, math.min(s, top), x, y) end
     if s and top then pcall(ns.ApplyMapView, sc, math.min(s, top), x, y) end
 end
 
@@ -1659,8 +1678,12 @@ local function Outline(map, w, h)
     local k = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
     local i = Insets(map)
     outline:ClearAllPoints()
-    -- (the scroll area's top-right: the map's, in by its insets)
-    outline:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", map:GetRight() * k - i[2] * k, map:GetTop() * k - i[3] * k)
+    -- (from the scroll area's corner that stands still, the one opposite the grip: the map's, in by its
+    -- insets. The grip bottom left: the top right, as it always was)
+    local sx, sy = GripSigns()
+    local x = sx < 0 and (map:GetRight() - i[2]) or (map:GetLeft() + i[1])
+    local y = sy > 0 and (map:GetTop() - i[3]) or (map:GetBottom() + i[4])
+    outline:SetPoint((sy > 0 and "TOP" or "BOTTOM") .. (sx < 0 and "RIGHT" or "LEFT"), UIParent, "BOTTOMLEFT", x * k, y * k)
     outline:SetSize(w, h)
     outline:Show()
 end
@@ -1677,12 +1700,24 @@ local function ResizeBig(map, w, h, dragging)
         end
         local k = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
         local most = UIParent:GetHeight() * 0.95
-        dragBase.nw = math.floor(Clamp(dragBase.bw + (dragBase.w - w) * k, MIN_SIZE * 1.5, UIParent:GetWidth() * 0.95) + 0.5)
-        dragBase.nh = math.floor(Clamp(dragBase.bh + (h - dragBase.h) * k, MIN_SIZE * 1.5, most) + 0.5)
+        local sx, sy = GripSigns()
+        dragBase.nw = math.floor(Clamp(dragBase.bw + sx * (w - dragBase.w) * k, MIN_SIZE * 1.5, UIParent:GetWidth() * 0.95) + 0.5)
+        dragBase.nh = math.floor(Clamp(dragBase.bh + sy * (h - dragBase.h) * k, MIN_SIZE * 1.5, most) + 0.5)
         Outline(map, dragBase.nw, dragBase.nh)
         return
     else
-        if dragBase and dragBase.nw then c.bigW, c.bigH = dragBase.nw, dragBase.nh end
+        if dragBase and dragBase.nw then
+            -- (the big map hangs by its top-right corner, dock.bigTR: with the grip anywhere but bottom
+            -- left that corner moves, so the one opposite the grip stands still)
+            local sx, sy = GripSigns()
+            if (sx > 0 or sy < 0) and map:GetRight() then
+                local k = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
+                c.bigTR = { map:GetRight() * k + (sx > 0 and dragBase.nw - dragBase.bw or 0),
+                            map:GetTop() * k + (sy < 0 and dragBase.nh - dragBase.bh or 0) }
+                c.bigPos = nil
+            end
+            c.bigW, c.bigH = dragBase.nw, dragBase.nh
+        end
         dragBase = nil
     end
     Outline(map, nil)
@@ -1777,11 +1812,13 @@ function ns.DockResize(map, w, h, dragging)
     if IsBig() then return ResizeBig(map, w, h, dragging) end
     local c = Cfg()
     local key, default = "size", SIZE
+    local reSpot   -- the square's new top-right, when the grip's corner moves it (below)
     if not w then
         c[key] = default
     elseif dragging then
         if not dragBase then dragBase = { w = w, h = h, side = c[key] or default } end
-        local grow = math.max(dragBase.w - w, h - dragBase.h) * map:GetEffectiveScale() / UIParent:GetEffectiveScale()
+        local sx, sy = GripSigns()
+        local grow = math.max(sx * (w - dragBase.w), sy * (h - dragBase.h)) * map:GetEffectiveScale() / UIParent:GetEffectiveScale()
         -- (an outline while the corner's dragged, as the big map does: the square and all that hangs
         -- on it change once, on release. Live, the map flickered at every pixel)
         dragBase.side2 = math.floor(Clamp(dragBase.side + grow, MIN_SIZE, MAX_SIZE) + 0.5)
@@ -1790,7 +1827,19 @@ function ns.DockResize(map, w, h, dragging)
         Outline(map, side * fw, side * fh)
         return
     else
-        if dragBase and dragBase.side2 then c[key] = dragBase.side2 end
+        if dragBase and dragBase.side2 then
+            -- (the square hangs by its top-right corner. With the grip anywhere but bottom left that
+            -- corner moves, so the one opposite the grip stands still: the square gets a spot of its own,
+            -- as when it is dragged by its header. Its sides grow with the size, whatever its shape)
+            local sx, sy = GripSigns()
+            local r = dragBase.side and dragBase.side > 0 and dragBase.side2 / dragBase.side or 1
+            if (sx > 0 or sy < 0) and r ~= 1 and Box():GetRight() and not InCombat() then
+                local e = Box():GetEffectiveScale() / UIParent:GetEffectiveScale()
+                reSpot = { Box():GetRight() * e + (sx > 0 and Box():GetWidth() * e * (r - 1) or 0),
+                           Box():GetTop() * e + (sy < 0 and Box():GetHeight() * e * (r - 1) or 0) }
+            end
+            c[key] = dragBase.side2
+        end
         dragBase = nil
     end
     Outline(map, nil)
@@ -1799,7 +1848,14 @@ function ns.DockResize(map, w, h, dragging)
         if ns.DockPatchOff then ns.DockPatchOff() end
         local s = SideOnMinimap()
         Minimap:SetSize(s, s)
-        if Shape() then PlaceMinimap() end  -- (the docked shape: the band changed with the size)
+        if reSpot then
+            c.spot = reSpot
+            if c.corner then c.corner = false end   -- (a spot of your own, as DockSquareDragStop)
+            PlaceMinimap()
+            ns.DockPlace(map)
+        elseif Shape() then
+            PlaceMinimap()  -- (the docked shape: the band changed with the size)
+        end
     end
     if ns.UpdateMapShape then ns.Safe("Dock UpdateShape", ns.UpdateMapShape, true, true) end
     -- (the square's size sets the scale that matches the minimap: on you at it, step by step)
@@ -2119,6 +2175,12 @@ end
 
 -- the BFI_DOCK key
 function ns.ToggleDock()
+    -- (the world map up: closed its own way first, so nothing is left big after docking; the switch's report)
+    -- (lent to the world map: closing it docks again, and that is the key's whole answer. Read before the close,
+    -- which clears it: the critic's find, 2026-11-22, the map docked and undocked in one press)
+    local lent = ns.db.mapFrame.dockLent
+    if ns.CloseWorldMap then ns.CloseWorldMap() end
+    if lent then return end
     Cfg().on = not Cfg().on
     ns.ApplyDock()
     if ns.UpdateQuickButton then ns.UpdateQuickButton() end  -- (the dock button)
@@ -2166,6 +2228,8 @@ events:SetScript("OnEvent", function(_, event)
             ns.Safe("Dock minimap wheel", OnMinimapWheel, self, delta)
         end)
         Minimap:HookScript("OnMouseDown", OnMinimapDown)
+        -- (a /reload with the dock lent to the world map, MapControls' WorldFromDock: docked again first)
+        if ns.DockLentBack then ns.DockLentBack() end
         if Cfg().on and not ns.standBy then ns.ApplyDock() end
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- the minimap draws its new size once the world is in; buttons other

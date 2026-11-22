@@ -120,6 +120,9 @@ end
 local last          -- the look before: { x, y, inst, at }
 local run           -- looks in a row on one boat: { id, t, at, n }
 
+-- (Browse.lua: carried by a boat or zeppelin right now, two looks in a row; the continent is your map then)
+function ns.BoatRiding() return run ~= nil and run.n >= 2 end
+
 local function Look()
     local x, y, inst = nil, nil, nil
     if ns.WorldPos then x, y, inst = ns.WorldPos() end
