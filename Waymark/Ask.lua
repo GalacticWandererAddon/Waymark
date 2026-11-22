@@ -37,7 +37,9 @@ local function PadOn()
     return InputUtil and InputUtil.IsGamepadUIEnabled and InputUtil.IsGamepadUIEnabled() or false
 end
 
-local function Close(accepted)
+-- (clicked: the no button's own click. o.onNo runs only then, never on Escape, a pad's B or a hide: for a choice
+-- that must not be made by a habit's Escape, the world map's one-time note, 2026-11-22)
+local function Close(accepted, clicked)
     local o = current
     if not o then return end
     current = nil
@@ -46,6 +48,7 @@ local function Close(accepted)
     box:Hide()
     local fn = accepted and o.onAccept or (not accepted and o.onCancel)
     if fn then ns.Safe("Ask", fn, words) end
+    if clicked and not accepted and o.onNo then ns.Safe("Ask", o.onNo) end
 end
 
 local function Button(parent)
@@ -119,7 +122,7 @@ local function Make()
     f.no = Button(f)
     f.ok:SetScript("OnClick", function() Close(true) end)
     f.ok.label:SetTextColor(GOLD[1], GOLD[2], GOLD[3])
-    f.no:SetScript("OnClick", function() Close(false) end)
+    f.no:SetScript("OnClick", function() Close(false, true) end)
 
     -- Enter and Escape without a line to write (with one, the edit box takes them). Other keys
     -- go on to the game, so you can still move; outside a fight only (passing keys on is

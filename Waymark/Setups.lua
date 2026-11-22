@@ -38,7 +38,12 @@ local EXCLUDE = { addonScale = true,  -- (Waymark size: follows your screen, not
                   cutEdits = true, cutEditsBeforeRestore = true, cutRestored = true }  -- (dev: CutEdit.lua)
 -- inside a group: also yours, kept when a setup is loaded (quests you hid, folds)
 local KEEP_IN = { questie = { hidden = true, source = true }, tracker = { folded = true, foldedAreas = true },
-                  questlog = { zoneOpen = true } }
+                  questlog = { zoneOpen = true },
+                  -- (the world map's and its log's own place, size and fit: where you left them, whatever setup is
+                  -- loaded; else the log alone went back to its first place and the map was fitted anew. The code
+                  -- critic, 2026-11-22)
+                  worldLog = { alonePos = true, aloneH = true, mapH = true, mapFit = true, shut = true, logAt = true,
+                               stickCheck = true } }
 
 local function Copy(v)
     if type(v) ~= "table" then return v end
@@ -80,10 +85,16 @@ function ns.ApplyAll()
     for _, g in ipairs({ "questie", "turnins", "spots", "objectives", "townsfolk", "rares", "gather" }) do
         pcall(ns.ApplyScales, g)
     end
+    -- (the world map and its log: L follows the loaded aloneL at once, the window its frame and column)
+    if ns.WorldLog and ns.WorldLog.AloneApplyKey then pcall(ns.WorldLog.AloneApplyKey) end
+    if ns.WorldPanelResized then pcall(ns.WorldPanelResized) end
     pcall(ns.RedrawAll)
 end
 
 local function Apply(s)
+    -- (the world map up: closed its own way first, as a preset does (ApplyWhole); the kind may change below)
+    if ns.CloseWorldMap then pcall(ns.CloseWorldMap) end
+    local kindWas = ns.MapKind and ns.MapKind()
     local kept = {}
     for g, keys in pairs(KEEP_IN) do
         for k in pairs(keys) do
@@ -104,10 +115,18 @@ local function Apply(s)
         for k, v in pairs(t) do ns.db[g][k] = v end
     end
     ns.ClockFirstTime(ns.db)   -- (a setup or character saved before the clock)
+    -- (a setup or character saved before 1.3.2 has no world map settings: BattlefieldInfo.lua ns.WorldLogFromBefore,
+    -- Purist's big map, the new log on L for who had the old one on L. Here, not only at InitDB: each character's own
+    -- settings are applied over the account's at every load (SetupSetups). The code critic, 2026-11-22)
+    -- (asked of what was loaded, s: the kept place and size above already made a worldLog table)
+    if type(s.worldLog) ~= "table" and ns.WorldLogFromBefore then ns.WorldLogFromBefore(ns.db) end
     ns.CopyDefaults(ns.db, ns.DEFAULTS)
     ns.keepSizeOff = true  -- (its scale and its sizes as saved: ns.SetScale)
     pcall(ns.ApplyAll)
     ns.keepSizeOff = nil
+    -- (another kind than before: what follows it told, once the map is set up; at load Setup reads it fresh)
+    local map = BattlefieldMapFrame
+    if map and map.WaymarkDone and ns.MapKindChanged and ns.MapKind() ~= kindWas then pcall(ns.MapKindChanged) end
 end
 
 -- Named setups ------------------------------------------------------------------
@@ -196,6 +215,7 @@ local PLATES = { plate = "classic plate", tan = "tan leather", stone = "stone", 
                  text = "text only" }
 local GROUND = { haze = "soft haze", ink = "ink", dots = "dots", pins = "objective pins" }
 local GROUND_BY = { quest = "each quest its own", type = "by quest type" }
+local LOG_KINDS = { new = "New", classic = "Classic" }
 
 -- { label, setting ("group.key", or "role": the map as a window, in clear view or
 -- docked), names, then the value for each preset in ns.PRESETS' order:
@@ -225,6 +245,10 @@ local ROWS = {
       { [true] = "hidden while Waymark's shows", [false] = "shown", always = "always hidden" }, T, T, T, T, T, "always", T },
     { "Quest log", "questlog.shown", nil,                    F, T, F, F, F, F, T },
     { "Opens with the quest log key", "questlog.keyL", nil,  F, F, F, F, F, F, F },
+    -- (the world map and the new quest log: every preset but Purist, the user 2026-11-22. Purist: the big map, your
+    -- map made bigger, and the classic log. Set through their own switches: Set below)
+    { "Use the world map", "worldLog.on", nil,               T, T, F, T, T, T, T },
+    { "Your quest log", "worldLog.logKind", LOG_KINDS,       "new", "new", "classic", "new", "new", "new", "new" },
     { "Quest givers on the continent", "browse.continentGivers", nil, T, T, F, T, T, T, T },
     { "Townsfolk", "townsfolk.shown", nil,                   F, F, F, F, F, F, F },
     { "Townsfolk in towns and cities", "townsfolkInTown", nil, T, T, F, T, T, T, T },
@@ -322,6 +346,18 @@ end
 
 -- set it in your settings and let that part of the addon know
 local function Set(setting, v, changed)
+    -- (the map's kind and the quest log's: by their own switches, which put an open map or log away first and hand
+    -- the keys over (MapControls.lua ns.SetMapKind, WorldAlone.lua ns.SetQuestLogKind); then written as any row)
+    if setting == "worldLog.on" and ns.SetMapKind then pcall(ns.SetMapKind, v and "world" or "big") end
+    if setting == "worldLog.logKind" and ns.SetQuestLogKind then
+        -- (the new log is the world map's column: put back if it was off, as the Quest log page's pick does. Else
+        -- Purist with the column off, then Simple, left the new log nowhere to be: the critic, 2026-11-22)
+        if v == "new" and ns.db.worldLog and ns.db.worldLog.sidebar == false then
+            ns.db.worldLog.sidebar = true
+            if ns.WorldPanelResized then pcall(ns.WorldPanelResized) end
+        end
+        pcall(ns.SetQuestLogKind, v)
+    end
     Put(ns.db, setting, v, changed)
     if setting == "townsfolkInTown" and ns.UpdateProfile then pcall(ns.UpdateProfile) end
 end

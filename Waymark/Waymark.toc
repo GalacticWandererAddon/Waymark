@@ -147,3 +147,7 @@ Data\QuestWords.lua
 QuestWords.lua
 Search.lua
 Search.xml
+WorldLog.lua
+WorldPanel.lua
+WorldAlone.lua
+BeforeYouGo.lua

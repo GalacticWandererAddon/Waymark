@@ -2,53 +2,61 @@
 
 ## 1.3.2 (2026-11-22)
 
-**Players' bugs fixed, a new sea on the painted continents, and Waymark's land on the game's world map.**
+**A world map with a new quest log, a new sea, redrawn coasts, and players' bugs fixed.**
 
 New
-- **Waymark's look on the game's own world map.** Two switches in Settings > The map's look, both off as they come:
-  - "Shaded land on the game's world map": the same hills and shadows on the game's world map, with unexplored land shown too.
-  - "Painted continents on the game's world map": on a continent, each zone's own map, with our sea and coasts.
-  Only pictures are laid on that map. Its quest log, its zoom and other addons' pins stay as they are.
-- **A new sea on the painted continents**, on Waymark's map and on the game's world map: one sea round each continent, with new rows of waves along the coasts.
-- **Coasts redrawn** all round both continents: Stormwind, Dun Morogh, the Wetlands, the Hinterlands, the Eastern Plaguelands, Quel'Thalas, Gilneas, Redridge, Tirisfal, the Blasted Lands, Moonglade, Tanaris, Uldum, Silithus and more.
-- On the painted continents, the game's place icons (the houses over the cities) are hidden while the paint shows.
-- The resize grip can sit in any corner of the map, in the minimap's place too, and has its own opacity. Shift-drag: the same shape, only bigger or smaller.
-- A switch and a size for the two red buttons on the map.
-- A key for Waymark's quest log, under More keys in Key bindings.
-- As told: "Before this" shows the earlier quests' names; click it for what they told you. Quest chains find more of their earlier and later steps.
+- **The world map.** The big map is now a world map: the map with a quest log beside it.
+  - Quests by zone, with tracked, ready and class quests marked. On a continent, its zones as painted strips.
+  - A quest's page: where it is, objectives, description, rewards and its chain.
+  - Search, unfinished chains, and what you turned in, by zone and by giver.
+  - Before you go: at the flight master or while hearthing, a quest you'd leave behind.
+  - On in every preset but Purist. To go back: Settings > World map, untick "Use the world map".
+- **The new quest log**, also on its own without the map. Tick "L opens this log" to open it with L; M then opens the map beside it.
+  Prefer the old one? Quest log > "Your quest log" > Classic.
+- **Waymark's art on the game's world map.** Two switches in Settings > The map's look, both off by default:
+  - "Shaded land on the game's world map": hills and shadows, unexplored land included.
+  - "Painted continents on the game's world map": each zone's own map on the continent, with our sea and coasts.
+  Only pictures are added. The game's quest log, zoom and other addons' pins work as before.
+- **A new sea** round both painted continents, on our map and the game's, with new waves along the coasts.
+- **Coasts redrawn** round both continents.
+- Painted continents hide the game's town icons.
+- The resize grip can sit in any corner, has its own opacity, and Shift-drag keeps the map's shape.
+- Show/hide and size for the map's two red buttons.
+- A key for Waymark's quest log (Key bindings > More keys).
+- As told: "Before this" names the earlier quests; click it for what they told you. Quest chains find more of their steps.
 
 Fixed
 - Russian text showed as empty squares.
-- Tirisfal Glades in clear view was cut off in the west, where Forever added land.
-- With QuestieDB installed, the other side's town and its innkeeper could show on your map.
-- Quests for another race or side could show (a Night Elf saw a Horde quest).
-- Quest givers could stay missing until a /reload.
-- Givers of Forever's new quests showed at any level (a level 4 saw level 60 givers).
+- Clear view cut off western Tirisfal, where Forever added land.
+- With QuestieDB, the other faction's town and innkeeper could show.
+- Quests for another race or faction could show.
+- Quest givers could be missing until a /reload.
+- Forever's new quests showed givers at any level.
 - Brother Paxton offered Book Inventory before you had the Nibbled-On Book.
-- A finished quest's turn-in "?" could be missing on a learned giver.
-- Clear view could turn into a full rectangle out of nowhere, when the game put the map on a continent. The zone now stays until there is a new zone map for you. On the tram it keeps your zone's map too.
-- The zoom on a zone map was forgotten over a /reload.
-- A map that follows you opened on your arrow, then slid over. It now opens where it ends up.
-- The campfire marks grew huge when zoomed far in.
+- A learned giver could miss its turn-in "?".
+- Clear view could turn into a full rectangle when the game switched to the continent. It now keeps your zone, on the tram too.
+- Zone map zoom was lost on /reload.
+- A map that follows you opened on your arrow, then slid over.
+- Campfire marks grew huge when zoomed far in.
 - An auctioneer pin on Master Smith Burninate, and innkeeper pins on mount sellers.
-- The big map could end up above the screen, out of reach.
-- The resize grip could slip under the map, and sat inside the frame instead of in its corner.
-- Docked, our arrow could vanish while the minimap was hidden.
+- The big map could end up above the screen.
+- The resize grip could slip under the map or sit inside the frame.
+- Docked: the arrow could vanish with the minimap hidden.
 - A docked map could fold away. Docking a folded map opens it.
-- A clock taken off the map lay over the game's windows.
-- The top quest's shading in the tracker was cut off in a hard line.
-- Fully zoomed out, the Eastern Kingdoms never showed their zone maps in full, as Kalimdor did.
+- A clock taken off the map covered the game's windows.
+- The tracker's top quest shading was cut off in a hard line.
+- Fully zoomed out, the Eastern Kingdoms didn't show their zone maps in full.
 
 Changed
-- The sliders for "Changes shape per zone" are with its tick, on How it acts.
-- The search's marks are smaller and quieter.
-- The tracker's resize corner shows only when you point at the tracker.
+- "Changes shape per zone" sliders sit with its tick, on How it acts.
+- Search marks are smaller and quieter.
+- The tracker's resize corner shows only on mouseover.
 
 Known
-- With Waymark's quest tracker switched off again, the game's own tracker can stay hidden. Chat says so when it happens: a /reload brings it back.
-- Class trainers don't have their lists yet. A right-click says so.
-- "SetPreferredGamepadInteractTarget()" can still come up with a controller. If you see it, click [Copy a report] in the chat line and paste it in a comment on Waymark's CurseForge page.
-- After updating, restart the game (not just /reload) to see the new map art.
+- Turning Waymark's tracker off can leave the game's tracker hidden. Chat says so; /reload brings it back.
+- Class trainers have no lists yet. Right-click says so.
+- "SetPreferredGamepadInteractTarget()" can still come up with a controller. If it does, click [Copy a report] in chat and paste it in a comment on CurseForge.
+- **Restart the game after updating** (not just /reload) to see the new map art.
 
 ## 1.3.1 (2026-11-17)
 

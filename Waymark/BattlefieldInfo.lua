@@ -241,6 +241,12 @@ local DEFAULTS = {
                    ink = false, inkAlpha = 85, edition = 5,
                    -- (WorldRelief.lua: the same depth on the game's own world map, and the unexplored land there)
                    world = false, worldUnseen = true },
+    -- Our own world map with its quest log (WorldLog.lua, WorldPanel.lua, WorldAlone.lua, BeforeYouGo.lua: out of the
+    -- Lab for 1.3.2). Players set on ("Use the world map"), logKind ("new" or "classic"), sidebar (the log beside it),
+    -- aloneL (L opens the log alone), aimsOpen, loose, before; the rest are its own (the window, the page it shows)
+    worldLog   = { on = true, logKind = "new", sidebar = true, aloneL = false, aloneLMap = false, aimsOpen = false, loose = true, before = true,
+                   frame = "engraver", top = "glass", title = "morpheus", mode = "held", fold = false, width = 300, scale = 100,
+                   sort = "ground", list = "places", zones = "painted", chainNames = false },
     -- Waymark's painted continents on the game's own world map (WorldArt.lua; The map's look, off as it comes).
     -- night: the hour's colours there too, where the map follows the hour (/worldart night, the test bench)
     worldArt   = { on = false, night = true },
@@ -543,6 +549,23 @@ local function StandBy()
 end
 
 -- Saved variables only exist once our own ADDON_LOADED fires
+-- A save from before 1.3.2, with no world map settings yet (InitDB, and Setups.lua Apply for a character's or a
+-- setup's own settings, which are applied over the account's at every load). Purist keeps the big map and the classic
+-- log, as Purist sets them. A player whose L opened Waymark's classic quest window ("Open it with the quest log key"
+-- or "Replace the game's quest log") gets the new log on L, and a note the first time it shows (WorldPanel.lua
+-- W.NewLogNote, with the way back). The user, 2026-11-22: "New log if they had the old. Are we able to make a note
+-- appear on the first open, if they were using the old one?" Anyone else: the defaults (the new log, L untouched).
+function ns.WorldLogFromBefore(db)
+    local w = db.worldLog or {}
+    local q = db.questlog
+    if db.presetBase == "purist" then
+        w.on, w.logKind = false, "classic"
+    elseif type(q) == "table" and q.shown and (q.keyL or q.replaceGame) then
+        w.logKind, w.aloneL, w.newNote = "new", true, true
+    end
+    if next(w) ~= nil then db.worldLog = w end
+end
+
 local function InitDB()
     Migrate()
     WaymarkDB = WaymarkDB or {}
@@ -699,6 +722,8 @@ local function InitDB()
         db.spots = db.spots or {}
         db.questie.iconSet, db.turnins.iconSet, db.spots.shown = "questie", "questie", true
     end
+    -- (the world map, 1.3.2: every preset but Purist has it, with the new quest log. A save from before: ns.WorldLogFromBefore)
+    if db.worldLog == nil then ns.WorldLogFromBefore(db) end
     CopyDefaults(db, DEFAULTS)
     ns.db = db
     ns.ShareQuestLook()  -- (turn-ins: the givers' opacity, size, icons)

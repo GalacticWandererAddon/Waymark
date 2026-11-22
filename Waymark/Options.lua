@@ -1634,8 +1634,9 @@ ns.MapRole, ns.SetMapRole = MapRole, SetMapRole  -- (the welcome page: Welcome.l
 -- The big map is Waymark's world map (Lab\WorldLog.lua, Lab\WorldPanel.lua; Lab only for now). There was a pick,
 -- "Which big map do you like?"; the user, 2026-11-22: "We have no need for "bigmap" without it being worldmap.
 -- Because its basically the same thing just better". So no pick: where the world map is built in, it is the big
--- map (MapControls.lua ns.MapKind; the Lab's worldLog.on stays as a dev switch on the bench). A release has no
--- world map and keeps the big map. Each side's rows are made by a plain if when a page is built.
+-- map (MapControls.lua ns.MapKind). Then, 2026-11-22: "Every preset except purist defaults to worldmap and new log.
+-- Make it not too hard to switch back": "Use the world map" at the World map page's top (ns.db.worldLog.on, out
+-- of the Lab for 1.3.2). A build without the world map keeps the big map. Each side's rows are made by a plain if when a page is built.
 local MapKinds = {}
 function MapKinds.Here() return ns.WorldLog and true or false end   -- (the world map is in this build)
 function MapKinds.Get()
@@ -1646,12 +1647,25 @@ function MapKinds.World() return MapKinds.Here() and MapKinds.Get() == "world" e
 -- the new quest log is yours: the world map's log, alone on L (Lab\WorldAlone.lua ns.QuestLogKind; the user,
 -- 2026-11-22: "New stardard is worldmap with the new questlog ... Option for old questlog remains available").
 -- Classic: Tracker.lua's quest window, and its rows on the Quest log page. Never two L rows: each kind has one.
-function MapKinds.NewLog()
-    return MapKinds.World() and ns.QuestLogKind and ns.QuestLogKind() == "new" or false
-end
--- the world map's column switched off ("Quest log beside it"): the map alone, as the big map was
-function MapKinds.MapAlone()
-    return MapKinds.World() and ns.WorldSidebarOff and ns.WorldSidebarOff() or false
+function MapKinds.NewLog() return MapKinds.World() end
+-- One choice, two places (the World map page's "Use the world map", the Quest log page's "Your quest log"): the
+-- world map with the new log, or the big map with the classic log. The user, 2026-11-22: "With classic ticked,
+-- worldmap is off. if classic log on, old bigmap rules apply." Both set together, through their own switches
+-- (MapControls.lua ns.SetMapKind, WorldAlone.lua ns.SetQuestLogKind); the new log is the world map's column, so
+-- picking it puts the column back on.
+function MapKinds.SetWorld(v)
+    local c = ns.WorldLog and ns.WorldLog.Cfg and ns.WorldLog.Cfg()
+    if v and c and c.sidebar == false then c.sidebar = true end
+    if ns.SetMapKind then ns.SetMapKind(v and "world" or "big") end
+    if ns.SetQuestLogKind then ns.SetQuestLogKind(v and "new" or "classic") end
+    -- (Classic is our old quest log, the user 2026-11-22: "Old log is our old log": picked here, it is switched on.
+    -- A preset sets its own, Purist the game's)
+    if not v and ns.db and ns.db.questlog and not ns.db.questlog.shown then
+        ns.db.questlog.shown = true
+        pcall(ns.OnSettingChanged, "questlog", "shown")
+    end
+    if ns.WorldPanelResized then ns.WorldPanelResized() end
+    if ns.RebuildOptionsPages then ns.RebuildOptionsPages() end
 end
 -- M on the Big map key, beside any key it has (the game takes M off its own world map; the key opens whichever
 -- kind is yours, MapControls.lua). As the Key bindings page does it: saved in the character's or account's set;
@@ -1681,7 +1695,31 @@ end
 function MapKinds.SetM(v)
     if v then MapKinds.PutOnM() else MapKinds.TakeOffM() end
 end
-MapKinds.M_TIP = "M opens Waymark's world map. Off: M opens the game's world map, and the World map key opens ours."
+-- (its words follow the map you use: the world map, or the big map, Purist's, 2026-11-22)
+function MapKinds.MLabel() return MapKinds.World() and "Open the world map with M" or "Open the big map with M" end
+function MapKinds.MTip()
+    if MapKinds.World() then
+        return "M opens Waymark's world map. Off: M opens the game's, and Waymark's has its own key (Key bindings)."
+    end
+    return "M opens your map made big. Off: M opens the game's world map, and the big map has its own key (Key bindings)."
+end
+-- The new log on the quest log key (L): only when ticked (the user, 2026-11-22: "we dont hijack bindings, but we
+-- make them VERY easy to find"). One setting behind every tick: Lab/WorldAlone.lua W.AloneTakesL / SetAloneTakesL,
+-- also in the log's cog. The words are the cog's, "L opens this log"; on the welcome page and Start here, where no
+-- log is in sight, "L opens the new quest log" (the user's name for it; "Waymark's quest log" is the classic
+-- window's on the Quest log page, the critic 2026-11-22). The key's own name, or the quest log key while none is bound.
+function MapKinds.TakesL() local W = ns.WorldLog return W and W.AloneTakesL and W.AloneTakesL() or false end
+function MapKinds.SetTakesL(v)
+    local W = ns.WorldLog
+    if W and W.SetAloneTakesL then W.SetAloneTakesL(v) end
+    if ns.ApplyQuestWindow then ns.ApplyQuestWindow("keyL") end
+end
+function MapKinds.LLabel(away)
+    local W = ns.WorldLog
+    local key = W and W.QuestKeyName and W.QuestKeyName() or "The quest log key"
+    return key .. (away and " opens the new quest log" or " opens this log")
+end
+MapKinds.L_TIP = "Off: your quest log key stays the game's, its world map with the quest log."
 -- M opens it already: M is one of the Big map key's keys
 function MapKinds.OnM()
     if not GetBindingKey then return false end
@@ -1798,6 +1836,19 @@ local presetPick, presetDone
 PAGES[#PAGES + 1] = { key = "overview", label = "Start here", summary = true, build = function(p)
     local w = Column(p, 0, 0, CONTENT_W)
     w:Note("A preset sets up the whole map in one go. Anything can be changed afterwards, here or on the other pages.")
+    -- (the map on M, as on the welcome page: the user, 2026-11-22, "prompt a bindingswitch to M ... on first
+    -- install, and on start here page")
+    if MapKinds.Here() then
+        w:CheckWith(MapKinds.MLabel(), MapKinds.OnM, function(v)
+            MapKinds.SetM(v)
+            ns.RebuildOptionsPages()
+        end)
+        w:Tip(MapKinds.MTip())
+    end
+    if MapKinds.NewLog() then
+        w:CheckWith(MapKinds.LLabel(true), MapKinds.TakesL, MapKinds.SetTakesL)
+        w:Tip(MapKinds.L_TIP)
+    end
 
     -- the presets as cards, two a row; the one picked lit gold
     w:Header("Presets")
@@ -2490,8 +2541,8 @@ PAGES[#PAGES + 1] = { key = "clearview", label = "Clear view", build = function(
     b:Tip("A city's map cut to the city, where it has an outline.")
     b:Check("Cut dungeon maps too", "clearView", "dungeons")
     b:Tip("Cuts a dungeon map to its rooms, so you see the game around it instead of black.")
-    -- ("Whole map when big": the big map's own, so only where there is no world map: a release)
-    if not MapKinds.Here() then
+    -- ("Whole map when big": the big map's own, so only with the big map in use)
+    if not MapKinds.World() then
         b:Check("Whole map when big", "clearView", "bigUncut")
         b:Tip("No cutting while the map is big (the big map button or key): the whole map shows.")
     end
@@ -2519,13 +2570,18 @@ PAGES[#PAGES + 1] = { key = "bigworld", label = "World map", build = function(p)
     local a = Column(p, 0, 0, CONTENT_W)
     if not MapKinds.Here() then return end   -- (no world map in this build: the page is not listed either)
     a:Header("World map")
-    a:CheckWith("Open it with M", MapKinds.OnM, function(v)
+    -- (the way back to the big map, both ways: every preset but Purist has the world map. The user, 2026-11-22:
+    -- "Every preset except purist defaults to worldmap and new log. Make it not too hard to switch back")
+    a:CheckWith("Use the world map", MapKinds.World, MapKinds.SetWorld)
+    a:Tip("Your map opens big in a window of its own, with the new quest log. Off: your map made big, as before, with the classic quest log.")
+    a:CheckWith(MapKinds.MLabel(), MapKinds.OnM, function(v)
         MapKinds.SetM(v)
         if ns.RebuildOptionsPages then ns.RebuildOptionsPages() end
     end)
-    a:Tip(MapKinds.M_TIP)
-    -- the world map's: its saved values are the Lab's still (ns.LabCfg("worldLog")), so rows with their own get
-    -- and set; out of the Lab they become a group of their own (desk/notes/settings-window.md)
+    a:Tip(MapKinds.MTip())
+    if not MapKinds.World() then return end   -- (the big map's rows are the map's own: the other pages)
+    -- the world map's: ns.db.worldLog, through W.Cfg (WorldLog.lua), so rows with their own get and set (its
+    -- switches tell the world map themselves)
     local function C() return ns.WorldLog.Cfg() end
     local function Changed(resized)
         if resized and ns.WorldPanelResized then ns.WorldPanelResized()
@@ -2554,27 +2610,11 @@ PAGES[#PAGES + 1] = { key = "bigworld", label = "World map", build = function(p)
     -- (what shows on the map and in its log, objectives and loose ends, lives in the cog on the map only: one home
     -- each, agreed with the world map session, 2026-11-22. The continent pick went: painted zones only)
     a:Header("The quest log")
-    -- (the sidebar, worldLog.sidebar (the world map session's switch, 2026-11-22): off, the map alone, as the big
-    -- map was. Only with the classic quest log: the new log is this column, and off it has nowhere to be (the
-    -- critic, 2026-11-22). Shown with the new log only while it is off, so it can be put back)
-    local alone = MapKinds.MapAlone()
-    if not MapKinds.NewLog() or alone then
-        a:CheckWith("Quest log beside it", function() return C().sidebar ~= false end, function(v)
-            C().sidebar = v and true or false
-            if ns.ApplyQuestWindow then ns.ApplyQuestWindow("shown") end
-            Changed(true)
-            if ns.RebuildOptionsPages then ns.RebuildOptionsPages() end
-        end)
-        a:Tip("The world map's own quest log beside the map. Off: the map alone, as the big map was.")
-    end
-    if alone and MapKinds.NewLog() then
-        a:Note("Your quest log is the new one, which is this column: tick it, or pick Classic on the Quest log page.")
-    elseif alone then
-        a:Note("The classic quest log can open with the map: the Quest log page.")
-        a:Button("Go to: Quest log", function() if ns.OpenOptionsPage then ns.OpenOptionsPage("questlog") end end)
-    else
-        a:Note("Objectives always shown, and loose ends: the cog on the map.")
-    end
+    -- ("Quest log beside it", the column switch, went: Classic is the big map now, so the world map always has its
+    -- log. The user, 2026-11-22: "With classic ticked, worldmap is off". Here the cog's rows and the keys' page)
+    a:Note("Objectives always shown, and loose ends: the cog on the map.")
+    a:Note("Which key opens the quest log: the Quest log page.")
+    a:Button("Go to: Quest log", function() if ns.OpenOptionsPage then ns.OpenOptionsPage("questlog") end end)
     Switch("Before you go, at the flight master", "before", "At a flight master's map and while your hearthstone casts: a quest you would leave behind here.")
     a:Header("Its frame")
     Pick("Frame", "frame", { { "glass", "Plain glass" }, { "engraver", "Engraver's" }, { "parchment", "Parchment and bronze" } }, true)
@@ -2586,12 +2626,21 @@ PAGES[#PAGES + 1] = { key = "bigworld", label = "World map", build = function(p)
 end }
 -- (the page's reset: the world map's rows above back to as they come; its other saved state stays)
 if type(ns.PageResets) ~= "table" then ns.PageResets = {} end
+-- the Quest log page's own rows besides its Check rows: L left to the game, and not opening the world map
+ns.PageResets.questlog = function()
+    if not (ns.WorldLog and ns.WorldLog.Cfg) then return end
+    -- (the map's kind is not this page's alone: "Use the world map" on the World map page keeps it)
+    if ns.WorldLog.SetAloneTakesL then ns.WorldLog.SetAloneTakesL(false) end
+    if ns.WorldLog.SetLOpensMap then ns.WorldLog.SetLOpensMap(false) end
+    if ns.ApplyQuestWindow then ns.ApplyQuestWindow("shown") end
+    if ns.WorldPanelResized then ns.WorldPanelResized() end
+end
 ns.PageResets.bigworld = function()
     if not (ns.WorldLog and ns.WorldLog.Cfg) then return end
-    local c = ns.WorldLog.Cfg()
-    for _, k in ipairs({ "sidebar", "before", "frame", "top", "title" }) do c[k] = nil end
-    ns.WorldLog.Cfg()   -- (fills the defaults back in)
-    if ns.ApplyQuestWindow then ns.ApplyQuestWindow("shown") end   -- (L follows the sidebar)
+    local c, d = ns.WorldLog.Cfg(), ns.DEFAULTS.worldLog or {}
+    -- (written back from the defaults: W.Cfg fills missing keys once a session only, so a nil frame read as the
+    -- first pick, Plain glass, not Engraver's)
+    for _, k in ipairs({ "before", "frame", "top", "title" }) do c[k] = d[k] end
     if ns.WorldPanelResized then ns.WorldPanelResized() end
     if ns.WorldPanelChanged then ns.WorldPanelChanged() end
 end
@@ -3493,9 +3542,9 @@ PAGES[#PAGES + 1] = { key = "keys", label = "Key bindings", build = function(p)
         -- on its own tab. Nothing on this page said so, and the user looked for it here, 2026-11-16.)
         -- (the new quest log, 2026-11-22: L opens it when its own key row is on; else the classic window's line)
         if g.title == "The keys worth having" and MapKinds.NewLog() then
-            w:Note(ns.WorldLog.Cfg().aloneL ~= false and not MapKinds.MapAlone()
+            w:Note(MapKinds.TakesL()
                 and "Waymark's quest log opens on your quest log key (L); M in it opens the world map."
-                or "Waymark's quest log can open on your quest log key (L): the Quest log page.")
+                or "Waymark's quest log can open on your quest log key (L): a tick on the Quest log page.")
             w:Button("Go to: Quest log", function() if ns.OpenOptionsPage then ns.OpenOptionsPage("questlog") end end)
         elseif g.title == "The keys worth having" and ns.db.questlog then
             w:Note("Waymark's quest log needs no key of its own: it opens on your quest log key (L).")
@@ -3937,27 +3986,29 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     -- new or classic (with the world map only): one pick; the new one's rows are its key and a way to its look,
     -- the classic one's are all the rest of this page (the user: "we hide its settings for tuning it unless its
     -- enabled. Its either or, new log or classic log")
-    if MapKinds.World() and ns.SetQuestLogKind then
+    -- new or classic: one pick with "Use the world map" (MapKinds.SetWorld). New: the world map and its log, whose
+    -- rows are its keys and a way to its look. Classic: the big map and the classic rows, the old big map's rules
+    -- (the user, 2026-11-22: "we hide its settings for tuning it unless its enabled"; "With classic ticked, worldmap
+    -- is off. if classic log on, old bigmap rules apply")
+    if MapKinds.Here() then
         a:Choice("Your quest log", nil, nil, { { "new", "New" }, { "classic", "Classic" } },
-            function() return ns.QuestLogKind() end, function(v)
-                -- (the new log is the world map's column: picking it puts the column back, "Quest log beside it")
-                if v == "new" and ns.WorldLog.Cfg().sidebar == false then
-                    ns.WorldLog.Cfg().sidebar = nil
-                    if ns.WorldPanelResized then ns.WorldPanelResized() end
-                end
-                ns.SetQuestLogKind(v)
-                if ns.RebuildOptionsPages then ns.RebuildOptionsPages() end
-            end)
-        a:Tip("New: Waymark's quest log on L; M in it opens the world map. Classic: L opens the game's quest log, or Waymark's quest page (below).")
+            function() return MapKinds.World() and "new" or "classic" end, function(v) MapKinds.SetWorld(v == "new") end)
+        a:Tip("New: Waymark's world map and its quest log. Classic: the big map and Waymark's old quest log (below).")
     end
     if MapKinds.NewLog() then
-        local W = ns.WorldLog
-        a:CheckWith("Open it with the quest log key", function() return W.Cfg().aloneL ~= false end, function(v)
-            W.Cfg().aloneL = v and true or false
-            if W.AloneApplyKey then ns.Safe("Quest log key", W.AloneApplyKey) end
-            if ns.ApplyQuestWindow then ns.ApplyQuestWindow("keyL") end
+        a:CheckWith(MapKinds.LLabel(), MapKinds.TakesL, function(v)
+            MapKinds.SetTakesL(v)
+            if ns.RebuildOptionsPages then ns.RebuildOptionsPages() end
         end)
-        a:Tip("Your quest log key (L) opens it. Off: L opens the game's quest log.")
+        a:Tip(MapKinds.L_TIP)
+        -- (L opens the world map with the log: the user, 2026-11-22, "Yes make". Only with L on the log; the quest
+        -- log session's switch, WorldAlone.lua W.LOpensMap / SetLOpensMap)
+        local W = ns.WorldLog
+        if MapKinds.TakesL() and W.SetLOpensMap then
+            local key = W.QuestKeyName and W.QuestKeyName() or "The quest log key"
+            a:CheckWith(key .. " opens the world map with it", W.LOpensMap, W.SetLOpensMap)
+            a:Tip("Off: " .. key .. " opens the log alone, and M in it opens the map.")
+        end
         a:Note("How it looks and what it shows: the World map page, and the cog on the map.")
         a:Button("Go to: World map", function() if ns.OpenOptionsPage then ns.OpenOptionsPage("bigworld") end end)
         return
@@ -3972,14 +4023,10 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     a:Tip("Highlights the open quest's spots and turn-in on the map, like hovering it in the tracker.")
     -- (with the big map, in a release: "Open it with the big map". The quest log key's two rows are the classic
     -- log's; the new log has its own one above)
-    -- (with the world map: only with its column off, the map alone, so two logs never stand beside it. Tracker.lua
-    -- QuestLogFollowBig asks the same)
-    if not MapKinds.Here() then
+    -- (with the world map there is no classic window: Classic is the big map)
+    if not MapKinds.World() then
         a:Check("Open it with the big map", "questlog", "withBig")
         a:Tip("The quest log opens beside the map when the map goes big, and closes when it goes small. The big map leaves room for it.")
-    elseif MapKinds.MapAlone() then
-        a:Check("Open it with the world map", "questlog", "withBig")
-        a:Tip("The quest log opens beside the world map, and closes with it. The world map leaves room for it.")
     end
     a:Check("Open it with the quest log key", "questlog", "keyL")
     a:Tip("While the map shows, your quest log key (L) opens this window instead of the game's quest log.")

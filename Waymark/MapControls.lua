@@ -1613,21 +1613,15 @@ end
 local bigButton  -- the red arrow beside the X: shrink while the map is big, grow while small
 -- Which big map (2026-11-22, the user: "yo, you like this type of big map, or this other type? Pick one"): "big",
 -- your map made bigger (the arrow, the glide), or "world", the world map of our own (Lab/WorldPanel.lua: your map
--- in a window with the quest log). One setting; stored as the Lab's worldLog.on while it is in the Lab. The
--- settings window (Settings small fixes) asks and sets it through ns.SetMapKind. "world" only where the world
--- map is built in (Lab/WorldPanel.lua loaded).
--- The world map is the big map (the user, 2026-11-22: "We have no need for "bigmap" without it being worldmap"):
--- no pick in the settings any more. A save that has not said (no worldLog.on) is "world", as Lab/WorldLog.lua's
--- DEFAULTS; a save from before, set to the big map by the old pick, is moved to the world map once (onlyWorld).
--- worldLog.on stays a dev switch: the bench's world map tab, /worldlog.
+-- in a window with the quest log). One setting, ns.db.worldLog.on (out of the Lab for 1.3.2: WorldLog.lua W.Cfg,
+-- BattlefieldInfo.lua DEFAULTS, on as it comes). Every preset but Purist has the world map (the user, 2026-11-22:
+-- "Every preset except purist defaults to worldmap and new log. Make it not too hard to switch back"): the World
+-- map page's "Use the world map" and the presets' row set it through ns.SetMapKind (Options.lua, Setups.lua).
+-- "world" only where the world map is built in (WorldPanel.lua loaded).
 function ns.MapKind()
     if not ns.WorldMapHideNow then return "big" end
-    local lab = WaymarkDB and WaymarkDB.lab
-    local c = lab and lab.worldLog
-    if c and not c.onlyWorld then c.onlyWorld, c.on = true, true end
-    local on = c and c.on
-    if on == nil then on = true end
-    return on and "world" or "big"
+    local c = ns.WorldCfg and ns.WorldCfg()
+    return (not c or c.on ~= false) and "world" or "big"
 end
 -- the world map is up now (never docked: ToggleBigMap lends the dock out for it)
 function ns.WorldMapUp()
@@ -1887,15 +1881,30 @@ local worldClosing
 -- its default place, and it blinked into the top right while the world map was up, wherever the square is kept. The
 -- user, 2026-11-22: "minimap blinks into existence in the top right, even if one uses the docked in the leftside",
 -- then "A, empty corner". Shown again as the world map closes (the dock then takes it again)
-local minimapHid
+local minimapHid, minimapAfter
 local function MinimapAside(hide)
     local c = MinimapCluster
     if not c then return end
+    -- (through the base calls where the client has them: the cluster is an Edit Mode system, its Hide and Show
+    -- are overrides, and the Show can come in a fight (Escape, the map hidden): the code critic, 2026-11-22)
     if hide then
-        if c:IsShown() then c:Hide() minimapHid = true end
+        if c:IsShown() then (c.HideBase or c.Hide)(c) minimapHid = true end
     elseif minimapHid then
+        -- (in a fight: when it ends, in case the cluster is protected on this client: the release critic, 2026-11-22)
+        if InCombatLockdown and InCombatLockdown() then
+            -- (our own frame for the wait, nothing written on the game's cluster)
+            if not minimapAfter then
+                minimapAfter = CreateFrame("Frame")
+                minimapAfter:SetScript("OnEvent", function(self)
+                    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                    if minimapHid then minimapHid = nil (c.ShowBase or c.Show)(c) end
+                end)
+            end
+            minimapAfter:RegisterEvent("PLAYER_REGEN_ENABLED")
+            return
+        end
         minimapHid = nil
-        c:Show()
+        (c.ShowBase or c.Show)(c)
     end
 end
 local function WorldClose(map)
@@ -2074,8 +2083,13 @@ function ns.SetMapKind(kind)
         end
     end
     openedBig, keyGrew = nil, nil
-    if not (WaymarkDB and ns.LabCfg) then return end
-    ns.LabCfg("worldLog").on = kind == "world"
+    if not ns.WorldCfg then return end
+    ns.WorldCfg().on = kind == "world"
+    ns.MapKindChanged()
+end
+-- everything that follows the map's kind, told it changed: ns.SetMapKind above, and a loaded setup or character
+-- that brought another kind (Setups.lua Apply, the world map put away first)
+function ns.MapKindChanged()
     ns.Safe("Map kind", function()
         ns.ApplyRedButtons()
         RefreshBigButton()

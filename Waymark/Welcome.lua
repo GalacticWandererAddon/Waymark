@@ -146,8 +146,13 @@ local function BuildPage()
     -- went the same day: the world map is the big map). Only where Waymark's world map is (Lab for now).
     if ns.MapKinds and ns.MapKinds.Here() then
         col.y = col.y - 6
-        col:CheckWith("Open the world map with M", ns.MapKinds.OnM, ns.MapKinds.SetM)
-        col:Tip(ns.MapKinds.M_TIP)
+        col:CheckWith(ns.MapKinds.MLabel(), ns.MapKinds.OnM, ns.MapKinds.SetM)
+        col:Tip(ns.MapKinds.MTip())
+        -- (L beside M, with the new quest log: never taken unasked, the user 2026-11-22)
+        if ns.MapKinds.NewLog() then
+            col:CheckWith(ns.MapKinds.LLabel(true), ns.MapKinds.TakesL, ns.MapKinds.SetTakesL)
+            col:Tip(ns.MapKinds.L_TIP)
+        end
     end
     col:Header("Want more on the map?")
     Switch(col, "Townsfolk", "townsfolk", "shown", "Trainers, vendors and innkeepers.")
