@@ -237,6 +237,22 @@ function W.Groups(map)
             local pt = q.parts[1] and q.parts[1].points[1]
             if pt then spot[q.id] = pt end
         end
+        -- (a quest our data has no place for: the game's own marker on this map, asked once and only if needed.
+        -- The tracker already falls back to it. Without QuestieDB every one of Forever's new quests was filed
+        -- under "Somewhere here", 2026-11-24)
+        local marks
+        local function Marked(id)
+            if marks == nil then
+                marks = {}
+                if C_QuestLog and C_QuestLog.GetQuestsOnMap then
+                    local okM, list = pcall(C_QuestLog.GetQuestsOnMap, map)
+                    for _, q in ipairs(okM and type(list) == "table" and list or {}) do
+                        if q.questID and q.x and q.y and not marks[q.questID] then marks[q.questID] = { q.x, q.y } end
+                    end
+                end
+            end
+            return marks[id]
+        end
         local px, py
         local pos = C_Map.GetPlayerMapPosition and C_Map.GetPlayerMapPosition(map, "player")
         if pos then px, py = pos:GetXY() end
@@ -250,7 +266,7 @@ function W.Groups(map)
                     h.toHere = okE and ends and ends.to and ends.to.map == map or false
                     out.ready[#out.ready + 1] = h
                 else
-                    local pt = spot[h.id]
+                    local pt = spot[h.id] or Marked(h.id)
                     local area = pt and ns.AreaNameAt and ns.AreaNameAt(map, pt[1], pt[2]) or nil
                     local key = area or "Somewhere here"
                     local g = by[key]
@@ -402,6 +418,7 @@ function W.Loose()
         local green = GetQuestGreenRange and GetQuestGreenRange() or 8
         local function Add(id, kind, extra)
             if seen[id] or W.IsDone(id) or parts.Log()[id] or not parts.ForMe(id) then return end
+            if ns.QuestGone and ns.QuestGone(id) then return end   -- (a next step Forever does not have is no loose end)
             seen[id] = true
             local who, map = Giver(id)
             local level = ns.QuestLevelOf(id)
@@ -491,7 +508,9 @@ function W.Tally(map)
     for _, id in ipairs(Index()[map] or {}) do
         local info = parts.Info(id)
         local flags = info.specialFlags or 0
-        if parts.ForMe(id) and flags % 2 < EVENT then
+        -- (a quest Forever does not have is not one of the zone's: "12 of 61" counted Naxxramas and the war
+        -- effort, 2026-11-24. One you have done counts whatever the list says)
+        if parts.ForMe(id) and flags % 2 < EVENT and not (ns.QuestGone and ns.QuestGone(id)) then
             t.all = t.all + 1
             if W.IsDone(id) then
                 t.done = t.done + 1

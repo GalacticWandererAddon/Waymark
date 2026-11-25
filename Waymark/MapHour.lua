@@ -88,6 +88,11 @@ local function Clear(map)
 end
 
 local function Lamp(map, dark)
+    -- (the Lab's night, slice 4: your lamp lights the land round you, and this flat one rests. Nothing without the Lab)
+    if ns.LabLampOn and ns.LabLampOn() then
+        if lampHost then lampHost:Hide() end
+        return
+    end
     if not lampHost then
         local canvas = map:GetCanvas()
         lampHost = CreateFrame("Frame", nil, canvas)
@@ -114,6 +119,8 @@ end
 local function Update(map)
     if not Cfg().on or ns.Perf("effects") or (ns.MapOnContinent and ns.MapOnContinent()) or not map:IsShown() then return Clear(map) end
     local r, g, b, dark = Tint(ns.MapHourNow())
+    -- (the Lab's night, slice 3: each zone in its own sky. Nothing unless the Lab is loaded and its switch is on)
+    if ns.LabSkyTint then r, g, b = ns.LabSkyTint(map:GetMapID(), ns.MapHourNow(), r, g, b) end
     if r == 1 and g == 1 and b == 1 then return Clear(map) end
     Paint(map, r, g, b)
     tinted = true

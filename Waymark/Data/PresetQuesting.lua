@@ -334,7 +334,7 @@ ns.PRESET_SETTINGS["questing"] = {
 		},
 	},
 	mapHour = {
-		on = false,
+		on = true,
 	},
 	minimap = {
 		angle = -130.14811672200139,

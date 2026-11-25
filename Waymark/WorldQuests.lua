@@ -158,8 +158,10 @@ function ns.OwnQuestDB()
     own = {
         contractVersion = "own", readMode = "Waymark's own",
         Enum = {
-            -- (RequiredRaces / RequiredClasses bits, as the game's)
-            raceMaskById = { 1, 2, 4, 8, 16, 32, 64, 128 },
+            -- (RequiredRaces / RequiredClasses bits, as the game's. Forever's two new races, the Skyborne: race 95
+            -- the Alliance's High Order, bit 32; race 96 the Horde's Windshapers, bit 33. Without them a Skyborne
+            -- had no race at all here and every race check was skipped: the other side's quests showed, 2026-11-23)
+            raceMaskById = { 1, 2, 4, 8, 16, 32, 64, 128, [95] = 2 ^ 32, [96] = 2 ^ 33 },
             classKeys = { WARRIOR = 1, PALADIN = 2, HUNTER = 4, ROGUE = 8, PRIEST = 16, SHAMAN = 64,
                           MAGE = 128, WARLOCK = 256, DRUID = 1024 },
             npcFlags = {},

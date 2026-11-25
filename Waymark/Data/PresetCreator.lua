@@ -176,10 +176,6 @@ ns.PRESET_SETTINGS["creator"] = {
 		big = false,
 		bigH = 539,
 		bigSize = 360,
-		bigTR = {
-			1058.4999453090129,
-			1122.3343240345121,
-		},
 		bigW = 640,
 		buttonPos = {
 			city = {
@@ -304,10 +300,6 @@ ns.PRESET_SETTINGS["creator"] = {
 		shape = "square",
 		size = 318,
 		splitQuests = false,
-		spot = {
-			2122.4995498098442,
-			1190.8329925164589,
-		},
 		wheel = true,
 	},
 	dockButton = true,
@@ -445,11 +437,6 @@ ns.PRESET_SETTINGS["creator"] = {
 		hideTab = true,
 		locked = false,
 		opacity = 1,
-		pos = {
-			kind = "topleft",
-			x = 22.648574462213521,
-			y = 742.1933469849306,
-		},
 		rememberShapes = true,
 		shapeFollow = 0.80000000000000004,
 		shapeGrow = 0.14999999999999999,

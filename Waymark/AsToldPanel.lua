@@ -41,9 +41,16 @@ local _, ns = ...
 --   the way = the sentences that say where (AsToldRead.lua). A quest that reads badly this way wants a line
 --   written for it; none are yet.
 
+--   The giver's warning (2026-11-24, the user: "easy. build it, pack it, ship it", and "Maybe astold panel
+--   better" than a line of its own low on the screen): where a giver warns you of what lies ahead ("Vagash lurks
+--   just above the ranch here, but be warned, he is deadly."), that sentence stands under the story for a while
+--   as you come to the quest's ground, once a session. In plain ink: no red. Only a sentence that was read and
+--   kept as a warning (Data\AsToldWarnings.lua); AsTold.lua says when you have come to the ground.
+
 local W, PAD = 300, 14
 local OPEN_FOR = 25          -- seconds a newly taken quest keeps its details open
 local NEXT_FOR = 8           -- and one brought up by /told next
+local WARN_FOR = 20          -- and the giver's warning, as you come to the quest's ground
 local EDGE = 18              -- the glass fades out over this much at the right, beyond the words (36 until 2026-11-15: "longer than it has to be")
 local FADE, GROW = 0.3, 0.45
 local SOFT_IN = 0.3          -- what the pointer brings fades in over this ("soft but not too slow": the user)
@@ -70,6 +77,8 @@ local shownSig
 local spans = {}        -- rows that can be clicked, as laid: { top, bottom, id }
 local markId            -- the name under the pointer in the list
 local beforeOpen        -- the quest whose "before this" is unfolded: the names alone till then
+local warnId, warnUntil = nil, 0   -- the quest whose giver's warning stands under its story, and until when
+local say               -- something said for a while in place of the quest that leads: { fn, till } (ns.ToldPanelSay)
 local function Aside() return fighting and Cfg().fight == "aside" end
 
 -- Words -------------------------------------------------------------------------------------------------------
@@ -97,7 +106,8 @@ end
 -- line where the giver turns from telling to asking for good: before the last run of ask and way sentences. (A
 -- way sentence in the middle of the telling gets no break: Cave Mushrooms names its cave in the second sentence,
 -- and the line broke there, after one sentence, 2026-11-14.)
-local function Telling(id, q)
+-- lit: a sentence to light (the giver's warning while its time runs: in the full telling it has no row of its own)
+local function Telling(id, q, lit)
     local kept = {}
     for _, e in ipairs((ns.ToldLabelled(id, q.text))) do
         if e[2] ~= "X" then kept[#kept + 1] = e end
@@ -108,7 +118,10 @@ local function Telling(id, q)
     for i, e in ipairs(kept) do
         local lead = (i == 1 and "") or (i == turn and "\n") or " "
         local ask = e[2] == "A" or e[2] == "W"
-        out[#out + 1] = lead .. (ask and ("|cffd9cfb5" .. e[1] .. "|r") or e[1])
+        local s = e[1]
+        if lit and s == lit then s = "|cfff5d694" .. s .. "|r"            -- (the ask's warm colour)
+        elseif ask then s = "|cffd9cfb5" .. s .. "|r" end
+        out[#out + 1] = lead .. s
     end
     return table.concat(out)
 end
@@ -130,11 +143,13 @@ local function First(text)
 end
 
 -- What to say -------------------------------------------------------------------------------------------------
--- A list of rows: { text, size, colour, indent, gap, id, side, sideColour, maxLines }
--- (id: a row that can be clicked, a quest's id; side: a few words at the row's right, in sideColour)
+-- A list of rows: { text, size, colour, indent, gap, id, side, sideColour, maxLines, font, more }
+-- (id: a row that can be clicked, a quest's id; side: a few words at the row's right, in sideColour; font: another
+-- hand than the panel's own, for the Lab's remarks in your character's hand; more: a word for the Lab, "strike"
+-- for a row its pencil strikes through: Lab/OneLog.lua's ns.ToldLaid)
 
-local function Row(rows, text, size, colour, indent, gap, id, side, sideColour, maxLines)
-    if text and text ~= "" then rows[#rows + 1] = { text, size, colour, indent or 0, gap or 0, id, side, sideColour, maxLines } end
+local function Row(rows, text, size, colour, indent, gap, id, side, sideColour, maxLines, font, more)
+    if text and text ~= "" then rows[#rows + 1] = { text, size, colour, indent or 0, gap or 0, id, side, sideColour, maxLines, font, more } end
 end
 
 local function From(q)
@@ -183,6 +198,20 @@ local function Detailed(it)
     return (hover or pinned or Cfg().hold == it.id or GetTime() < openUntil) and true or false
 end
 
+-- A finished quest in the Lab's voice: { line, back, font, colour }, or nil (Lab/DoneLine.lua; no build has it)
+local function Finished(id, q)
+    if not ns.ToldDone then return nil end
+    local ok, fin = pcall(ns.ToldDone, id, q)
+    return ok and type(fin) == "table" and fin or nil
+end
+
+-- What a quest asks as lines, { text, done } each, where the Lab says it so (Lab/OneLog.lua; no build has it)
+local function Asks(id, where)
+    if not ns.ToldObjectives then return nil end
+    local ok, list = pcall(ns.ToldObjectives, id, where)
+    return ok and type(list) == "table" and list or nil
+end
+
 -- always: the name, the count, how it began
 local function Main(rows, it, detailed)
     local q, id = it.q, it.id
@@ -195,35 +224,95 @@ local function Main(rows, it, detailed)
     -- length either". Only the unread fallback is held, to five lines.)
     local text, cap
     if detailed then
-        text = Telling(id, q)
+        -- (the giver's warning while its time runs: lit where it stands in the telling. A quest held on the panel
+        -- always shows the telling, so without this its warning was never marked at all: the code critic, 2026-11-24)
+        local lit = (warnId == id and GetTime() < warnUntil and ns.ToldWarning) and (ns.ToldWarning(id, q.text)) or nil
+        text = Telling(id, q, lit)
     else
         text = StoryOf(id, q)
         if not text then text, cap = Began(q, 210), 5 end
     end
     if text == "" then text = First(q.obj) end
-    Row(rows, text, 12, TEXT, 0, 3, nil, nil, nil, cap)
+    -- (the Lab, Lab/DoneLine.lua: a finished quest changes voice. The giver's words stand back, your own line
+    -- says the deed, then the way back. No build has it.)
+    local fin = not detailed and Finished(id, q)
+    -- (the Lab, Lab/OneLog.lua: what is asked as lines with your tally strokes, each struck when done. A finished
+    -- quest then needs no story at rest: the struck lines, your line, the way back.)
+    local asks = not detailed and Asks(id, "rest") or nil
+    if not (fin and asks) then Row(rows, text, 12, fin and FAINT or TEXT, 0, 3, nil, nil, nil, cap) end
+    for i, o in ipairs(asks or {}) do
+        Row(rows, o[1], 12, o[2] and FAINT or SOFT, 0, i == 1 and (fin and 3 or 6) or 2, nil, nil, nil, nil, nil, o[2] and "strike" or nil)
+    end
+    if fin then
+        if fin.line then Row(rows, fin.line, 19, fin.colour or SOFT, 0, 5, nil, nil, nil, nil, fin.font) end
+        if fin.back then Row(rows, fin.back, 12, ASK, 0, 5) end
+    -- (the deed is done: who to go back to, at rest too, in the words the details use. A Lab switch until the
+    -- user clears it: ns.ToldMore is the Lab's, and no build has it.)
+    elseif not detailed and q.who and ns.ToldMore and ns.ToldMore("done") and ns.ToldComplete(id) then
+        Row(rows, "Back to " .. q.who .. (q.where and (", at " .. q.where) or "") .. ".", 12, ASK, 0, 6)
+    end
+end
+
+-- what the panel says of a quest at rest: its story, or for a quest nobody has read, how it began (the Lab's
+-- story so far walks these)
+function ns.ToldRestText(id, q)
+    if not q then return nil end
+    return StoryOf(id, q) or Began(q, 210)
+end
+
+-- The giver's warning, for a while after you came to the quest's ground. A warning that is one of the story's
+-- own sentences is said above already, and the full telling holds every sentence: nothing is said twice.
+local function Warned(rows, it)
+    if warnId ~= it.id or GetTime() >= warnUntil or not ns.ToldWarning then return end
+    local s, letter = ns.ToldWarning(it.id, it.q.text)
+    if not s or letter == "S" then return end
+    Row(rows, "WARNING", 10, GOLD, 0, 8)
+    Row(rows, s, 12, TEXT, 0, 3)
 end
 
 -- on demand, under the whole telling: what the game asks in its one line, who gave it, the chain
 local function Details(rows, it)
     local q, id = it.q, it.id
     local asked
-    if ns.ToldComplete(id) and q.who then
+    local fin = Finished(id, q)
+    local asks = Asks(id, "pointer")
+    if fin then
+        -- (the Lab: your own line for the deed, then the way back)
+        Row(rows, "DONE", 10, GOLD, 0, 8)
+        for i, o in ipairs(asks or {}) do Row(rows, o[1], 12, FAINT, 0, i == 1 and 3 or 2, nil, nil, nil, nil, nil, "strike") end
+        if fin.line then Row(rows, fin.line, 19, fin.colour or SOFT, 0, 3, nil, nil, nil, nil, fin.font) end
+        if fin.back then Row(rows, fin.back, 12, ASK, 0, 4) end
+        asked = ""
+    elseif ns.ToldComplete(id) and q.who then
         asked = "Back to " .. q.who .. (q.where and (", at " .. q.where) or "") .. "."
     else
         asked = Clean(q.obj)
     end
     if asked ~= "" then
         Row(rows, "ASKED", 10, GOLD, 0, 8)
-        Row(rows, asked, 12, ASK, 0, 3)
+        if asks and not ns.ToldComplete(id) then
+            -- (the Lab: the lines themselves, with your strokes, in place of the game's sentence)
+            for i, o in ipairs(asks) do
+                Row(rows, o[1], 12, o[2] and FAINT or ASK, 0, i == 1 and 3 or 2, nil, nil, nil, nil, nil, o[2] and "strike" or nil)
+            end
+        else
+            Row(rows, asked, 12, ASK, 0, 3)
+        end
     end
     local before = ns.ToldBefore(id)
     if #before > 0 then
         -- (folded, the quests' names alone; a click on the head unfolds what they told. The user, 2026-11-22: "the
         -- \"before this\" part is too long unprompted. Maybe a click on before this to unfold more there")
+        -- (the Lab, Lab/OneLog.lua: the slip never grows past its own quest. One row, and a click on it opens the
+        -- log at this quest, where the chain is told. No build has it.)
+        local door = ns.OneLog and ns.OneLog("door")
         local open = beforeOpen == id
-        Row(rows, "BEFORE THIS", 10, FAINT, 0, 8, "before", open and "fold" or "unfold", FAINT)
-        for i = #before, 1, -1 do
+        if door then
+            Row(rows, "BEFORE THIS", 10, FAINT, 0, 8, "log", #before .. (#before == 1 and " step" or " steps") .. (ns.OneLog("pages") and "" or ", in the log"), GOLD)
+        else
+            Row(rows, "BEFORE THIS", 10, FAINT, 0, 8, "before", open and "fold" or "unfold", FAINT)
+        end
+        for i = (door and 0 or #before), 1, -1 do
             local b = ns.ToldQuest(before[i])
             if b then
                 Row(rows, (b.title or ""):upper(), 10, SOFT, 0, 4)
@@ -262,11 +351,26 @@ end
 
 local function Rows()
     local rows = {}
+    -- (something said for a while in place of the quest that leads: ns.ToldPanelSay, the Lab's pieces)
+    if say then
+        -- (under the pointer it stays: nothing changes while it is read)
+        if GetTime() < say.till or hover then
+            local ok = pcall(say.fn, function(...) Row(rows, ...) end)
+            if ok and #rows > 0 then return rows, "say" end
+            rows = {}
+        end
+        say = nil
+    end
     local it = ns.ToldLead and ns.ToldLead()
     if not it then return rows, "rest" end
     local detailed = Detailed(it)
     Main(rows, it, detailed)
-    if detailed then Details(rows, it) end
+    if detailed then Details(rows, it) else Warned(rows, it) end
+    -- (the Lab: a remark in your character's own hand, under the story at rest. Lab/Remarks.lua; no build has it.)
+    if not detailed and ns.ToldRemark and not Finished(it.id, it.q) then
+        local ok, remark, colour, font = pcall(ns.ToldRemark, it.id)
+        if ok and remark then Row(rows, remark, 19, colour or SOFT, 0, 6, nil, nil, nil, nil, font) end   -- (15 was too small and thin beside the giver's words: the first look in game, 2026-11-24)
+    end
     if listOpen then
         List(rows, it)
     else
@@ -391,7 +495,14 @@ local function Lay(rows)
         elseif l.side then
             l.side:Hide()
         end
-        l:SetFont(FONT, r[2], "")
+        -- (another hand for this row: where the font cannot be set, the panel's own. SetFont answers false
+        -- without an error then, and the line would keep the font of whatever row it held before.)
+        local set = false
+        if r[10] then
+            local ok, took = pcall(l.SetFont, l, r[10], r[2], "")
+            set = ok and took ~= false and l:GetFont() ~= nil
+        end
+        if not set then l:SetFont(FONT, r[2], "") end
         l:SetTextColor(r[3][1], r[3][2], r[3][3])
         l:SetShadowColor(0, 0, 0, 0)
         l:SetSpacing(r[2] >= 11 and 2 or 0)
@@ -415,12 +526,14 @@ local function Lay(rows)
         if lines[i].side then lines[i].side:Hide() end
     end
     PlaceMark()
+    -- (the Lab's pencil: a stroke through a row marked "strike". Lab/OneLog.lua; no build has it.)
+    if ns.ToldLaid then pcall(ns.ToldLaid, lines, rows, body) end
     return y + PAD
 end
 
 local function Sig(rows)
     local t = {}
-    for _, r in ipairs(rows) do t[#t + 1] = r[1] .. "\2" .. (r[7] or "") .. "\2" .. (r[9] or "") end
+    for _, r in ipairs(rows) do t[#t + 1] = r[1] .. "\2" .. (r[7] or "") .. "\2" .. (r[9] or "") .. "\2" .. (r[11] or "") end
     return table.concat(t, "\1")
 end
 
@@ -568,6 +681,20 @@ function ns.ToldPanelBefore()
 end
 -- (the pointer and the click, for the test outside the game)
 function ns.ToldPanelHover(on) if on then Enter() else Leave() end end
+-- a click on what is being said for a while (under: the row's id under the pointer, if it has one)
+function ns.ToldPanelSayClick(under)
+    if not say then return end
+    local go = say.click
+    say = nil
+    Show(nil, true)
+    if go then pcall(go, under) end
+end
+-- the wheel on the panel: your other quests; while something said for a while has pages (the Lab's reading back
+-- of a chain), a notch turns a page
+function ns.ToldPanelWheel(d)
+    if say and say.wheel then pcall(say.wheel, d) return end
+    OpenList()
+end
 function ns.ToldPanelPin()
     pinned = (not pinned) or nil
     Show(nil, true)
@@ -600,6 +727,8 @@ local function Menu()
     items[#items + 1] = { c.fight == "aside" and "stay visible in combat" or "fade out in combat", function()
         c.fight = c.fight ~= "aside" and "aside" or nil
     end }
+    -- (the Lab's rows: writing your own line for a finished quest. No build has them.)
+    if ns.ToldMenuMore and it then pcall(ns.ToldMenuMore, items, it) end
     ns.QuillMenu(items)
 end
 
@@ -779,11 +908,23 @@ Build = function()
             return
         end
         if button ~= "LeftButton" then return end
+        -- (something is being said for a while: a click ends it, and the quest that leads is back. Where what
+        -- is said has somewhere to go, the click goes there: the Lab's turned in page opens the log.)
+        if say then
+            ns.ToldPanelSayClick(under)
+            return
+        end
         local it = ns.ToldLead()
         if not it then return end
         if IsShiftKeyDown and IsShiftKeyDown() then
             local link = GetQuestLink and GetQuestLink(it.id)
             if link and ChatEdit_InsertLink then ChatEdit_InsertLink(link) end
+            return
+        end
+        -- (the Lab's one row for what came before: its steps are read back here a page each, or the log opens at
+        -- this quest. Lab/OneLog.lua.)
+        if under == "log" and not listOpen then
+            if ns.OneLogBefore then pcall(ns.OneLogBefore, it.id) end
             return
         end
         -- (on "before this": what came before unfolds or folds, the details stay as they are)
@@ -807,7 +948,7 @@ Build = function()
         Show(nil, true)
     end)
     panel:EnableMouseWheel(true)
-    panel:SetScript("OnMouseWheel", function() OpenList() end)
+    panel:SetScript("OnMouseWheel", function(_, d) ns.ToldPanelWheel(d) end)
     panel:SetScript("OnEnter", function()
         Enter()
         -- (the panel has no tooltip of its own: its hints were written into whichever tooltip stood open, "(Hold
@@ -841,8 +982,20 @@ function ns.ToldPanelEvent(kind, id, leadChanged)
     if kind == "taken" then
         hidden = nil
         pinned = nil
+        say = nil      -- (a new quest: whatever was being said makes way for it)
         OpenFor(OPEN_FOR)
+    elseif kind == "warn" and id then
+        -- (you have come to the ground of a quest whose giver warned you: AsTold.lua)
+        warnId, warnUntil = id, GetTime() + WARN_FOR
+        if C_Timer and C_Timer.After then
+            local mine = warnUntil
+            C_Timer.After(WARN_FOR + 0.1, function()
+                if warnUntil == mine then Show(nil, true) end
+            end)
+        end
     end
+    -- (the Lab's pieces hear of everything too: a chain's closing words at a hand-in. No build has them.)
+    if ns.ToldPanelHeard then pcall(ns.ToldPanelHeard, kind, id, leadChanged) end
     -- (the same quest leads: what changed is small, a count or the "more quests here" line. The words that stay
     -- stand still.)
     Show(nil, not leadChanged)
@@ -862,6 +1015,45 @@ function ns.ToldPanelToggle()
           or (c.panel ~= false) and "The As told panel is shown." or "The As told panel is hidden."))
 end
 
+-- Something said for a while in place of the quest that leads, in the panel's own letters (the Lab's pieces: a
+-- chain's closing words, the story so far on a flight). fn(Row) lays its rows with the panel's Row(text, size,
+-- colour, indent, gap, id, side, sideColour, maxLines); a click on the panel, a quest taken or the time ends it.
+-- seconds nil: stop saying. The colours, for the caller: ns.ToldPanelInk. Under the pointer it stays, and a few
+-- seconds after (the user, 2026-11-24: a telling that went back to the held quest while being read). click: where
+-- a click on it goes, after it is ended (it is told which row was under the pointer). wheel: what a notch of the
+-- wheel does while it is said.
+ns.ToldPanelInk = { text = TEXT, soft = SOFT, faint = FAINT, way = WAY, gold = GOLD, ask = ASK }
+function ns.ToldPanelSay(fn, seconds, click, wheel)
+    if not (fn and seconds) then
+        if say then say = nil Show(nil, true) end
+        return
+    end
+    local mine = { fn = fn, till = GetTime() + seconds, click = click, wheel = wheel }
+    say = mine
+    Show()
+    if C_Timer and C_Timer.After then
+        local function Over()
+            if say ~= mine then return end
+            if hover then
+                mine.till = GetTime() + 3
+                C_Timer.After(3.1, Over)
+                return
+            end
+            say = nil
+            Show()
+        end
+        C_Timer.After(seconds + 0.1, Over)
+    end
+end
+function ns.ToldPanelSaying() return say and true or false end
+-- Can the giver's warning be read if it is said now? Not while the panel is hidden for now, saying something
+-- else, or in a fight (where it stays as it is, or is faded out). AsTold.lua asks before it uses the warning up.
+function ns.ToldPanelCanWarn()
+    local c = Cfg()
+    if not (c.on and c.panel ~= false) or hidden or say or fighting then return false end
+    return true
+end
+
 -- /told story: the details, kept open (the chain's earlier steps are in them)
 function ns.ToldPanelStory()
     pinned = true
@@ -871,8 +1063,8 @@ end
 
 -- (for the test outside the game: what the panel reads now, and "rest", "open" or "list")
 function ns.ToldPanelLines()
-    local out, sides = {}, {}
+    local out, sides, more = {}, {}, {}
     local rows, mode = Rows()
-    for _, r in ipairs(rows) do out[#out + 1] = r[1] sides[#sides + 1] = r[7] or "" end
-    return out, mode, sides
+    for _, r in ipairs(rows) do out[#out + 1] = r[1] sides[#sides + 1] = r[7] or "" more[#more + 1] = r[11] or "" end
+    return out, mode, sides, more
 end

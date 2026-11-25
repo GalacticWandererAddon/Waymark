@@ -635,6 +635,18 @@ local function Update()
             local a, b = role == "lit" and (own and own[2] or STRAW) or (own and own[1] or UMBER), role == "lit" and MOONLIGHT or NIGHT
             local day = role == "lit" and 1 or deep
             for i = 1, 3 do L.color[i] = a[i] * day + (b[i] - a[i] * day) * tone / 10 end
+            -- (the Lab's night, slice 3: the zone's own sun on the lit slopes, its sky in the shade, from the game's
+            -- light tables. Nothing unless the Lab is loaded and its switch is on)
+            if ns.LabSkyTones then
+                local sLit, sShade = ns.LabSkyTones(mapID, ns.MapHourNow and ns.MapHourNow() or 12)
+                local s = role == "lit" and sLit or sShade
+                if s then
+                    for i = 1, 3 do L.color[i] = s[i] end
+                    L.tone, L.sky = nil, true            -- (dressed again: the sky's colours move with the hour)
+                elseif L.sky then
+                    L.tone, L.sky = nil, nil             -- (and its own colours back when the sky is off)
+                end
+            end
             Dress(L, role, tone)
             L.host:SetAlpha(math.min(1, plan[name][2]))
             L.host:SetShown(plan[name][2] > 0.004)

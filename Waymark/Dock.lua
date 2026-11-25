@@ -1,4 +1,4 @@
-local _, ns = ...
+local ADDON, ns = ...
 
 -- Minimap replacement (dock.on): the Battlefield Map takes the minimap's place.
 -- One square, two faces: the game's own minimap (made square and north up, its
@@ -247,31 +247,45 @@ local function SideOnMinimap()
 end
 
 -- the game redraws the minimap at a new size on a zoom change; there and back
--- in one frame doesn't count, so back a frame later
-local function Redraw()
-    local z = Minimap:GetZoom()
-    Minimap:SetZoom(z > 0 and z - 1 or z + 1)
-    C_Timer.After(0, function() Minimap:SetZoom(z) end)
+-- in one frame doesn't count, so back a frame later. One at a time: two in one frame (docking afresh
+-- undoes and squares, each redrawing) left the minimap a zoom out, the second read the first's step
+local Redraw
+do
+    local to
+    Redraw = function()
+        if to then return end
+        to = Minimap:GetZoom()
+        Minimap:SetZoom(to > 0 and to - 1 or to + 1)
+        C_Timer.After(0, function()
+            local z = to
+            to = nil
+            if z then Minimap:SetZoom(z) end
+        end)
+    end
 end
 ns.DockRedraw = Redraw  -- (DockPatch.lua, after giving the minimap its size back)
+
+-- our frame round the square, UIParent units: its border on each side (left, right, top, bottom), the
+-- header too where it stands above the frame
+local function FrameMargins()
+    local map = BattlefieldMapFrame
+    if not (map and insets) then return 4, 4, 4, 4 end  -- (before the map is there to measure)
+    local k = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
+    local out = type(ns.BorderOutset and ns.BorderOutset()) == "number" and ns.BorderOutset() or 0
+    local l, r, t, b = (insets[1] + out) * k, (insets[2] + out) * k, (insets[3] + out) * k, (insets[4] + out) * k
+    local h = ns.ZoneHeader
+    if h and h:IsShown() and h:GetTop() and map:GetTop() then
+        local above = h:GetTop() * h:GetEffectiveScale() / UIParent:GetEffectiveScale() - map:GetTop() * k
+        if above > 0 then t = t + above end
+    end
+    return l, r, t, b
+end
 
 -- where the square's top-right corner goes, in UIParent units from its
 -- top-right (negative: in from the edge); corner: our frame's outer edge
 -- (border, outside header) flush with the screen's corner
 local function CornerOffsets()
-    local map = BattlefieldMapFrame
-    local right, top = 4, 4  -- (before the map is there to measure)
-    if map and insets then
-        local k = map:GetEffectiveScale() / UIParent:GetEffectiveScale()
-        local out = type(ns.BorderOutset and ns.BorderOutset()) == "number" and ns.BorderOutset() or 0
-        right, top = (insets[2] + out) * k, (insets[3] + out) * k
-        -- a header standing above the frame
-        local h = ns.ZoneHeader
-        if h and h:IsShown() and h:GetTop() and map:GetTop() then
-            local above = h:GetTop() * h:GetEffectiveScale() / UIParent:GetEffectiveScale() - map:GetTop() * k
-            if above > 0 then top = top + above end
-        end
-    end
+    local _, right, top = FrameMargins()
     return -right, -top
 end
 
@@ -349,27 +363,111 @@ local function IconsToShape()
     C_Timer.After(2, PlaceIcons)
 end
 
+-- Who else moves the minimap (/waymark check). Another addon placing, sizing, scaling or taking the minimap
+-- after the dock did left its blips and its arrow away from the square, and nothing said which addon
+-- (EllesmereUI, Questie or another: a player, 19 Nov). A call by someone else is noted by the first addon in
+-- its call stack, at most once a second; ours (ns.dockOwnMove, the patch's every frame) cost nothing.
+-- (one table for it all, W: the file's main chunk is at Lua's 200 locals)
+local W = { movers = {}, kept = { n = 0, times = {} } }   -- movers: [who .. " " .. what] = { n, at, who, what }
+do
+    local noteAt = 0
+    local function Note(what)
+        return function()
+            if not applied or ns.dockOwnMove then return end
+            local now = GetTime()
+            if now - noteAt < 1 then return end
+            -- (from this function's caller on: the game's hook, the method, the code that called it)
+            local stack = debugstack and debugstack(2, 14, 0) or ""
+            local who
+            for name in stack:gmatch("AddOns[/\\]([^/\\]+)[/\\]") do
+                -- (ours, or the game's code run for ours: not noted, and the second's one note left for others.
+                -- Our own moves mostly say so first, ns.dockOwnMove, and cost no stack)
+                if name == ADDON then return end
+                if not name:find("^Blizzard_") then who = name break end
+                who = who or "the game"
+            end
+            if not who and (stack:find("FrameXML") or stack:find("SharedXML")) then who = "the game" end
+            who = who or "unknown"
+            noteAt = now
+            local key = who .. " " .. what
+            local m = W.movers[key] or { n = 0, who = who, what = what }
+            m.n, m.at = m.n + 1, now
+            W.movers[key] = m
+        end
+    end
+    for _, what in ipairs({ "SetPoint", "SetAllPoints", "SetSize", "SetWidth", "SetHeight", "SetScale", "SetParent",
+                            "SetClampedToScreen" }) do
+        if Minimap and Minimap[what] then hooksecurefunc(Minimap, what, Note(what)) end
+    end
+end
+-- the addon that moved it last (not the game), since a time if given
+function W.LastMover(since)
+    local best
+    for _, m in pairs(W.movers) do
+        if m.who ~= "the game" and m.at >= (since or 0) and (not best or m.at > best.at) then best = m end
+    end
+    return best and best.who
+end
+ns.DockLastMover = W.LastMover   -- (DockPatch.lua: why the patch hid)
+
+-- The minimap's rect on screen as the dock left it (pixels, W.placed), to see later whether someone else moved it
+do
+    local function Rect()
+        local mm = Minimap
+        local l, t = mm:GetLeft(), mm:GetTop()
+        if not (l and t) then return nil end
+        local e = mm:GetEffectiveScale()
+        return l * e, t * e, mm:GetWidth() * e, mm:GetHeight() * e
+    end
+    function W.Remember()
+        local l, t, w, h = Rect()
+        W.placed = l and { l, t, w, h } or nil
+    end
+    function W.Moved()
+        local p = W.placed
+        if not p then return false end
+        local l, t, w, h = Rect()
+        if not l then return false end
+        return math.abs(l - p[1]) > 1.5 or math.abs(t - p[2]) > 1.5 or math.abs(w - p[3]) > 1.5 or math.abs(h - p[4]) > 1.5
+    end
+end
+
 local function PlaceMinimap()
     if not applied or InCombat() then return end
     if ns.DockPatchOff then ns.DockPatchOff() end
     local mm = Minimap
+    -- (its size too, each time it differs: the minimap's scale can change after docking, Edit Mode's layout
+    -- landing late or another addon's minimap scale, and the square changed with it, "after reload the docked
+    -- map is 2X bigger", a player, 11 Nov)
+    local side = SideOnMinimap()
+    local resized = math.abs(mm:GetWidth() - side) > 0.5 or math.abs(mm:GetHeight() - side) > 0.5
+    ns.dockOwnMove = true   -- (our own: not noted as another addon's)
+    if resized then mm:SetSize(side, side) end
     -- (the docked shape: the visible rectangle's top goes there, the minimap's own top a band higher)
-    local bx, b = Bands(SideOnMinimap())
+    local bx, b = Bands(side)
     local spot = Cfg().spot  -- (where you dragged it by the header: its top-right, UI units)
     if spot then
-        -- (on the screen, as shown: a spot dragged at another resolution or UI scale may lie past it)
+        -- (on the screen, as shown, the frame round it too, its border and header: a spot dragged at another
+        -- resolution or UI scale may lie past it, and only the square itself was held on before)
         local e = Box():GetEffectiveScale() / UIParent:GetEffectiveScale()
         local sw, sh = UIParent:GetWidth(), UIParent:GetHeight()
-        spot = { math.max(math.min(Box():GetWidth() * e, sw), math.min(spot[1], sw)),
-                 math.min(sh, math.max(spot[2], math.min(Box():GetHeight() * e, sh))) }
+        local ml, mr, mt, mb = FrameMargins()
+        spot = { math.min(sw - mr, math.max(spot[1], Box():GetWidth() * e + ml)),
+                 math.min(sh - mt, math.max(spot[2], Box():GetHeight() * e + mb)) }
         local k = UIParent:GetEffectiveScale() / mm:GetEffectiveScale()
         mm:ClearAllPoints()
         mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", spot[1] * k + bx, spot[2] * k + b)
         CarryCluster(spot)
+        ns.dockOwnMove = nil
+        W.Remember()
+        if resized then Redraw() end
         return
     end
     ReleaseCluster()  -- (first: the Edit Mode branch below reads where the cluster is)
-    if Cfg().corner then
+    -- (not on Forever: the setting isn't offered there since 8 Nov, and one saved by 1.2.0 to 1.2.2, which
+    -- shipped it on, put early players' squares in the screen's corner with no row to undo it. ApplyDock
+    -- clears it there too)
+    if Cfg().corner and not ns.FOREVER then
         local x, y = CornerOffsets()
         local k = UIParent:GetEffectiveScale() / mm:GetEffectiveScale()
         mm:ClearAllPoints()
@@ -388,6 +486,9 @@ local function PlaceMinimap()
         mm:ClearAllPoints()
         mm:SetPoint("TOPRIGHT", UIParent, "BOTTOMLEFT", applied.right + bx, applied.top + b)
     end
+    ns.dockOwnMove = nil
+    W.Remember()
+    if resized then Redraw() end
 end
 
 local function Square()
@@ -412,7 +513,9 @@ local function Square()
     if ns.ApplyClearView then C_Timer.After(0, ns.ApplyClearView) end
     if a.right then PlaceMinimap() end
     local s = SideOnMinimap()
+    ns.dockOwnMove = true
     mm:SetSize(s, s)
+    ns.dockOwnMove = nil
     mm:SetMaskTexture(Mask())
     GetMinimapShape = function() return "SQUARE" end  -- (LibDBIcon places buttons by it)
     IconsToShape()
@@ -420,7 +523,14 @@ local function Square()
     for _, f in ipairs({ GameTimeFrame, AddonCompartmentFrame }) do
         if f and f.SetClampedToScreen then f:SetClampedToScreen(true) end
     end
-    if a.rotate == "1" then SetCVar("rotateMinimap", "0") end
+    -- (north up while docked, the game's "Rotate minimap" back on undocking. Kept per character, out of the
+    -- settings (a setup, a share string or a copied character would carry it to someone who never had it on):
+    -- only remembered till logout before, so a logout while docked lost it for good)
+    if a.rotate == "1" then
+        WaymarkCharDB = WaymarkCharDB or {}
+        WaymarkCharDB.dockRotate = true
+        SetCVar("rotateMinimap", "0")
+    end
     for _, name in ipairs(ART) do Stash(name, a.stashed) end
     -- the day / night sun and moon: we have our own. Forever's is its own frame, always hidden here
     -- (GameTimeFrame there is the calendar); on the old clients it's that button, as you set it
@@ -494,7 +604,9 @@ local function Unsquare()
     for _, f in ipairs({ GameTimeFrame, AddonCompartmentFrame }) do
         if f and f.SetClampedToScreen then f:SetClampedToScreen(false) end
     end
-    if a.rotate == "1" then SetCVar("rotateMinimap", "1") end
+    if a.rotate == "1" or (WaymarkCharDB and WaymarkCharDB.dockRotate) then SetCVar("rotateMinimap", "1") end
+    if WaymarkCharDB then WaymarkCharDB.dockRotate = nil end
+    W.placed = nil
     for _, s in ipairs(a.stashed) do s[1]:SetParent(s[2]) end
     if a.coords and a.coordPoints then
         a.coords:ClearAllPoints()
@@ -773,13 +885,47 @@ end
 local capInfo = "not worked out yet"
 local function Yards() return IsIndoors and IsIndoors() and YARDS_IN or YARDS_OUT end
 
+-- Yards across the minimap at zoom z: the game's own view where it tells it (C_Minimap.GetViewRadius,
+-- Forever; Era has none), at the zoom it's at, and for the other zooms the table nearest to it, scaled
+-- to it. A player's client saw 240 yd where the table said 400, and the blips drifted off our pins
+-- (CurseForge, 24 Nov). Measured a frame after the zoom or indoors changes (the game catches up), kept
+-- per indoors and outdoors, so the view only moves when the game's really does.
+local cal = {}         -- [indoors] = { table, factor }
+local calKey, calAt = nil, 0
+local function Across(z)
+    local list = Yards()
+    local inside = list == YARDS_IN
+    local c = cal[inside]
+    if not c then
+        c = { list, 1 }
+        cal[inside] = c
+    end
+    if C_Minimap and C_Minimap.GetViewRadius then
+        local zoom, now = Minimap:GetZoom(), GetTime()
+        local key = zoom * 2 + (inside and 1 or 0)
+        if key ~= calKey then
+            calKey, calAt = key, now
+        elseif now > calAt then
+            calAt = now  -- (once a frame)
+            local m = (C_Minimap.GetViewRadius() or 0) * 2
+            local o, i = YARDS_OUT[zoom + 1], YARDS_IN[zoom + 1]
+            if m > 0 and o and i then
+                local b = math.abs(math.log(m / o)) <= math.abs(math.log(m / i)) and YARDS_OUT or YARDS_IN
+                local f = m / b[zoom + 1]
+                if math.abs(f - 1) < 0.005 then f = 1 end
+                if f > 0.25 and f < 4 then c[1], c[2] = b, f end
+            end
+        end
+    end
+    return (c[1][(z or 0) + 1] or c[1][1]) * c[2]
+end
+
 local function MinimapScale(sc, z)
     local yards = sc.mapID and ns.MapYards and ns.MapYards(sc.mapID)
     local cw = sc.Child and sc.Child:GetWidth()
     -- (the minimap's whole side: a tall shape's box is narrower than what the minimap's yards span)
     local w = Box():GetWidth() / (Fracs()) * Box():GetEffectiveScale() / sc:GetEffectiveScale()
-    local list = Yards()
-    local across = list[(z or 0) + 1] or list[1]
+    local across = Across(z)
     local s = yards and cw and cw > 0 and w > 0 and w * yards / (cw * across) or nil
     if not z or z == 0 then
         capInfo = string.format("map %s, %s yd wide, canvas %s, square %s, minimap %d yd: scale %s",
@@ -819,10 +965,10 @@ end
 local function ZoomForScale(sc, s)
     local s0 = MinimapScale(sc)
     if not (s0 and s and s > 0) then return 0 end
-    local list = Yards()
-    local want = list[1] * s0 / s  -- yards across at that scale
+    local want = Across(0) * s0 / s  -- yards across at that scale
     local best, z = math.huge, 0
-    for i, y in ipairs(list) do
+    for i = 1, #YARDS_OUT do
+        local y = Across(i - 1)
         if math.abs(y - want) < best then best, z = math.abs(y - want), i - 1 end
     end
     return math.min(z, Minimap:GetZoomLevels() - 1)
@@ -991,8 +1137,14 @@ local function InDungeon()
     local inside, kind = IsInInstance()
     return inside and (kind == "party" or kind == "raid")
 end
+-- (and in a cave the cave view covers the square: the game's minimap there has your party on it, the cave
+-- view's Minimap button, Cave.lua. "I cannot see my party members in the caves and dungeons", a player, 15 Nov)
+local function Inside()
+    if InDungeon() then return true end
+    return (ns.InCave and ns.InCave()) and true or false
+end
 local function MinimapFace()
-    return applied and ((Cfg().face ~= "map" and not Cfg().mapOnly) or (dungeonMinimap and InDungeon())) or false
+    return applied and ((Cfg().face ~= "map" and not Cfg().mapOnly) or (dungeonMinimap and Inside())) or false
 end
 ns.DockMinimapFace = MinimapFace  -- (MapControls: no centering of its own meanwhile)
 
@@ -1239,7 +1391,7 @@ end
 
 -- back to the minimap face, at zoom z (default its farthest, where the map took over)
 local function CloseMap(z)
-    if Cfg().mapOnly and InDungeon() and not IsBig() then
+    if Cfg().mapOnly and Inside() and not IsBig() then
         dungeonMinimap = true
         ApplyFace()
         LiftButtons()
@@ -1278,14 +1430,14 @@ local function DungeonMapFace()
     RedrawPicture(BattlefieldMapFrame)
     if ns.UpdateDungeon then ns.UpdateDungeon() end
 end
-function ns.DockDungeonMinimap() return dungeonMinimap and InDungeon() and applied and true or false end
+function ns.DockDungeonMinimap() return dungeonMinimap and Inside() and applied and true or false end
 function ns.DockToggleDungeonMinimap()
     if ns.DockDungeonMinimap() then DungeonMapFace() else CloseMap() end
 end
 local leaving = CreateFrame("Frame")
 leaving:RegisterEvent("PLAYER_ENTERING_WORLD")
 leaving:SetScript("OnEvent", function()
-    if dungeonMinimap and not InDungeon() then DungeonMapFace() end
+    if dungeonMinimap and not Inside() then DungeonMapFace() end
 end)
 
 -- MapControls ToggleBigMap while docked: the big map face, grown from the
@@ -1626,9 +1778,9 @@ function ns.DockGeometry()
     local radius = C_Minimap and C_Minimap.GetViewRadius and C_Minimap.GetViewRadius()
     local pos = C_Map.GetPlayerMapPosition(map:GetMapID(), "player")
     return string.format("zoom %d of %d, %s; minimap mid %.1f,%.1f size %.1fx%.1f; view mid %.1f,%.1f size %.1fx%.1f; "
-        .. "game's view across %s yd, our table %.1f; canvas scale %.3f, wanted %s; scroll %.4f,%.4f, you %s",
+        .. "game's view across %s yd, ours %.1f (table %.1f); canvas scale %.3f, wanted %s; scroll %.4f,%.4f, you %s",
         z, Minimap:GetZoomLevels() - 1, (IsIndoors and IsIndoors()) and "indoors" or "outdoors", mx, my, mw, mh, sx, sy, sw, sh,
-        radius and string.format("%.1f", radius * 2) or "?", Yards()[z + 1] or 0, sc:GetCanvasScale(),
+        radius and string.format("%.1f", radius * 2) or "?", Across(z), Yards()[z + 1] or 0, sc:GetCanvasScale(),
         tostring(MinimapScale(sc, z)), sc.currentScrollX or 0, sc.currentScrollY or 0,
         pos and pos.x and string.format("%.4f,%.4f", pos.x, pos.y) or "?")
 end
@@ -1772,26 +1924,100 @@ function ns.DockSpotReset()
     if ns.DockMoveBuffs then ns.Safe("Dock buffs", ns.DockMoveBuffs) end
 end
 
+-- The minimap kept under the square (once a second, docked, out of a fight, not while the patch of blips
+-- holds it). Another addon moving or sizing it after the dock did left the blips and the minimap's arrow
+-- away from the square, or a second minimap beside it (two players, 11 and 19 Nov). Put back when it has
+-- moved; an addon that keeps holding it (a third move within half a minute) has it, and the map follows it
+-- there instead, so the two never fight every second (a flicker, and the map's work each time).
+function W.KeepUnder()
+    local kept = W.kept   -- n: put back; heldBy: who holds it; at: the last move seen
+    if not applied or box or InCombat() or squareDrag or dragBase or editing then return end
+    if not W.Moved() then return end
+    local now = GetTime()
+    kept.at = now
+    if not kept.heldBy then
+        local t = kept.times
+        t[#t + 1] = now
+        while #t > 3 do table.remove(t, 1) end
+        -- (only another addon is given in to: the game moving it, its layout at login say, is put back always)
+        local who = #t == 3 and now - t[1] < 30 and W.LastMover(now - 30)
+        if not who then
+            kept.n = kept.n + 1
+            PlaceMinimap()
+            UpdateMap()
+            return
+        end
+        kept.heldBy = who
+    end
+    W.Remember()
+    UpdateMap()   -- (the map over the minimap where the other addon holds it)
+end
+
 -- The UI scale comes in seconds after a load, and not always with a size change (the clock came back at
 -- 0.64 of its spot, the user 2026-11-08; a player's docked map crept toward the middle after a reload):
 -- docked, the square is placed again when UIParent's or the minimap's scale changes. Twice a second
 do
-    local scaleWatch, last, wait = CreateFrame("Frame"), nil, 0
+    local scaleWatch, last, wait, ticks = CreateFrame("Frame"), nil, 0, 0
     scaleWatch:SetScript("OnUpdate", function(_, dt)
         wait = wait - dt
         if wait > 0 then return end
         wait = 0.5
         if not applied then last = nil return end
         local now = UIParent:GetEffectiveScale() .. ":" .. Minimap:GetEffectiveScale()
-        if now == last then return end
-        if last == nil then last = now return end
-        if InCombat() or squareDrag or dragBase then return end   -- (later: tried again)
-        last = now
-        ns.Safe("Dock scale", function()
-            PlaceMinimap()
-            Redraw()
-        end)
+        if last == nil then last = now end
+        if now ~= last then
+            if InCombat() or squareDrag or dragBase then return end   -- (later: tried again)
+            last = now
+            ns.Safe("Dock scale", function()
+                PlaceMinimap()   -- (its size too: the square stays the size you set)
+                UpdateMap()      -- (and the map over it now, not at the next login pass)
+                Redraw()
+            end)
+            return
+        end
+        ticks = ticks + 1
+        if ticks % 2 == 0 then ns.Safe("Dock keep", W.KeepUnder) end
     end)
+end
+
+-- /waymark check: what a stranger's setup does to the docked minimap (the docked pass, 2026-11-24)
+function ns.DockStrangerInfo()
+    local c, mm = Cfg(), Minimap
+    local out = {}
+    local function Spot(p) return type(p) == "table" and p[1] and string.format("%.0f,%.0f", p[1], p[2] or 0) or "none" end
+    out[#out + 1] = { "docked settings", string.format("on %s, shape %s, size %s, corner %s, spot %s, big map's spot %s, "
+        .. "Waymark size %.2f, rotate kept %s", tostring(c.on), tostring(c.shape), tostring(c.size), tostring(c.corner),
+        Spot(c.spot), Spot(c.bigTR), ns.AddonScale(), tostring(WaymarkCharDB and WaymarkCharDB.dockRotate or false)) }
+    local cont = mm:GetParent()
+    local clu = MinimapCluster
+    local asked = SideOnMinimap() * mm:GetEffectiveScale()
+    out[#out + 1] = { "minimap's scale and side", string.format("UI %.3f; minimap %.3f, in %s %.3f, cluster %.3f; effective %.3f; "
+        .. "side asked %.1f px, on screen %.1f x %.1f px; square %s",
+        UIParent:GetEffectiveScale(), mm:GetScale(), cont and (cont:GetName() or "unnamed") or "none",
+        cont and cont.GetScale and cont:GetScale() or 0, clu and clu:GetScale() or 0, mm:GetEffectiveScale(),
+        asked, mm:GetWidth() * mm:GetEffectiveScale(), mm:GetHeight() * mm:GetEffectiveScale(),
+        Box():GetWidth() and string.format("%.1f x %.1f px", Box():GetWidth() * Box():GetEffectiveScale(),
+            Box():GetHeight() * Box():GetEffectiveScale()) or "?") }
+    local held = {}
+    for _, f in ipairs({ mm, cont, clu }) do
+        if f and f.IsClampedToScreen then
+            held[#held + 1] = (f == mm and "minimap" or f == clu and "cluster" or "its parent") .. " "
+                .. (f:IsClampedToScreen() and "yes" or "no")
+        end
+    end
+    out[#out + 1] = { "minimap held on the screen", table.concat(held, ", ") }
+    out[#out + 1] = { "minimap kept under the square", string.format("put back %d times; held by %s%s",
+        W.kept.n, W.kept.heldBy or "nobody", W.kept.at and string.format("; last moved %.0f s ago", GetTime() - W.kept.at) or "") }
+    local list = {}
+    for _, m in pairs(W.movers) do list[#list + 1] = m end
+    table.sort(list, function(a, b) return a.at > b.at end)
+    local said = {}
+    for i = 1, math.min(6, #list) do
+        local m = list[i]
+        said[i] = string.format("%s %s x%d (%.0f s ago)", m.who, m.what, m.n, GetTime() - m.at)
+    end
+    out[#out + 1] = { "who else moved the minimap", #said > 0 and table.concat(said, "; ") or "nobody" }
+    return out
 end
 
 -- The shape changed (dock.shape): the mask, the minimap's place, and all that hangs on the square
@@ -1847,14 +2073,18 @@ function ns.DockResize(map, w, h, dragging)
         if InCombat() then pending = true return end
         if ns.DockPatchOff then ns.DockPatchOff() end
         local s = SideOnMinimap()
+        ns.dockOwnMove = true
         Minimap:SetSize(s, s)
+        ns.dockOwnMove = nil
         if reSpot then
             c.spot = reSpot
             if c.corner then c.corner = false end   -- (a spot of your own, as DockSquareDragStop)
             PlaceMinimap()
             ns.DockPlace(map)
-        elseif Shape() then
-            PlaceMinimap()  -- (the docked shape: the band changed with the size)
+        else
+            -- (the docked shape: the band changed with the size. Placed every time: where it is now is what
+            -- the dock keeps it at, KeepUnder)
+            PlaceMinimap()
         end
     end
     if ns.UpdateMapShape then ns.Safe("Dock UpdateShape", ns.UpdateMapShape, true, true) end
@@ -2043,8 +2273,14 @@ function ns.ApplyDock()
     -- (docked is the map, always: since 2026-11-06 the minimap side isn't a choice. Set here too, as
     -- a setup or a character's settings can bring old values)
     Cfg().mapOnly, Cfg().face = true, "map"
+    -- (Forever offers no corner setting since 8 Nov; 1.2.0 to 1.2.2 shipped it on, and a saved one kept early
+    -- players' squares in the screen's corner with no row to undo it: the minimap's spot there, 2026-11-24)
+    if ns.FOREVER and Cfg().corner then Cfg().corner = false end
     if InCombat() then pending = true return end
     pending = nil
+    -- (docked afresh: the minimap is put back under the square again, whoever held it before)
+    W.kept.heldBy = nil
+    wipe(W.kept.times)
     if Cfg().on then
         if applied then
             IconsToShape()
@@ -2325,6 +2561,17 @@ function ns.SetupDock(map)
     local since = 0
     ticker:SetScript("OnUpdate", function(_, dt)
         if not applied then atTop = false return end
+        -- (out of the cave on the minimap face: no event says so, a dungeon's is PLAYER_ENTERING_WORLD above. A
+        -- second out first: at a cave's mouth "indoors" can flicker)
+        if dungeonMinimap and not Inside() then
+            W.outAt = W.outAt or GetTime()
+            if GetTime() - W.outAt > 1 then
+                W.outAt = nil
+                DungeonMapFace()
+            end
+        else
+            W.outAt = nil
+        end
         Drag(map)
         if MinimapFace() then
             atTop = false

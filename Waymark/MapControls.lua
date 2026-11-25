@@ -970,6 +970,21 @@ end
 local FADE_RATE = 3       -- alpha per second
 local STOP_GRACE = 0.4    -- seconds of standing still before it counts as stopped
 local fadeAlpha, lastMoved = 1, 0
+-- (live Forever hides your speed in a fight: a secret number, and comparing it errors. Then the moving events
+-- say, as Waymark: Combat's swing timer does. Before this every frame of a fight threw here with "while moving"
+-- on, and the fight's own fade never came: the health check, 2026-11-25)
+local walking = false
+do
+    local moves = CreateFrame("Frame")
+    moves:RegisterEvent("PLAYER_STARTED_MOVING")
+    moves:RegisterEvent("PLAYER_STOPPED_MOVING")
+    moves:SetScript("OnEvent", function(_, event) walking = event == "PLAYER_STARTED_MOVING" end)
+end
+local function Moving()
+    local speed = ns.Known(GetUnitSpeed("player"))
+    if type(speed) == "number" then return speed > 0 end
+    return walking
+end
 
 local function FadeTarget(map)
     if ns.WorldMapUp and ns.WorldMapUp() then return 1 end   -- (the world map never fades: the switch's picks)
@@ -977,7 +992,7 @@ local function FadeTarget(map)
     if f.hover and (ns.MouseOnMap and ns.MouseOnMap(map) or map:IsMouseOver()) then return 1 end
     local want = 1
     if f.moving then
-        if GetUnitSpeed("player") > 0 and not UnitOnTaxi("player") then lastMoved = GetTime() end
+        if Moving() and not UnitOnTaxi("player") then lastMoved = GetTime() end
         if GetTime() - lastMoved < STOP_GRACE then want = math.min(want, f.movingAlpha / 100) end
     end
     if f.combat and UnitAffectingCombat("player") then
@@ -1862,6 +1877,11 @@ local function WorldOpen(map, fromSmall)
         map.wmSmallMap = map:GetMapID()   -- (the square goes back to it when the world map closes)
         ns.Safe("World map opens home", ns.BrowseHome)
     end
+    -- (a small map up and browsing another zone: the world map opens on it, and the small map gets it back on close.
+    -- Only over a small map that stays up (fromSmall): docked or shut, the map hides on close, and browse.onReopen
+    -- decides as it always did)
+    map.wmSmallBrowse = nil
+    if fromSmall and not map.wmSmallMap and ns.Browsing and ns.Browsing() then map.wmSmallBrowse = map:GetMapID() end
     if fromSmall and map:GetLeft() then SavePosition(map) end
     c.smallPos = c.pos
     if c.worldPos then c.pos = c.worldPos end
@@ -1924,8 +1944,20 @@ local function WorldClose(map)
     map.wmSmallView = nil
     -- (the square was out on a continent: back on it, its own view with it. The user, 2026-11-22: "Worldmap brings
     -- docked back to zone when switching back")
-    if map.wmSmallMap and ns.BrowseTo then ns.Safe("World map, the square's map back", ns.BrowseTo, map.wmSmallMap) end
-    map.wmSmallMap = nil
+    -- (browsing done on the world map is the world map's, never the small map's: the small map gets the map it showed
+    -- when the world map opened (a browsed one: wmSmallMap, wmSmallBrowse) or, if it was on you, your own map again.
+    -- Then RestoreView below finds its kept view on the same map and puts its zoom and pan back. The user, 2026-11-23:
+    -- "Nondocked, browsing to continent on worldmap, then closing worldmap. The pan and zoom stays for the smallmap")
+    local smallID = map.wmSmallMap or map.wmSmallBrowse
+    if smallID and ns.BrowseTo then
+        ns.Safe("World map, the square's map back", ns.BrowseTo, smallID)
+    elseif ns.Browsing and ns.Browsing() and ns.BrowseHome then
+        ns.Safe("World map, the small map home", ns.BrowseHome)
+    end
+    map.wmSmallMap, map.wmSmallBrowse = nil, nil
+    -- (home again on a zone map, CarryZoom set your kept closeness to glide in with the shrink (Reshape's Carrying):
+    -- it would win over the small map's own kept view, put back just below. That view is the truer one)
+    if carry and savedView and savedView.mapID == map:GetMapID() then carry = nil end
     SmallNow()
     RestorePosition(map)
     if back and map:IsShown() then pcall(RestoreView, map) end   -- (over a small map that stayed up: its view now)
@@ -1956,19 +1988,24 @@ end
 -- Docked, the key opens the world map at its own place and the square goes back to the game's minimap meanwhile
 -- (the user's pick, 2026-11-22): the dock is lent out as the dock key would, and comes back on close. In a fight
 -- the dock can't change: the world map opens when the fight ends.
-local worldAfterFight
+-- (said in chat, and opened after the fight only if it ends within ten seconds: a map opening by itself long after the
+-- key was pressed surprised. The player critic, 2026-11-23)
+local worldAfterFight, worldAskedAt
 local function WorldFromDock()
     if InCombatLockdown and InCombatLockdown() then
         if not worldAfterFight then
             worldAfterFight = CreateFrame("Frame")
             worldAfterFight:SetScript("OnEvent", function(self)
                 self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                if not worldAskedAt or GetTime() - worldAskedAt > 10 then return end
                 -- (a moment later: the dock's own wait docks it first)
                 C_Timer.After(0.2, function()
                     if ns.Docked and ns.Docked() and ns.MapKind() == "world" then ns.Safe("World map from the dock", WorldFromDock) end
                 end)
             end)
         end
+        worldAskedAt = GetTime()
+        if ns.Log then ns.Log("Can't open the world map from the docked map in a fight. It opens if the fight ends soon.") end
         worldAfterFight:RegisterEvent("PLAYER_REGEN_ENABLED")
         return
     end
@@ -2336,6 +2373,19 @@ local function HoldUpdate()
             if held.bfiMoveKey and f ~= held and (IsShiftKeyDown() or ns.ButtonMoved(held)) then f = held end
             local px, py = PointXY(f, MovePoint(f))
             if not px then return end
+            -- A dropdown (the docked minimap's tracking button) opens its menu on the press, and
+            -- closing it here is the game's Menu:Close run from our code. With the controller UI on
+            -- that close tells the game's focus manager, which takes a binding set off and updates
+            -- the interact icons in the same breath: SetPreferredGamepadInteractTarget forbidden as
+            -- ours, and the controller's bindings ours from then on (a player's 1.3.2 report,
+            -- 2026-11-23: its call path ends at Menu.lua's Close with this ticker running). So with
+            -- the controller UI on the press was for the menu: no move, and the menu is left to the
+            -- game. Without it the focus manager does nothing at a close (it asks the mode first).
+            local pad = InputUtil and InputUtil.IsGamepadUIEnabled and InputUtil.IsGamepadUIEnabled()
+            if pad and held.CloseMenu then
+                held = nil
+                return
+            end
             -- (from where it was pressed: the mouse may have moved while held)
             grabX, grabY = px - held.bfiDownX, py - held.bfiDownY
             dragging = f

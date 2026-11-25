@@ -161,6 +161,18 @@ local function HasBit(mask, bit)
     return mask and bit and mask ~= 0 and math.floor(mask / bit) % 2 == 1
 end
 
+-- Your race (its bit) may take a quest with this race mask. Forever's two new races, the Skyborne (bit 32 the
+-- Alliance's, bit 33 the Horde's), are in none of Classic's masks, and those are all our own rows have: a
+-- mask that names every old race of a side holds that side's new race too. A mask for some races only (a
+-- Night Elf's first quests) does not. QuestieDB's Forever masks carry the new bits themselves.
+local SKY_ALLIANCE, SKY_HORDE = 2 ^ 32, 2 ^ 33
+local function RaceIn(mask, race)
+    if HasBit(mask, race) then return true end
+    if race == SKY_ALLIANCE then return HasBit(mask, 1) and HasBit(mask, 4) and HasBit(mask, 8) and HasBit(mask, 64) or false end
+    if race == SKY_HORDE then return HasBit(mask, 2) and HasBit(mask, 16) and HasBit(mask, 32) and HasBit(mask, 128) or false end
+    return false
+end
+
 -- Zones -----------------------------------------------------------------------
 
 -- QuestieDB keys spawns by the game's area (zone) IDs; the map needs uiMapIDs
@@ -623,6 +635,9 @@ local function Available(id)
     if FQ and ((FQ.gone and FQ.gone[id]) or (FQ.goneNames and FQ.goneNames[q.name])) then
         return false, "not offered on Forever (Data/ForeverQuests.lua gone)"
     end
+    if FQ and FQ.silent and FQ.silent[id] then
+        return false, "not in the game on Forever (the server has no answer for it)"
+    end
     if Log()[id] then return false, "in your quest log" end
     local repeatable = HasBit(q.specialFlags or 0, 1)
     if Done(id) and not repeatable then return false, "done" end
@@ -631,7 +646,7 @@ local function Available(id)
     if NeedLevel(q, id) > level then return false, "level " .. NeedLevel(q, id) end
     if (q.requiredMaxLevel or 0) > 0 and level > q.requiredMaxLevel then return false, "too high level" end
     local race, class = PlayerMasks()
-    if (q.requiredRaces or 0) ~= 0 and race and not HasBit(q.requiredRaces, race) then return false, "race" end
+    if (q.requiredRaces or 0) ~= 0 and race and not RaceIn(q.requiredRaces, race) then return false, "race" end
     if (q.requiredClasses or 0) ~= 0 and class and not HasBit(q.requiredClasses, class) then return false, "class" end
     -- (a negative ID: that quest must not be done)
     for _, pre in ipairs(q.preQuestGroup or {}) do
@@ -674,6 +689,20 @@ local function Available(id)
     end
     if not ns.GetTrivialQuests() and IsTrivial(QuestLevel(q)) then return false, "trivial (grey)" end
     return true, repeatable
+end
+
+-- Forever does not have this quest: named by hand (Data/ForeverQuests.lua gone, goneNames), or the server gave no
+-- answer for it in two full sweeps (Data/ForeverSwept.lua silent: Naxxramas, Ahn'Qiraj, the battlegrounds ...).
+-- Not offered, and not counted in a zone's quests (WorldLog.lua). Never true for a quest you hold or have done:
+-- the game itself is the proof then. Always false off Forever.
+function ns.QuestGone(id)
+    local FQ = ns.FOREVER and ns.ForeverQuestData
+    if not (FQ and id) then return false end
+    if not ((FQ.gone and FQ.gone[id]) or (FQ.silent and FQ.silent[id]) or FQ.goneNames) then return false end
+    if Log()[id] or Done(id) then return false end
+    if (FQ.gone and FQ.gone[id]) or (FQ.silent and FQ.silent[id]) then return true end
+    local name = Source() and Info(id).name
+    return name and FQ.goneNames[name] and true or false
 end
 
 -- per-version cache of Available
@@ -1353,7 +1382,7 @@ local function ForMe(id)
     local q = Info(id)
     if not q.name then return false end
     local race, class = PlayerMasks()
-    if (q.requiredRaces or 0) ~= 0 and race and not HasBit(q.requiredRaces, race) then return false end
+    if (q.requiredRaces or 0) ~= 0 and race and not RaceIn(q.requiredRaces, race) then return false end
     if (q.requiredClasses or 0) ~= 0 and class and not HasBit(q.requiredClasses, class) then return false end
     return true
 end
@@ -1480,6 +1509,30 @@ function ns.QuestChain(id)
             local only, n = nil, 0
             for p in pairs(found) do only, n = p, n + 1 end
             if n == 1 then prev, how = only, true end
+        end
+        -- (and where it needs nothing: the one quest for you that names it as its next. The way forward follows
+        -- "next" without asking more, so a chain held together by "next" alone read whole from its first step
+        -- and as a single quest from its last: 280 pages left out earlier steps, the study of 2026-11-23. Two
+        -- or more name it: none, no guessing; that is a join of two lines, not a chain)
+        if not prev then
+            local only, n = nil, 0
+            for _, p in ipairs(PrevOf()[cur] or {}) do
+                if not seen[p] and ForMe(p) then only, n = p, n + 1 end
+            end
+            if n == 1 then prev, how = only, true end
+        end
+        -- (two lines join here, and you came by one of them: of all that lead in, the one you have done or hold)
+        if not prev then
+            local mine, n = nil, 0
+            local info = Info(cur)
+            local function Mine(p)
+                if p and p > 0 and not seen[p] and p ~= mine and ForMe(p) and (Done(p) or Log()[p]) then mine, n = p, n + 1 end
+            end
+            for _, p in ipairs(PrevOf()[cur] or {}) do Mine(p) end
+            for _, list in ipairs({ info.preQuestSingle or {}, info.preQuestGroup or {} }) do
+                for _, p in ipairs(list) do Mine(p) end
+            end
+            if n == 1 then prev, how = mine, true end
         end
         if not prev then break end
         table.insert(ids, 1, prev)
@@ -2000,7 +2053,7 @@ function ns.QuestFitsMe(id)
     if NeedLevel(q, id) > level then return false end
     if (q.requiredMaxLevel or 0) > 0 and level > q.requiredMaxLevel then return false end
     local race, class = PlayerMasks()
-    if (q.requiredRaces or 0) ~= 0 and race and not HasBit(q.requiredRaces, race) then return false end
+    if (q.requiredRaces or 0) ~= 0 and race and not RaceIn(q.requiredRaces, race) then return false end
     if (q.requiredClasses or 0) ~= 0 and class and not HasBit(q.requiredClasses, class) then return false end
     return true
 end

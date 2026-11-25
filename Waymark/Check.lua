@@ -499,6 +499,31 @@ function ns.RunCheck(noReload)
         if ns.DockPatchInfo and ns.db.dock.on then Check("patch of blips (info)", true, ns.DockPatchInfo()) end
         if ns.DockGeometry and ns.db.dock.on then Check("minimap and view places (info)", true, ns.DockGeometry()) end
         if ns.DockMouseFrames and ns.db.dock.on then Check("moved frames with the mouse (info)", true, ns.DockMouseFrames()) end
+        -- what a stranger's setup does to the docked minimap: its saved places, its scale, who else moves it
+        -- (the docked pass, 2026-11-24: the last report was solved by one line a player sent)
+        if ns.DockStrangerInfo and ns.db.dock.on then
+            local ok, lines = pcall(ns.DockStrangerInfo)
+            if ok and type(lines) == "table" then
+                for _, l in ipairs(lines) do Check(l[1] .. " (info)", true, l[2]) end
+            else
+                Check("docked minimap (info)", false, tostring(lines))
+            end
+        end
+        -- every addon loaded, one line: most docked faults hang on what else is installed
+        do
+            local A = C_AddOns or {}
+            local num, info, loaded = A.GetNumAddOns or GetNumAddOns, A.GetAddOnInfo or GetAddOnInfo,
+                A.IsAddOnLoaded or IsAddOnLoaded
+            local names = {}
+            if num and info and loaded then
+                for i = 1, num() do
+                    local name = info(i)
+                    if type(name) == "string" and loaded(i) and not name:find("^Blizzard_") then names[#names + 1] = name end
+                end
+            end
+            table.sort(names)
+            Check("addons loaded (info)", true, #names > 0 and (#names .. ": " .. table.concat(names, ", ")) or "none found")
+        end
         -- the minimap's own buttons, docked or not: shown, see-through, whose child, where (the tracking
         -- button was gone after undocking, the user 2026-11-15, and nothing here said where it was)
         do

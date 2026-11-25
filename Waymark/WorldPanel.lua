@@ -259,6 +259,8 @@ end
 -- player's icon set); the rest the spot icons of our map, Questie's where the map uses Questie's, else the game's
 -- cursors cut to the picture with the pointer's tip hidden (QuestData's GAME_OBJECTIVE_ICONS: centred, no arrow)
 local RAIL_KIND = { monster = "slay", item = "loot", object = "object", other = "object" }
+local RAIL_MID = { ["Interface\\Cursor\\Interact"] = { 16.5, 16.5 }, ["Interface\\CURSOR\\Interact"] = { 16.5, 16.5 },
+                   ["Interface\\Cursor\\Buy"] = { 15.5, 13 } }
 local function RailIcon(b, h)
     local tex = b.icon
     if tex.SetDesaturated then tex:SetDesaturated(false) end
@@ -290,6 +292,18 @@ local function RailIcon(b, h)
     tex:SetTexture(path)
     tex:SetTexCoord(crop[1], crop[2], crop[3], crop[4])
     if ns.CursorMask then ns.CursorMask(b, tex, (not spec or spec.mask) and true or false, crop[2], crop[4]) end
+    -- (the cursor's picture is not in the middle of its cut: the gear and the bag sit low right of it, the pointer's
+    -- tip taking the top left. Set back by measure so the picture's own middle is the sign's: "Cogwheel off center",
+    -- the user, 2026-11-23. Middles in the 32 px art, measured from the game's Interact and Buy)
+    local mid = RAIL_MID[path]
+    if mid then
+        local w, h = tex:GetWidth() or 0, tex:GetHeight() or 0
+        local cw, ch = (crop[2] - crop[1]) * 32, (crop[4] - crop[3]) * 32
+        local dx = (mid[1] - crop[1] * 32 - cw / 2) / cw * w
+        local dy = (mid[2] - crop[3] * 32 - ch / 2) / ch * h
+        tex:ClearAllPoints()
+        tex:SetPoint("CENTER", b, "CENTER", -dx, dy)
+    end
 end
 
 -- (the list's look "As before", a sign, a bar, the beads and a small line under each, was pruned by the user,
@@ -350,7 +364,7 @@ local function QuestLine(h, right)
     -- (the check rides after the name as `after`, kept when a long name is shortened: "tracked checkmark gone when
     -- text too long", the user, 2026-11-22)
     local name = h.name
-    return { text = name, after = Watched(id) and "  |TInterface\\Buttons\\UI-CheckBox-Check:14:14:0:-1|t" or nil, tag = tag, level = h.level, levelColour = LevelColour(h.level), right = right or (h.complete and "ready" or h.progress),
+    return { under = W.Lead() == id or nil, stroke = id, text = name, after = Watched(id) and "  |TInterface\\Buttons\\UI-CheckBox-Check:14:14:0:-1|t" or nil, tag = tag, level = h.level, levelColour = LevelColour(h.level), right = right or (h.complete and "ready" or h.progress),
              colour = h.complete and GOLD or LevelColour(h.level), id = id, indent = 6,
              click = Click, enter = Enter, leave = Leave }
 end
@@ -373,6 +387,31 @@ local function FoldIcon(line, open)
     return line
 end
 local function Note(text, colour) return { text = text, colour = colour or SOFT, size = 12, wrap = true, indent = 6 } end
+
+-- The Lab's "one log" (Lab/OneLog.lua, the Quests session's switch; no build has that file, and then every piece
+-- here is off and the log is as it shipped). The user, 2026-11-24, of the log, As told's panel and the tracker:
+-- "Could it all feel like one? Could it really just be the questlog, in different forms, adapting?", then "A with F,
+-- lets try it". The log's part: the quest you are on is marked (W.Lead), a finished objective is struck in pencil
+-- with your own line under it (W.DoneAims, key "page"), a chain reads as one scroll (W.ChainLines, key "chain").
+function W.One(key)
+    if not ns.OneLog then return false end
+    local ok, on = pcall(ns.OneLog, key)
+    return ok and on and true or false
+end
+-- the quest you are on: As told's lead, the one its panel tells
+-- (asked once a frame: every line of the list and every sign asks)
+function W.Lead()
+    if not ns.OneLog then return nil end
+    local now = GetTime and GetTime() or 0
+    if W.leadAt ~= now then
+        W.leadAt, W.leadId = now, nil
+        if W.One() then
+            local ok, it = pcall(function() return ns.ToldLead and ns.ToldLead() end)
+            W.leadId = ok and it and it.id or nil
+        end
+    end
+    return W.leadId
+end
 
 -- A quest folded out on the continent's list opens its objectives when the pointer rests on it (W.peekWait), and
 -- they stay open until the pointer leaves the log: nothing folds under the pointer, so no line jumps away from it.
@@ -476,6 +515,45 @@ local function Aims(id, zone)
         end
     end
     return out
+end
+
+-- The Lab's one log, on a quest's page: "what you were told is print, what you did is your pencil". A counted
+-- quest's objectives, each on its own line with its tally, the finished ones struck in pencil (the words, not the
+-- tally); all of it done: your own line in your hand (Lab/DoneLine.lua) and the way back, the game's "?" after it.
+-- The user, 2026-11-24: "The ticks, then striking the objective when done. Needs less text like that even", and of
+-- the "?": "does it have to be either or. \"?\" after \"bring x-ting to soand so\" Is an option maybe."
+-- true when it laid them; a quest with nothing to count keeps the page's own lines (false).
+function W.DoneAims(id, lines, indent)
+    local ok, objs = pcall(function() return C_QuestLog.GetQuestObjectives(id) end)
+    local n = 0
+    for i, o in ipairs(ok and objs or {}) do
+        if o.text and o.text ~= "" then
+            local what, have, need = o.text:match("^(.-):%s*(%d+)%s*/%s*(%d+)%s*$")
+            local text = what and (have .. "/" .. need .. " " .. what) or o.text
+            if ns.QuestPageMore then text = ns.QuestPageMore("tally", text, o.finished) or text end
+            n = n + 1
+            lines[#lines + 1] = { text = text, colour = o.finished and DIM or TEXT, size = 12, wrap = true, indent = indent or 6,
+                                  strike = o.finished and (text:match("^(.-)%s*|T") or text) or nil, stroke = id + i }
+        end
+    end
+    if n == 0 then return false end
+    local ready = false
+    for _, h in ipairs(W.Held()) do if h.id == id then ready = h.complete break end end
+    if not ready then return true end
+    local okD, d = pcall(function() return ns.ToldDone and ns.ToldDone(id, ns.ToldQuest and ns.ToldQuest(id)) end)
+    d = okD and type(d) == "table" and d or nil
+    if d and d.line and d.line ~= "" then
+        lines[#lines + 1] = { text = d.line, font = d.font, colour = d.colour or SOFT, size = d.font and 18 or 12, wrap = true, indent = indent or 6 }
+    end
+    local back = d and d.back
+    if not (back and back ~= "") then
+        local a = Aims(id, W.ZoneOf(id))[1]
+        back = a and a.ready and a.text or nil
+    end
+    if back then
+        lines[#lines + 1] = { text = back .. "  |A:QuestTurnin:13:13:0:0|a", colour = TEXT, size = 12, wrap = true, indent = indent or 6 }
+    end
+    return true
 end
 
 local function LooseLines(zone, lines)
@@ -764,7 +842,8 @@ local function DoneLines(zone, cont)
     end
     local t = W.Tally(zone)
     -- ("Done" read like "Completed", the user, 2026-11-21: the game's own words, "turn in", throughout this page)
-    lines[#lines + 1] = Head("Turned in here", ("%d of %d"):format(t.done, t.all))
+    -- (the count once, in the sentence: it stood in the head and the fold too, the player critic, 2026-11-23)
+    lines[#lines + 1] = Head("Turned in here")
     -- (no bar under it: it said no more than the count, the user, 2026-11-22)
     if t.done > 0 and t.low then
         lines[#lines + 1] = Note(("%d of %d completed, at level %d to %d."):format(t.done, t.all, t.low, t.high))   -- ("7 of 64 completed*", the user, 2026-11-22)
@@ -810,7 +889,7 @@ local function DoneLines(zone, cont)
     end
     -- A: what you turned in, under who gave it
     local done = W.DoneHere(zone)
-    if #done > 0 and Fold("Turned in", tostring(#done), "done") then
+    if #done > 0 and Fold("Turned in", nil, "done") then
         local seen = {}
         local function Quest(id, name)
             seen[id] = true
@@ -1391,13 +1470,19 @@ local function PageLines(id)
     -- do; the words; the rewards; the chain last, as a list (no "Step 1 of 5", no beads, no "here", no days).
     local level = ns.QuestLevelOf(id)
     local tag = W.Tag(id)
+    local first = #lines + 1   -- (from the title down: the page's own text size, W.PageZoom)
     lines[#lines + 1] = { text = W.Title(id), tag = tag, colour = GOLD, size = 16, wrap = true, level = level, levelColour = LevelColour(level), bracket = true }
     local who, map = W.Giver(id)
     if who then lines[#lines + 1] = Note("From " .. who .. (map and (", " .. MapName(map)) or "") .. ".") end
     if held then
         lines[#lines + 1] = Head("Objectives")
-        for _, a in ipairs(Aims(id, W.ZoneOf(id))) do
-            lines[#lines + 1] = { text = a.text, colour = a.done and DIM or TEXT, size = 12, wrap = true, indent = 6 }
+        -- (the Lab's one log: finished ones struck, then your own line; W.DoneAims. No build has it.)
+        if not (W.One("page") and W.DoneAims(id, lines)) then
+            for _, a in ipairs(Aims(id, W.ZoneOf(id))) do
+                -- (the Lab, Lab/QuestPage.lua: a count as tally strokes. No build has it; the line is the game's then.)
+                local text = ns.QuestPageMore and ns.QuestPageMore("tally", a.text, a.done) or a.text
+                lines[#lines + 1] = { text = text, colour = a.done and DIM or TEXT, size = 12, wrap = true, indent = 6 }
+            end
         end
     else
         lines[#lines + 1] = Head("Not in your log")
@@ -1409,7 +1494,10 @@ local function PageLines(id)
         end
     end
     local told = ns.ToldQuest and ns.ToldQuest(id)
-    local words = held and (told and told.text or (ns.QuestWords and ns.QuestWords(id))) or nil
+    -- (the Lab: a quest you have turned in keeps its words too; and under them what was said before it was done
+    -- and at the turn-in, where that was caught. Lab/QuestPage.lua; no build has it.)
+    local kept = not held and ns.QuestPageMore and ns.QuestPageMore("kept", id)
+    local words = (held or kept) and (told and told.text or (ns.QuestWords and ns.QuestWords(id))) or nil
     if words and words ~= "" then
         -- (told: the head opens the quest in As told's panel, "read in As told" at its end says so)
         local h = Head("Description", told and "read in As told" or nil)
@@ -1417,6 +1505,7 @@ local function PageLines(id)
         lines[#lines + 1] = h
         lines[#lines + 1] = { text = words:gsub("%$[Bb]", "\n"), colour = TEXT, size = 12, wrap = true, indent = 6 }
     end
+    if ns.QuestPageMore then pcall(ns.QuestPageMore, "tenses", id, held, lines, Head, TEXT) end
     local okR, rew = pcall(ns.QuestRewards, id)
     local xp = ns.QuestXP and ns.QuestXP(id) or 0
     if (okR and rew) or xp > 0 then
@@ -1440,7 +1529,11 @@ local function PageLines(id)
     end
     local b = W.Beads(id)
     if b and b.steps then
-        lines[#lines + 1] = Head("The chain")   -- (no "2 of 3": the list under it says it, the user, 2026-11-22, "Redundant")
+        -- (no "2 of 3": the list under it says it, the user, 2026-11-22, "Redundant")
+        -- (the Lab's one log: the head opens the chain as one scroll, "the story so far" at its end says so)
+        local hc = Head("The chain", W.One("chain") and "the story so far" or nil)
+        if hc.right then hc.click = function(button) if button ~= "RightButton" then W.ChainOpen(id) end end end
+        lines[#lines + 1] = hc
         for i, st in ipairs(b.steps) do
             local sid = st.id
             lines[#lines + 1] = { text = i .. ".  " .. st.name, right = st.done and "turned in" or nil,
@@ -1461,7 +1554,139 @@ local function PageLines(id)
             lines[#lines + 1] = { text = "", foot = true, acts = { { "Find on map", function() Find(id) end } }, click = function() Find(id) end }
         end
     end
+    for i = first, #lines do lines[i].zoom = true end
     return lines
+end
+
+-- The chain as one scroll (the Lab's one log, key "chain"; the user, 2026-11-24, of the long unfold in As told's
+-- panel: "Or in the questlog, gathered as a chain in a scrolling window?"). A second view of a quest's page, not in
+-- its place: every step up to where you are, as it was told, your own remark, what was said when you turned it in;
+-- the step in your log in gold with what it asks; what lies ahead as its shape only (W.BeadsLine: no names). It opens
+-- with the step asked for in view (S.anchor): yours, or an earlier one. A click on a step: its ordinary page.
+function W.ChainLines(id)
+    local b = W.Beads(id)
+    if not (b and b.steps) then return nil end
+    local lines = {}
+    local level = ns.QuestLevelOf(id)
+    lines[#lines + 1] = { text = W.Title(id), colour = GOLD, size = 16, wrap = true, level = level, levelColour = LevelColour(level), bracket = true }
+    lines[#lines + 1] = Head("The chain")
+    local last = b.index or 1
+    for i, st in ipairs(b.steps) do if st.done or st.inLog then last = math.max(last, i) end end
+    local seen = WaymarkQuestDB and WaymarkQuestDB.seen
+    local Fill = ns.QuestWordsFill or function(s) return s end
+    local function Words(text, colour)
+        if type(text) ~= "string" or text == "" then return end
+        lines[#lines + 1] = { text = Fill(text):gsub("%$[Bb]", "\n"), colour = colour, size = 12, wrap = true, indent = 18 }
+    end
+    -- (asked for an earlier step, one turned in: As told's panel reads a chain back a step a page, and each page's
+    -- foot opens the log at that step. The scroll comes to the step asked for; the gold stays where you are, the step
+    -- in your log. With none in your log, the step asked for has it.)
+    local anyHeld = false
+    for i = 1, last do if W.IsHeld(b.steps[i].id) then anyHeld = true end end
+    for i = 1, last do
+        local st = b.steps[i]
+        local sid = st.id
+        local now = W.IsHeld(sid) or (sid == id and not anyHeld)
+        lines[#lines + 1] = { text = st.name, icon = ns.MEDIA .. "World\\WorldDiamond", tint = now and GOLD or BRASS,
+                              colour = now and GOLD or SOFT, size = 13, wrap = true, id = sid, right = st.done and "turned in" or nil,
+                              click = function(button)
+                                  if button == "RightButton" then return end
+                                  S.chain = nil
+                                  -- (this quest's own step: its page from the top; another: as a page's chain goes)
+                                  if sid == S.page then
+                                      S.anchor = nil
+                                      scroll:SetVerticalScroll(0)
+                                  else
+                                      W.ChainGo(sid)
+                                  end
+                              end }
+        local told = ns.ToldQuest and ns.ToldQuest(sid)
+        Words(told and told.text or (ns.QuestWords and ns.QuestWords(sid)), (now or sid == id) and TEXT or SOFT)
+        if W.IsHeld(sid) then
+            if not (W.One("page") and W.DoneAims(sid, lines, 18)) then
+                for _, a in ipairs(Aims(sid, W.ZoneOf(sid))) do
+                    lines[#lines + 1] = { text = a.text, colour = a.done and DIM or TEXT, size = 12, wrap = true, indent = 18 }
+                end
+            end
+        end
+        -- (your character's own remark on it, in your hand: Lab/Remarks.lua)
+        local okR, remark = pcall(function() return ns.ToldRemark and ns.ToldRemark(sid) end)
+        if okR and type(remark) == "string" and remark ~= "" then
+            lines[#lines + 1] = { text = remark, font = ns.MEDIA .. "Fonts\\ReenieBeanie.ttf", colour = { 0.80, 0.80, 0.78 }, size = 18, wrap = true, indent = 18 }
+        end
+        if st.done then
+            local w = seen and seen.whole and seen.whole[sid]
+            Words((told and told.last) or (w and w.done), SOFT)
+        end
+        lines[#lines + 1] = { text = "", size = 5 }
+    end
+    if b.n > last then
+        local left = b.n - last
+        lines[#lines + 1] = Note(last == b.index and W.BeadsLine(b) or (left == 1 and "One more step." or (left .. " more steps.")), DIM)
+    end
+    for _, l in ipairs(lines) do l.zoom = true end
+    return lines
+end
+-- the scroll on this quest, from its page's "The chain" (a row's click: the log draws again by itself)
+function W.ChainOpen(id)
+    if not (id and W.One("chain") and W.Beads(id)) then return false end
+    S.page, S.sel, S.chain = id, nil, id
+    S.anchor = { page = id, id = id, off = 56 }
+    return true
+end
+
+-- A pencil stroke on a line (Media/Lab/Strike.tga, the Quests session's art: four strokes, 16 px each, in a 256 by
+-- 64 sheet, white on clear): through a finished objective's words (l.strike, the words to strike; its tally after
+-- them stays clear), or under the name of the quest you are on (l.under; `measure` = what to underline). l.stroke
+-- picks the stroke, so one line keeps its own. Only the Lab's one log sets either.
+function W.LayPencil(r, l, x, size, measure)
+    if not (l.strike or l.under) then
+        if r.pencil then r.pencil:Hide() end
+        return
+    end
+    if not r.pencil then
+        r.pencil = r:CreateTexture(nil, "OVERLAY", nil, 2)
+        r.pencil:SetTexture((ns.LAB_MEDIA or (ns.MEDIA .. "Lab\\")) .. "Strike")
+    end
+    local k = (tonumber(l.stroke) or 0) % 4
+    r.pencil:SetTexCoord(0, 1, k / 4, (k + 1) / 4)
+    local words = type(l.strike) == "string" and l.strike or measure
+    local w
+    if words then
+        local full = r.left:GetText()
+        r.left:SetText(words)
+        w = r.left:GetStringWidth()
+        r.left:SetText(full or "")
+    else
+        w = r.left:GetStringWidth()
+    end
+    w = math.max(8, math.min(w or 0, r.left:GetWidth() or 0))
+    -- (through the letters' middle, or just under them; the text's top is 2 down)
+    local mid = l.under and (2 + size * 1.10) or (2 + size * 0.58)
+    r.pencil:ClearAllPoints()
+    r.pencil:SetPoint("TOPLEFT", r, "TOPLEFT", x - 3, -(mid - 8))
+    r.pencil:SetSize(w + 6, 16)
+    r.pencil:SetVertexColor(0.80, 0.80, 0.78, l.under and 0.55 or 0.9)
+    r.pencil:Show()
+end
+
+-- The quest page's text size, from its title down (the cog's "Quest page text", 80 to 150 in hundredths; the list, the
+-- picture, the reward tiles and the buttons keep theirs). The user, 2026-11-23: "How about a scaleslider for text
+-- from the questitle and down?"
+W.ZOOM_MIN, W.ZOOM_MAX, W.ZOOM_STEP = 80, 150, 5
+function W.PageZoom()
+    local v = tonumber(Cfg().pageText) or 100
+    return math.max(W.ZOOM_MIN, math.min(W.ZOOM_MAX, v)) / 100
+end
+function W.SetPageZoom(v)
+    v = math.floor((tonumber(v) or 100) / W.ZOOM_STEP + 0.5) * W.ZOOM_STEP
+    v = math.max(W.ZOOM_MIN, math.min(W.ZOOM_MAX, v))
+    local c = Cfg()
+    if c.pageText == v then return false end
+    c.pageText = v
+    dirty = true
+    if ns.WorldPanelChanged then ns.WorldPanelChanged() end
+    return true
 end
 
 -- to a step of the chain from a page: remembers where on screen the clicked step stood (Render keeps it there)
@@ -1472,7 +1697,7 @@ function W.ChainGo(sid)
             break
         end
     end
-    S.page, S.sel = sid, nil
+    S.page, S.sel, S.chain = sid, nil, nil
 end
 
 -- Rows ------------------------------------------------------------------------------------
@@ -1886,7 +2111,8 @@ local function Render(lines)
         local r = Row(i)
         r.line = l
         r:ClearAllPoints()
-        local size = l.size or (l.head and 10.5 or 13)
+        local z = l.zoom and W.PageZoom() or 1
+        local size = (l.size or (l.head and 10.5 or 13)) * z
         local indent = l.indent or 0
         local textAt = indent + (l.icon and (l.head and 15 or 18) or 0) + (l.head and l.text ~= "" and not l.icon and 11 or 0)
         r.icon:SetShown(l.icon and true or false)
@@ -1910,11 +2136,11 @@ local function Render(lines)
             local tc = l.tint or { 1, 1, 1 }
             r.icon:SetVertexColor(tc[1], tc[2], tc[3], l.alpha or 1)
         end
-        r.left:SetFont(FRIZ, size, "")
+        r.left:SetFont(l.font or FRIZ, size, "")
         r.left:SetWordWrap(l.wrap and true or false)
         r.left:ClearAllPoints()
         r.left:SetPoint("TOPLEFT", textAt, l.head and -7 or -2)
-        r.right:SetFont(FRIZ, l.head and 10.5 or 11.5, "")
+        r.right:SetFont(FRIZ, (l.head and 10.5 or 11.5) * z, "")
         r.right:SetText(l.right or "")
         r.right:ClearAllPoints()
         r.right:SetPoint("TOPRIGHT", -2, l.head and -7 or -3)
@@ -1943,6 +2169,7 @@ local function Render(lines)
         end
         local c = l.head and BRASS or l.colour or TEXT
         Colour(r.left, c, l.alpha)
+        W.LayPencil(r, l, textAt, size, l.under and (head .. (l.text or "")) or nil)
         -- (a heading of the continent's quest log: a brass hairline from the name to the count, the ledger's leader)
         if l.ledger then
             if not r.lead then
@@ -1977,9 +2204,9 @@ local function Render(lines)
         elseif l.items and (l.text or "") == "" then
             h = 2
         elseif l.head then
-            h = (l.text == "" and 8 or 22)
+            h = (l.text == "" and 8 or math.floor(22 + 10.5 * (z - 1) + 0.5))
         else
-            h = math.max(ROW_H, (l.wrap and r.left:GetStringHeight() or size) + 5)
+            h = math.max(ROW_H * z, (l.wrap and r.left:GetStringHeight() or size) + 5)
         end
         r.barBack:SetShown(l.bar and true or false)
         r.bar:SetShown(l.bar and true or false)
@@ -2694,12 +2921,16 @@ local function RailSign(i)
     b.sepDia:SetTexture(ns.MEDIA .. "World\\WorldDiamond")
     b.sepDia:SetSize(5, 5)
     b.sepDia:SetVertexColor(BRASS[1], BRASS[2], BRASS[3], 0.9)
-    b.sepDia:SetPoint("TOP", b.count, "BOTTOM", 0, -4)
+    -- (from the sign itself, a whole number down, never from the count: a ready sign has no count, and the empty
+    -- line's odd height put its diamond on half a pixel, drawn taller than the rest. "Blue diamond is different from
+    -- red one", the user, 2026-11-23)
+    b.sepDia:SetPoint("TOP", b, "BOTTOM", 0, -16)
     b.sep[1]:SetPoint("RIGHT", b.sepDia, "LEFT", -2, 0)
     b.sep[2]:SetPoint("LEFT", b.sepDia, "RIGHT", 2, 0)
     -- (the same tooltip as the quest's pin on the map: its title, level, what is left, Shift for more. The user,
     -- 2026-11-22: "icons can get the same tooltip as hovering the questpin on map")
     b:SetScript("OnEnter", function(self)
+        if self.zone then return W.ZoneSignTip(self) end
         local h = self.h
         if not h then return end
         if ns.HoverQuestGlow then pcall(ns.HoverQuestGlow, h.id) end
@@ -2715,10 +2946,15 @@ local function RailSign(i)
     -- (the pin tooltip's Shift redraw calls the owner's OnEnter as a method, Pin.lua ns.ShiftRefresh)
     function b:OnEnter() local f = self:GetScript("OnEnter") if f then f(self) end end
     b:SetScript("OnLeave", function(self)
+        if self.zone then if GameTooltip then GameTooltip:Hide() end return end
         if ns.HoverQuestGlow then pcall(ns.HoverQuestGlow, nil) end
         if ns.QuestTooltipLeave then ns.QuestTooltipLeave() elseif GameTooltip then GameTooltip:Hide() end
     end)
     b:SetScript("OnClick", function(self, button)
+        if self.zone then
+            if button ~= "RightButton" then GoTo(self.zone) end
+            return
+        end
         local h = self.h
         if not h then return end
         if button == "RightButton" then return QuestMenu(h.id) end
@@ -2729,8 +2965,70 @@ local function RailSign(i)
     return b
 end
 
+-- A zone's sign on a continent's rail: the crest of who holds it in brass in the ring (the log's foot wears the same
+-- crest, W.crestOf), the banner's compass where none is; under it how many quests you hold there, and the turn-in
+-- "?" if one is ready. The user, 2026-11-23: "On continent this bar doesnt show anything. What can we place there on
+-- cont?", then "A: zones as crests"
+local function ZoneSign(b, z)
+    b.h, b.zone = nil, z.map
+    b.item:Hide()
+    b.halo:Hide()
+    for _, t in ipairs({ b.rim, b.ring2, b.gap, b.face }) do t:Show() end
+    local ready = z.ready > 0
+    b.rim:SetVertexColor(ready and GOLD[1] or BRASS[1], ready and GOLD[2] or BRASS[2], ready and GOLD[3] or BRASS[3], ready and 0.85 or 0.5)
+    b.ring2:SetVertexColor(BRASS[1], BRASS[2], BRASS[3], 0.28)
+    if not b.crest then
+        b.crest = {}
+        for k = 1, 4 do
+            local t = b:CreateTexture(nil, "ARTWORK", nil, 2)
+            t:AddMaskTexture(b.itemMask)
+            b.crest[k] = t
+        end
+    end
+    for _, t in ipairs(b.crest) do t:Hide() end
+    local crest = W.crestOf and W.crestOf[z.map] and W.crests[W.crestOf[z.map]]
+    if crest then
+        b.icon:Hide()
+        W.PutCrest(b, b.crest, crest, 0, 0, 24, "CENTER", 1)
+        -- (brighter brass than the foot's faint one: small, the dark crests went to mud)
+        for _, t in ipairs(b.crest) do t:SetVertexColor(1, 0.84, 0.55, 1) end
+    else
+        if ns.CursorMask then ns.CursorMask(b, b.icon, false) end
+        b.icon:SetTexture(ns.MEDIA .. "World\\EmblemCompass")
+        b.icon:SetTexCoord(0, 1, 0, 1)
+        b.icon:SetDesaturated(true)
+        b.icon:SetVertexColor(0.84, 0.66, 0.38, 0.9)
+        b.icon:ClearAllPoints()
+        b.icon:SetPoint("CENTER")
+        b.icon:SetSize(24, 24)
+        b.icon:Show()
+    end
+    local mark = W.DONE_MARK and "|A:QuestTurnin:12:12:0:0|a" or ""
+    b.count:SetText(z.held .. (ready and ("  " .. mark) or ""))
+    Colour(b.count, TEXT)
+end
+-- its tooltip: the zone, then the quests you hold there, the ready ones with the "?"
+function W.ZoneSignTip(b)
+    if not GameTooltip then return end
+    GameTooltip:SetOwner(b, "ANCHOR_LEFT")
+    GameTooltip:SetText(MapName(b.zone) or "", GOLD[1], GOLD[2], GOLD[3])
+    local list = {}
+    for _, h in ipairs(W.Held()) do if h.map == b.zone then list[#list + 1] = h end end
+    table.sort(list, function(x, y)
+        if (x.complete and true or false) ~= (y.complete and true or false) then return not x.complete end
+        return (x.name or "") < (y.name or "")
+    end)
+    for _, h in ipairs(list) do
+        GameTooltip:AddLine((h.name or "") .. (h.complete and ("  " .. (W.DONE_MARK or "")) or ""), TEXT[1], TEXT[2], TEXT[3])
+    end
+    GameTooltip:Show()
+end
+
 -- a mark's face and ring for its quest
 local function RailMark(b, h)
+    b.zone = nil
+    if b.crest then for _, t in ipairs(b.crest) do t:Hide() end end
+    b.icon:SetDesaturated(false)
     local _, frac = Sign(h)
     local have, need = 0, 0
     local ok, objs = pcall(function() return C_QuestLog.GetQuestObjectives(h.id) end)
@@ -2750,16 +3048,6 @@ local function RailMark(b, h)
     -- sits in the middle, "Im sure it still sits off-center", the user)
     b.icon:ClearAllPoints()
     b.icon:SetPoint("CENTER")
-    if ready then
-        -- (the "?" cut to its own glyph out of Forever's atlas (QuestTurnin: file 1121272, its cell at 923, 514; the
-        -- glyph at 9-26 across, 2-30 down, measured), so the glyph's own middle is the sign's: "Still misses", the user)
-        if pcall(b.icon.SetTexture, b.icon, 1121272) then
-            -- (its own shape, 19 by 30 with the dark rim, at near its own size: 13 by 21 read squished, "Oh no! you
-            -- squishe dit", the user)
-            b.icon:SetTexCoord(931 / 1024, 950 / 1024, 515 / 1024, 545 / 1024)
-            b.icon:SetSize(16, 25)
-        end
-    end
     -- the face: the item it asks for, else the map's own spot icon (a kill, a talk, the hand-in's "?")
     local item = not ready and ns.QuestObjectiveItem and ns.QuestObjectiveItem(h.id)
     local icon = item and C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(item)
@@ -2770,8 +3058,20 @@ local function RailMark(b, h)
     else
         b.item:Hide()
         RailIcon(b, h)
+        -- (a ready one: the "?" cut to its own glyph out of Forever's atlas (QuestTurnin: file 1121272, its cell at
+        -- 923, 514; the glyph at 9-26 across, 2-30 down, measured), so the glyph's own middle is the sign's: "Still
+        -- misses", the user. After RailIcon, which lays the whole square atlas: cut before it, the square was drawn
+        -- into the glyph's 16 by 25, "These seem squeezed", the user, 2026-11-23)
+        if ready and pcall(b.icon.SetTexture, b.icon, 1121272) then
+            -- (its own shape, 19 by 30 with the dark rim, at near its own size: 13 by 21 read squished, "Oh no! you
+            -- squishe dit", the user)
+            b.icon:SetTexCoord(931 / 1024, 950 / 1024, 515 / 1024, 545 / 1024)
+            b.icon:SetSize(16, 25)
+        end
         b.icon:Show()
     end
+    -- (the Lab's one log: the quest you are on, its outer ring lit; a ready one has no rings)
+    if not ready and W.Lead() == h.id then b.ring2:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 0.85) end
     b.count:SetText(ready and "" or (need > 0 and (have .. "/" .. need)) or "")   -- (no "ready" under the "?": it says so)
     Colour(b.count, ready and GOLD or TEXT)
 end
@@ -3737,13 +4037,15 @@ W.quarrels = {
 W.motifSize = { Silverwing = { 303, 380 }, Warsong = { 373, 360 }, Alliance = { 352, 300 }, Forsaken = { 303, 310 }, Horde = { 352, 173 } }
 W.motifAlpha, W.motifBox, W.crackAlpha, W.sideCrestH = 0.16, 130, 0.2, 150   -- (the crack 10% down: "tone down the brights ... Like 10%")
 -- one crest into a set of four textures, its middle at (x, y) above the panel's bottom, h high; returns its width
-function W.PutCrest(panel, set, crest, x, y, h)
+-- (point: the frame's point it is measured from, "BOTTOM" when not given; alpha: W.crestAlpha when not given)
+function W.PutCrest(panel, set, crest, x, y, h, point, alpha)
+    point = point or "BOTTOM"
     local b = crest.box
     local k = h / (b[4] - b[2])
     local function Tint(t)
         t:SetDesaturated(true)
         t:SetBlendMode(crest.add and "ADD" or "BLEND")
-        t:SetVertexColor(0.84, 0.66, 0.38, W.crestAlpha)
+        t:SetVertexColor(0.84, 0.66, 0.38, alpha or W.crestAlpha)
         t:Show()
     end
     if crest.tiles then
@@ -3757,7 +4059,7 @@ function W.PutCrest(panel, set, crest, x, y, h)
                 t:SetTexCoord(0, 1, 0, 1)
                 t:SetSize(256 * k, 256 * k)
                 t:ClearAllPoints()
-                t:SetPoint("TOPLEFT", panel, "BOTTOM", x + (col * 256 - cx) * k, y - (row * 256 - cy) * k)
+                t:SetPoint("TOPLEFT", panel, point, x + (col * 256 - cx) * k, y - (row * 256 - cy) * k)
                 Tint(t)
             end
         end
@@ -3767,7 +4069,7 @@ function W.PutCrest(panel, set, crest, x, y, h)
         t:SetTexCoord(b[1] / crest.size[1], b[3] / crest.size[1], b[2] / crest.size[2], b[4] / crest.size[2])
         t:SetSize((b[3] - b[1]) * k, h)
         t:ClearAllPoints()
-        t:SetPoint("CENTER", panel, "BOTTOM", x, y)
+        t:SetPoint("CENTER", panel, point, x, y)
         Tint(t)
     end
     return (b[3] - b[1]) * k
@@ -4054,6 +4356,7 @@ local function DrawRail(list)
         rail.more:SetText("")
         return
     end
+    if not list then return W.RailZones() end   -- (a continent or the world: ListMap gives none)
     local mine = {}
     for _, h in ipairs(W.Held()) do
         if list and h.map == list then mine[#mine + 1] = h end
@@ -4096,6 +4399,66 @@ local function DrawRail(list)
     end
     for i = n + 1, #rail.signs do rail.signs[i]:Hide() end
     rail.more:SetText(#mine > n and ("+" .. (#mine - n)) or "")
+end
+
+-- on a continent or the world: the zones you hold quests in, one sign each (ZoneSign), the one you stand in first, then
+-- the nearest across the continent you are on, then the rest by name (dungeons stay on the list, not here)
+function W.RailZones()
+    local zones, by = {}, {}
+    for _, h in ipairs(W.Held()) do
+        if h.map and IsZone(h.map) then
+            local z = by[h.map]
+            if not z then
+                z = { map = h.map, held = 0, ready = 0, name = MapName(h.map) or "" }
+                by[h.map] = z
+                zones[#zones + 1] = z
+            end
+            z.held = z.held + 1
+            if h.complete then z.ready = z.ready + 1 end
+        end
+    end
+    local here = C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+    here = here and W.ZoneMap and W.ZoneMap(here) or here
+    for _, z in ipairs(zones) do
+        z.far = math.huge
+        if z.map == here then
+            z.far = -1
+        else
+            local info = C_Map.GetMapInfo and C_Map.GetMapInfo(z.map)
+            local cont = info and info.parentMapID
+            local pos = cont and C_Map.GetPlayerMapPosition and C_Map.GetPlayerMapPosition(cont, "player")
+            local ok, l, r, t, b = false
+            if pos and pos.x and C_Map.GetMapRectOnMap then ok, l, r, t, b = pcall(C_Map.GetMapRectOnMap, z.map, cont) end
+            if ok and l and r and t and b then z.far = (pos.x - (l + r) / 2) ^ 2 + (pos.y - (t + b) / 2) ^ 2 end
+        end
+    end
+    table.sort(zones, function(a, b)
+        if a.far ~= b.far then return a.far < b.far end
+        return a.name < b.name
+    end)
+    local STEP = 62
+    local room = math.max(0, math.floor(((rail:GetHeight() or 0) - 28) / STEP))
+    local n = math.min(#zones, room)
+    rail.ring:Hide()
+    for i = 1, n do
+        local b = RailSign(i)
+        ZoneSign(b, zones[i])
+        local last = i == n
+        b.sepDia:SetShown(not last)
+        b.sep[1]:SetShown(not last)
+        b.sep[2]:SetShown(not last)
+        b:ClearAllPoints()
+        b:SetPoint("TOP", rail, "TOP", 0, -10 - (i - 1) * STEP)
+        b:Show()
+        S.rail[i] = { zone = zones[i].map }
+        if S.railSel == i then
+            rail.ring:ClearAllPoints()
+            rail.ring:SetPoint("CENTER", b, "CENTER")
+            rail.ring:Show()
+        end
+    end
+    for i = n + 1, #rail.signs do rail.signs[i]:Hide() end
+    rail.more:SetText(#zones > n and ("+" .. (#zones - n)) or "")
 end
 
 -- Placing and drawing ---------------------------------------------------------------------------
@@ -4334,6 +4697,80 @@ local function FillOptions()
     Head("The quest log")   -- ("the quest log", the user, 2026-11-22)
     Switch("Objectives always shown", "aimsOpen", true)   -- ("objectives always shown", the user)
     Switch("Loose ends", "loose")
+    -- the quest page's text size: a brass hairline with a diamond on it, the size in words at the right; a drag, a
+    -- click on the line or the wheel, steps of 5%. The page beside it changes as it moves (W.PageZoom)
+    do
+        local s = opts.slide
+        if not s then
+            s = CreateFrame("Button", nil, opts)
+            s:EnableMouseWheel(true)
+            s.text = s:CreateFontString(nil, "OVERLAY")
+            s.text:SetFont(FRIZ, 12, "")
+            s.text:SetPoint("TOPLEFT", 4, -3)
+            s.value = s:CreateFontString(nil, "OVERLAY")
+            s.value:SetFont(FRIZ, 11.5, "")
+            s.value:SetPoint("TOPRIGHT", -2, -3)
+            s.track = s:CreateTexture(nil, "ARTWORK")
+            s.track:SetColorTexture(BRASS[1], BRASS[2], BRASS[3], 0.5)
+            s.track:SetHeight(1)
+            s.track:SetPoint("BOTTOMLEFT", 8, 7)
+            s.track:SetPoint("BOTTOMRIGHT", -8, 7)
+            s.fill = s:CreateTexture(nil, "ARTWORK", nil, 1)
+            s.fill:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.75)
+            s.fill:SetHeight(1)
+            s.knob = s:CreateTexture(nil, "ARTWORK", nil, 2)
+            s.knob:SetTexture(LAB .. "WorldDiamond")
+            s.knob:SetSize(9, 9)
+            s.knob:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 1)
+            s.band = SoftBand(s, 0, { 1, 0.93, 0.78 }, 0.08)
+            function s:Show_()
+                local v = W.PageZoom() * 100
+                local f = (v - W.ZOOM_MIN) / (W.ZOOM_MAX - W.ZOOM_MIN)
+                local tw = math.max(1, (self.track:GetWidth() or 0))
+                if tw <= 1 then tw = OPT_W - 2 * OPT_PAD - 16 end
+                self.knob:ClearAllPoints()
+                self.knob:SetPoint("CENTER", self.track, "LEFT", tw * f, 0)
+                self.fill:ClearAllPoints()
+                self.fill:SetPoint("LEFT", self.track, "LEFT")
+                self.fill:SetWidth(math.max(1, tw * f))
+                self.value:SetText(math.floor(v + 0.5) .. "%")
+            end
+            local function At(self)
+                local l, r = self.track:GetLeft(), self.track:GetRight()
+                local x = GetCursorPosition() / self:GetEffectiveScale()
+                if not (l and r and r > l) then return end
+                local f = math.max(0, math.min(1, (x - l) / (r - l)))
+                if W.SetPageZoom(W.ZOOM_MIN + f * (W.ZOOM_MAX - W.ZOOM_MIN)) then self:Show_() end
+            end
+            s:SetScript("OnMouseDown", function(self, button)
+                if button ~= "LeftButton" then return end
+                At(self)
+                self:SetScript("OnUpdate", function(me)
+                    if not IsMouseButtonDown("LeftButton") then me:SetScript("OnUpdate", nil) return end
+                    At(me)
+                end)
+            end)
+            s:SetScript("OnMouseWheel", function(self, d)
+                if W.SetPageZoom(W.PageZoom() * 100 + (d > 0 and W.ZOOM_STEP or -W.ZOOM_STEP)) then self:Show_() end
+            end)
+            s:SetScript("OnEnter", function(self) self.band:Show() end)
+            s:SetScript("OnLeave", function(self) self.band:Hide() end)
+            s:SetScript("OnHide", function(self) self:SetScript("OnUpdate", nil) end)
+            opts.slide = s
+        end
+        s.text:SetText("Quest page text")
+        Colour(s.text, TEXT)
+        Colour(s.value, SOFT)
+        s:ClearAllPoints()
+        s:SetPoint("TOPLEFT", OPT_PAD, y)
+        s:SetPoint("TOPRIGHT", -OPT_PAD, y)
+        s:SetHeight(34)
+        s.band:Lay(w)
+        s.band:Hide()
+        s:Show()
+        s:Show_()
+        y = y - 34
+    end
     -- (the new log takes the quest log key only when ticked, and the tick is here, in the log itself: the user,
     -- 2026-11-22, "we dont hijack bindings, but we make them VERY easy to find". Its words say what the key will do.
     -- Lab/WorldAlone.lua W.AloneTakesL; with the classic log picked, or no key bound, there is nothing to tick)
@@ -4345,6 +4782,8 @@ local function FillOptions()
             FillOptions()
         end)
     end
+    elseif opts.slide then
+        opts.slide:Hide()
     end
     -- the foot: a hairline, then the way to the settings page
     y = y - 6
@@ -5058,10 +5497,20 @@ function Refresh()
     scroll:SetPoint("TOPLEFT", tools, "BOTTOMLEFT", 0, -6)
     content:SetWidth(slot:GetWidth() - 2 * PAD_L)
     local lines
-    if S.page then lines = PageLines(S.page)
+    if not S.page then S.chain = nil end
+    if S.page then lines = (S.chain == S.page and W.One("chain") and W.ChainLines(S.page)) or PageLines(S.page)
     elseif S.search ~= "" and #S.search >= 2 then lines = SearchLines()
     elseif c.mode == "done" then lines = DoneLines(zone, list or at)
     else lines = HeldLines(list) end
+    -- (the log alone with L on it, and no key yet for the world map: one quiet line to where it is set. The player
+    -- critic's idea, 2026-11-23: M promised where it is the game's)
+    if not S.page and W.Alone and W.Alone() and W.AloneTakesL and W.AloneTakesL() and GetBindingKey and not GetBindingKey("BFI_BIGMAP") then
+        lines[#lines + 1] = { text = "World map: no key yet", colour = DIM, size = 11.5, indent = 6,
+                              click = function(button)
+                                  if button == "RightButton" then return end
+                                  if ns.OpenOptionsPage then ns.Safe("World map key", ns.OpenOptionsPage, "bigworld") end
+                              end }
+    end
     local footed = false
     for _, l in ipairs(lines) do if l.foot then footed = true end end
     -- (a controller's hint inside the window, over the page's buttons: under the frame's foot it hung out on the
@@ -5075,16 +5524,37 @@ function Refresh()
     padHint:SetJustifyH("LEFT")
     padHint:SetWordWrap(false)
     Render(lines)
+    -- (the Lab's one log: when the log comes up on its list, the quest you are on is in view. Once an opening, never
+    -- while you read: the list does not move under the pointer)
+    if not panel.oneHook then
+        panel.oneHook = true
+        panel:HookScript("OnShow", function() S.leadWant = true end)
+        S.leadWant = true
+    end
+    if S.leadWant then
+        S.leadWant = nil
+        if not S.page and W.Lead() then
+            for _, r in ipairs(rows) do
+                if r:IsShown() and r.line and r.line.under and r.y then
+                    local top, tall = scroll:GetVerticalScroll() or 0, scroll:GetHeight() or 0
+                    if r.y < top or r.y + (r.h or 18) > top + tall then
+                        if scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
+                        scroll:SetVerticalScroll(math.max(0, r.y - 40))
+                    end
+                    break
+                end
+            end
+        end
+    end
     panel.laid = scroll:GetHeight()
     local onActs = S.sel and lines[S.sel] and lines[S.sel].acts
     padHint:SetText(not panel.pad and "" or onActs and "Left Right choose   A press   B back"
         or ("A open   B back   X track   Y tabs" .. (winUp and ", hold: fold" or "") .. "   LB RB zones"))   -- (one line in the window)
 end
 
--- the quest log beside the world map switched off (worldLog.sidebar false): the map alone. The classic quest log
--- picked does not hide it: L is the classic window's then (Tracker.lua, ns.QuestLogKind), but M still brings the world
--- map with its log, "As long as we keep the option of M opening the log aswell, still when classic is selected, all
--- bases are covered" (the user, 2026-11-22)
+-- the quest log beside the world map switched off (worldLog.sidebar false): the map alone. A dev switch since the
+-- user's rule of 2026-11-22, "With classic ticked, worldmap is off": Classic brings the big map and its classic window
+-- back, New the world map with this log; nothing in the settings sets it
 function ns.WorldSidebarOff()
     local c = ns.db and ns.db.worldLog
     return c and c.sidebar == false or false
@@ -5099,10 +5569,12 @@ function W.PlacesOpenAll() S.placeShut = nil end
 function W.NewLogNote()
     local c = Cfg()
     if not c.newNote or not ns.Ask then return end
+    -- (never in a fight: it waits for the next look after one. The player critic, 2026-11-23)
+    if InCombatLockdown and InCombatLockdown() then return end
     c.newNote = nil
     local key = W.QuestKeyName and W.QuestKeyName() or "L"
     ns.Ask({ text = "Waymark has a new quest log. " .. key .. " opens it now, beside the world map or on its own.",
-             sub = "The old quest window is still there: Quest log settings, Your quest log, Classic.",
+             sub = "The old quest window is still there (the big map comes back with it): Settings, Quest log, Your quest log, Classic.",
              ok = "Keep the new one", cancel = "Use the old one",
              -- (the old one only from its own button: Escape, a pad's B or a hide keep the new log. The release critic,
              -- 2026-11-22: a habit's Escape turned the world map off with no word)
@@ -5119,10 +5591,28 @@ end
 -- with the world map up: "do ikt"
 function ns.WorldPanelOpenQuest(id)
     if not (id and panel and (panel:IsShown() or win and win:IsShown())) then return false end
-    if ns.WorldMapUp and not ns.WorldMapUp() then return false end
-    S.page, S.sel, S.anchor = id, nil, nil
+    -- (or the log alone, the map shut: ns.OpenQuest opens it first with the new log picked)
+    if ns.WorldMapUp and not ns.WorldMapUp() and not (W.Alone and W.Alone()) then return false end
+    S.page, S.sel, S.anchor, S.chain = id, nil, nil, nil
     if Folded() then Fold(false) end
     scroll:SetVerticalScroll(0)
+    dirty = true
+    ns.Safe("World log", Refresh)
+    return true
+end
+
+-- the chain of a quest as one scroll, from outside (the Lab's one log: As told's panel, "before this" and its turned
+-- in page; Lab/OneLog.lua's ns.OneLogOpen): true when it showed it. Opens the log as ns.OpenQuest does: in the world
+-- map when that is up, else the log alone where the new log is picked. false: no chain, the switch off, or no log
+-- to show it in (the caller then opens the quest its own way).
+function ns.WorldPanelOpenChain(id)
+    if not (id and W.One("chain") and W.Beads(id)) then return false end
+    if not ns.WorldPanelOpenQuest(id) then
+        if not (ns.QuestLogKind and ns.QuestLogKind() == "new" and W.AloneOpen) then return false end
+        if not (W.Alone and W.Alone()) then W.AloneOpen() end
+        if not ns.WorldPanelOpenQuest(id) then return false end
+    end
+    if not W.ChainOpen(id) then return false end
     dirty = true
     ns.Safe("World log", Refresh)
     return true
@@ -5164,6 +5654,11 @@ function ns.WorldPanelPad(button)
         elseif button == "PAD1" then
             local h = S.railSel and list[S.railSel]
             if not h then return end
+            if h.zone then
+                S.railSel = nil
+                GoTo(h.zone)
+                return
+            end
             S.page, S.sel = h.id, nil
             Fold(false)
         elseif button == "PAD2" then

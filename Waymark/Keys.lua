@@ -30,7 +30,7 @@ local ACTIONS = {
     book     = { "Open the book", function() if ns.ToggleNotebook then ns.ToggleNotebook() end end },
     -- (Waymark's quest window, as the tracker header's menu opens it: on the quest last shown, or closed; the game's
     -- log where ours is off. The user, 2026-11-22: "Just add one line in the keybinds list")
-    questlog = { "Waymark's quest log", function() if ns.QuestLogFromMenu then ns.QuestLogFromMenu() end end },
+    questlog = { "The classic quest log", function() if ns.QuestLogFromMenu then ns.QuestLogFromMenu() end end },
 }
 -- (names fit the game's Keybindings column, about 25 letters; each key
 -- toggles, a second press puts it back)

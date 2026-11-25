@@ -317,9 +317,20 @@ end
 -- "Kill 8 Defias Pillagers in Moonbrook" still rings Moonbrook: no "to" before the capitals.
 -- "Travel to Lakeshire in the Redridge Mountains" is a place in a place, not a person: places = the names this
 -- quest tells of. Also true for a place measured from: "east of Auberdine".
+-- And where the one who asks stands, as an objective line says it: "Shayla Nightbreeze on the road outside of
+-- Darnassus wants you to bring her 15 Gnarlpine Fangs" (the user's shots, 2026-11-24: Darnassus marked for a
+-- bounty on the furbolgs by Dolanaar). The place, then what they want of you or how many of a thing.
+-- "... in Goldshire wants to see you" still sends you there: no "you to", no number.
+local ASKS = { "wants you to ", "needs you to ", "asks you to ", "wishes you to ", "requires you to ", "expects you to ",
+               "would like you to ", "has asked you to ", "is asking you to ", "wants %d", "needs %d", "would like %d",
+               "requests %d", "requires %d" }
 local function Errand(said, name, places)
     local at = said and name and said:lower():find(name:lower(), 1, true)
     if not at then return false end
+    local after = said:sub(at + #name):lower():gsub("^%s+", "")
+    for _, a in ipairs(ASKS) do
+        if after:find("^" .. a) then return true, "back" end
+    end
     local before = said:sub(1, at - 1):gsub("[Tt]he%s+$", "")
     local low = before:lower()
     -- ("the shores of Lake Everstill" is the place itself: only a direction measures)

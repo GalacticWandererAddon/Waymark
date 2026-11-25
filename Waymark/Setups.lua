@@ -31,6 +31,15 @@ local EXCLUDE = { addonScale = true,  -- (Waymark size: follows your screen, not
                   -- places you have stood in (Places.lua). Left out of this list, both were copied into every setup and
                   -- character's settings and written back empty when one was loaded: the user's boats, gone, 2026-11-16)
                   boatFixes = true, places = true,
+                  -- (the same kind, found by the health check, 2026-11-25: the dungeon doors you have walked through
+                  -- (Learn.lua) and the fishing levels you met in Forever's new zones (FishingMap.lua). Each login
+                  -- put back the logging-in character's own old copy, and a setup loaded put back the setup's)
+                  entrances = true, fishingLearned = true,
+                  -- (records and reports, not settings, as diag and blockedLog above: the dungeon-where recording,
+                  -- the author's camp and danger edits not yet baked, the block reports and the cost log)
+                  whereLog = true, campEdits = true, dangerEdits = true, blockedHistory = true, costLog = true,
+                  report = true, reportWhen = true, firstTouch = true, firstTouchWhen = true, firstWrite = true,
+                  recordsMerged = true,  -- (MergeRecords below: done once for the account)
                   optionsWindow = true,  -- (the settings window's own state: folds, last page)
                   beforeCleared = true, questieBoth = true,
                   myPresets = true,  -- (your presets: names of setups, kept with the setups)  -- (SetupSetups: the old "Before ..." setups cleared, once)
@@ -256,7 +265,7 @@ local ROWS = {
     { "Group dots in class colours", "party.classColors", nil, T, T, F, T, T, T, T },
     { "Group tooltips", "party.hover", nil,                  T, T, F, T, T, T, T },
     { "The lie of the land", "relief.on", nil,               T, T, F, T, T, T, T },
-    { "Colours follow the time of day", "mapHour.on", nil,          F, T, F, T, T, T, F },
+    { "Colours follow the time of day", "mapHour.on", nil,          T, T, F, T, T, T, T },
     { "Unexplored land", "explore.shown", nil,               F, F, F, F, F, F, F },
     { "Land you've seen, in pencil", "pencil.on", nil,         T, T, F, T, T, T, T },
     { "Their look", "explore.fogStyle", FOG,                 "full", "full", "fog", "full", "full", "full", "full" },
@@ -370,7 +379,10 @@ local POS = { pos = true, stockPos = true, lootPos = true, buttonPos = true, big
               zoneSizes = true, minimap = true, width = true, height = true, bigWidth = true, bigHeight = true,
               bigW = true, bigH = true, bigSize = true, freeHeight = true, maxHeight = true,
               -- (the world map's own place and size, and where the small map waits meanwhile: yours, 2026-11-22)
-              worldPos = true, smallPos = true, worldW = true, worldH = true }
+              worldPos = true, smallPos = true, worldW = true, worldH = true,
+              -- (the docked square's dragged spot: the Creator's preset carried the user's own, and a load put
+              -- the square in the screen's corner on most screens, 2026-11-24)
+              spot = true }
 local MINE = { scale = true, ["dock.size"] = true, ["questlog.scale"] = true,
                ["dock.mapOnly"] = true, ["dock.face"] = true,  -- (always the map, whatever an older preset says)
                -- (two switches no preset carries, What kills here and the glance: a preset dropped them, so
@@ -428,6 +440,18 @@ local function Same(a, b)
     return true
 end
 
+-- a place the preset carries that you have none of: none, never the preset's (the Creator's carried the
+-- user's own docked spot, big map's and window's, and a load put them on every screen, 2026-11-24)
+local function DropPlaces(s)
+    for k, v in pairs(s) do
+        if POS[k] then
+            s[k] = nil
+        elseif type(v) == "table" then
+            DropPlaces(v)
+        end
+    end
+end
+
 -- where things sit and how big in s: yours (db)
 local function KeepMine(s, db, path)
     for k, v in pairs(db) do
@@ -436,6 +460,12 @@ local function KeepMine(s, db, path)
             s[k] = v
         elseif type(v) == "table" and type(s[k]) == "table" then
             KeepMine(s[k], v, p)
+        end
+    end
+    for k, v in pairs(s) do
+        if db[k] == nil then
+            if POS[k] then s[k] = nil
+            elseif type(v) == "table" then DropPlaces(v) end
         end
     end
 end
@@ -454,6 +484,8 @@ local function ApplyWhole(base)
         elseif type(v) == "table" and type(ns.db[k]) == "table" then
             KeepMine(v, ns.db[k], k)
             for x in pairs(KEEP_IN[k] or {}) do v[x] = ns.db[k][x] end
+        elseif type(v) == "table" then
+            DropPlaces(v)
         end
     end
     for k, v in pairs(all) do ns.db[k] = v end
@@ -953,7 +985,53 @@ function ns.ForgetCharacter(name)
     ns.db.characters[name] = nil
 end
 
+-- Once: the records EXCLUDE took on 2026-11-25 (entrances, fishingLearned, campEdits, dangerEdits) were until then
+-- swapped per character, so each character's saved settings and each named setup may hold a copy the account's
+-- lacks, and a character's next logout writes its settings without them. Before that, everything any of them learned
+-- comes into the account's one copy: what the account has wins, then the characters', then the setups'; a fishing
+-- level is the highest seen. (The code critic, 2026-11-25)
+local function MergeRecords()
+    local db = ns.db
+    if db.recordsMerged then return end
+    local sources = {}
+    for _, ch in pairs(db.characters or {}) do
+        if type(ch) == "table" and type(ch.settings) == "table" then sources[#sources + 1] = ch.settings end
+    end
+    for _, s in pairs(db.setups or {}) do
+        if type(s) == "table" then sources[#sources + 1] = s end
+    end
+    local function Fill(key, depth)
+        for _, s in ipairs(sources) do
+            local from = s[key]
+            if type(from) == "table" then
+                if type(db[key]) ~= "table" then db[key] = {} end
+                local to = db[key]
+                for k, v in pairs(from) do
+                    if depth == 2 and type(v) == "table" and type(to[k]) == "table" then
+                        for k2, v2 in pairs(v) do if to[k][k2] == nil then to[k][k2] = Copy(v2) end end
+                    elseif to[k] == nil then
+                        to[k] = Copy(v)
+                    end
+                end
+            end
+        end
+    end
+    Fill("entrances", 1)
+    Fill("campEdits", 1)
+    Fill("dangerEdits", 2)
+    for _, s in ipairs(sources) do
+        if type(s.fishingLearned) == "table" then
+            db.fishingLearned = type(db.fishingLearned) == "table" and db.fishingLearned or {}
+            for zone, skill in pairs(s.fishingLearned) do
+                if type(skill) == "number" and skill > (db.fishingLearned[zone] or -1) then db.fishingLearned[zone] = skill end
+            end
+        end
+    end
+    db.recordsMerged = 1
+end
+
 function ns.SetupSetups()
+    pcall(MergeRecords)
     -- the presets' first "Before <preset>" setups (2026-10-31) held the preset used
     -- before, not your own settings: cleared once (the user asked)
     if not ns.db.beforeCleared then

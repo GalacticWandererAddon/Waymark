@@ -6,4 +6,6 @@ WaymarkBridge = {
     Hints = function(hints, tip) ns.Hints(hints, tip) end,
     Menu = function(items) ns.QuillMenu(items) end,
     Settings = function() ns.OpenOptionsPage("combat") end,
+    -- (Combat's own window, its workbench, wears Waymark's window frame)
+    MetalWindow = function(f, title) return ns.MetalWindow(f, title) end,
 }

@@ -464,6 +464,10 @@ end
 -- Pins: the ring on the closest, numbers on the next two -------------------------
 
 BFISearchPinMixin = CreateFromMixins(MapCanvasPinMixin)
+-- (the game's AcquirePin calls SetPassThroughButtons on every pin it hands out, mouse or none, and that is refused
+-- to an addon in a fight: a result's ring placed in a fight, at a zoom or a map change, was a blocked action in
+-- Waymark's name. As every other pin of ours: Pin.lua. The health check, 2026-11-25)
+BFISearchPinMixin.CheckMouseButtonPassthrough = ns.SafePassthrough
 
 local function Pulse(self)
     local tex = self:CreateTexture(nil, "OVERLAY")

@@ -304,7 +304,7 @@ local events = CreateFrame("Frame")
 local waiting
 for _, e in ipairs({ "PLAYER_LOGIN", "QUEST_DETAIL", "QUEST_ACCEPTED", "QUEST_TURNED_IN", "QUEST_REMOVED", "QUEST_LOG_UPDATE",
                      "QUEST_COMPLETE", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "ZONE_CHANGED_NEW_AREA",
-                     "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED" }) do
+                     "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "PLAYER_CONTROL_GAINED" }) do
     events:RegisterEvent(e)
 end
 events:SetScript("OnEvent", function(_, event, a, b)
@@ -330,6 +330,13 @@ events:SetScript("OnEvent", function(_, event, a, b)
         if q and said and said ~= "" then q.last = said end
     elseif event == "ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS" or event == "ZONE_CHANGED_NEW_AREA" then
         if ns.ToldEvent then pcall(ns.ToldEvent, "zone") end
+    elseif event == "PLAYER_CONTROL_GAINED" then
+        -- (landed: the place you got off in counts now, the ones you flew over never did. ns.ToldSettle. Once
+        -- more a moment later: the game may still call it a flight in the instant it hands the reins back.)
+        if ns.ToldSettle then
+            pcall(ns.ToldSettle)
+            if C_Timer and C_Timer.After then C_Timer.After(1.5, function() pcall(ns.ToldSettle) end) end
+        end
     elseif event == "PLAYER_REGEN_DISABLED" or event == "PLAYER_REGEN_ENABLED" then
         if ns.ToldPanelEvent then ns.ToldPanelEvent(event == "PLAYER_REGEN_DISABLED" and "fight" or "calm") end
     elseif event == "PLAYER_LOGIN" or event == "QUEST_LOG_UPDATE" or event == "QUEST_REMOVED" or event == "PLAYER_ENTERING_WORLD" then
@@ -549,6 +556,12 @@ function ns.ToldEvent(kind, id)
         zoneWaits = true
         return
     end
+    -- (on a flight the named places pass under you, and none of them is where you are: the quest that leads
+    -- changed with each one flown over. Read from the code, 2026-11-24. The place you land in counts.)
+    if kind == "zone" and UnitOnTaxi and UnitOnTaxi("player") then
+        zoneWaits = true
+        return
+    end
     zoneWaits = nil
     local was = leadId
     if kind == "taken" and id and not Cfg().hold then leadId = id else PickLead() end
@@ -558,8 +571,124 @@ end
 -- the pointer left the panel: a place entered meanwhile counts now. True when there was one.
 function ns.ToldSettle()
     if not zoneWaits then return false end
+    if UnitOnTaxi and UnitOnTaxi("player") then return false end   -- (still in the air: it goes on waiting)
     ns.ToldEvent("zone")
     return true
+end
+
+-- The quest's ground -----------------------------------------------------------------------------------------
+-- Where a quest you hold is really done: the quest data's own spots for it (ns.QuestPoints: our rows, QuestieDB's
+-- where it is installed, what was learned). Nothing is drawn from them here. They only say that you have come to
+-- the quest's ground, which a place's name cannot say for a quest whose giver named none ("kill ten boars"):
+--   the giver's warning is said then, once a session (the panel: "warn"). The user, 2026-11-24: "easy. build it,
+--     pack it, ship it." A place the giver sent you to, entered by its name, counts as the ground too.
+--   and, the Lab's switch until the user clears it (ns.ToldMore("ground"), no build has it): the quest whose
+--     ground you stand on leads, as the one whose named place you stand in always has. The quest that leads
+--     keeps leading while you are still on its ground.
+-- Looked at every two seconds, and only while there is something to look for; never on a flight, never with the
+-- pointer on the panel, never against a quest you hold on the panel.
+local REACH = 0.035        -- of the map's height: about a hundred yards on a zone's map
+local warned = {}          -- [questID] = true: its warning was said this session
+local groundWas            -- the quest whose ground you stood on at the last look (the Lab's lead by ground)
+
+-- how near the nearest spot of a quest is (squared, in map heights), or nil when none is within reach
+local function Near(id, mapID, px, py)
+    if not (mapID and px and ns.QuestPoints) then return nil end
+    local ok, pts = pcall(ns.QuestPoints, mapID)
+    local q = ok and type(pts) == "table" and pts[id]
+    if not (q and q.spots) then return nil end
+    local best
+    for _, p in ipairs(q.spots) do
+        local dx, dy = (p[1] - px) * 1.5, p[2] - py     -- (a map is half again as wide as it is high)
+        local d = dx * dx + dy * dy
+        if d <= REACH * REACH and (not best or d < best) then best = d end
+    end
+    return best
+end
+-- you stand in a place the giver sent you to (a town to bring it back to is not one: AsToldRead.lua's rule)
+local function AtPlace(it, here)
+    if here == "" then return false end
+    local what
+    for i, t in ipairs(it.tellings) do
+        if t.kind == "place" and t.place and t.place.name == here then
+            what = what or ns.AsToldMarks(it.tellings, it.q.text, it.q.obj, it.id)
+            if what[i] then return true end
+        end
+    end
+    return false
+end
+
+local function Arrive()
+    local c = Cfg()
+    if not (c.on and c.panel ~= false) then return end
+    if (ns.ToldPanelBusy and ns.ToldPanelBusy()) or (UnitOnTaxi and UnitOnTaxi("player")) then return end
+    local more = ns.ToldMore and ns.ToldMore("ground") or false
+    local now
+    if not more then
+        -- (nothing to look for unless a quest you hold has a warning not yet said)
+        local data = ns.ToldWarnData
+        if not data then return end
+        local any = false
+        for id, q in pairs(Book().quests) do
+            if not q.done and data[id] and not warned[id] then any = true break end
+        end
+        if not any then return end
+    end
+    now = ns.ToldNow()
+    if #now == 0 then return end
+    local mapID, px, py = Here()
+    local here = HereName()
+    local best, bestD, bestWarns, leadOn
+    for _, it in ipairs(now) do
+        if not Complete(it.id) then
+            local d = Near(it.id, mapID, px, py)
+            if not d and AtPlace(it, here) then d = REACH * REACH end
+            if d then
+                if it.id == leadId then leadOn = true end
+                local warns = (not warned[it.id]) and ns.ToldWarning and ns.ToldWarning(it.id, it.q.text) and true or false
+                -- (a warning not yet said comes before any other quest; then the nearest)
+                if warns then
+                    if not bestWarns or d < bestD then best, bestD, bestWarns = it, d, true end
+                elseif more and not bestWarns and (not best or d < bestD) then
+                    best, bestD = it, d
+                end
+            end
+        end
+    end
+    if not best then
+        groundWas = nil
+        return
+    end
+    local id = best.id
+    if c.hold and c.hold ~= id then return end
+    if bestWarns then
+        -- (not while the panel cannot be read: hidden for now, faded out or left as it is in a fight, or saying
+        -- something else. The warning is said once a session, so it must not be used up unseen: it waits for the
+        -- next look. The code critic, 2026-11-24.)
+        if ns.ToldPanelCanWarn and not ns.ToldPanelCanWarn() then return end
+        warned[id] = true
+        groundWas = id
+        local was = leadId
+        leadId = id
+        stamp = stamp + 1
+        if ns.ToldPanelEvent then ns.ToldPanelEvent("warn", id, was ~= id) end
+    else
+        -- (the Lab: only on COMING to a quest's ground. A quest you picked yourself while standing there stays
+        -- until you come to another's, as a quest let go from the menu always has. The code critic, 2026-11-24:
+        -- the wheel's pick was taken back within two seconds.)
+        local came = groundWas ~= id
+        groundWas = id
+        if came and not leadOn and leadId ~= id then
+            leadId = id
+            stamp = stamp + 1
+            if ns.ToldPanelEvent then ns.ToldPanelEvent("ground", id, true) end
+        end
+    end
+end
+-- (for the test outside the game, and the Lab's "say it again": forget which warnings were said; or one look now)
+function ns.ToldArrive(forget)
+    if forget then warned = {} return end
+    Arrive()
 end
 
 -- The map ----------------------------------------------------------------------------------------------------
@@ -606,6 +735,131 @@ local function Box(p, mapID)
     end
 end
 
+-- Marks on the real ground (the Lab's switch, ns.ToldMore("marks"); no build has it. The user, 2026-11-24: "the
+-- no-pin questing would take a GREAT step, if we actually managed to mark directions and areas on the map, that
+-- are good marks, every single time", and before: the marks "often just circle placenames, towns included").
+-- Where the quest data knows where the leading quest is done (ns.QuestGround: the spots of what is still to do,
+-- from our rows, or QuestieDB's where it is installed), the words no longer PLACE the mark: they NAME it.
+--   A pencil loop goes round a camp of each thing still to do, as wide as the camp.
+--   Which camp, and its name: the one in or right by a place the giver sent you to, named as that place. Else
+--     the objective's best camp (QuestGround.lua's rule: the near ones, a big one before a stray spawn), named as
+--     the way the giver gave ("north of Goldshire") when it lies that way. Else, with ns.ToldMore("range"), the
+--     loop alone, with no name. Else nothing.
+--   A place the giver named where nothing of the quest is gets no ring. No arrow is drawn: the loop is there.
+-- So a mark is on the quest's ground every time the data knows that ground. Where it knows none, the words place
+-- the marks as before. Returns true when the data knew the ground on this map (the words' marks then stay off).
+--
+-- Mended after the first look in game (the user's shots, 2026-11-24: a bounty on furbolgs by Dolanaar had
+-- "Darnassus" written three times south of the Hollow, and no loop at the Hollow the giver sends you to):
+--   One list of spots a thing to do. The quest data has a part for every kind of creature that drops a thing
+--     (thirteen kinds of furbolg for one fang), and a loop a kind filled the four loops before the true one.
+--   A place names only the ground that lies in it: its own box and a little more (GROUND_BY). Before, the box
+--     grown by half took in ground a sixth of the map away, and a place as wide as Darnassus named a camp at
+--     Gnarlpine Hold.
+--   No name from what lives there: "Webwood Lurker" lettered across the map at a place name's size, three kinds
+--     of spider at once. A name on the map is a place's, in the giver's words, or there is none.
+--   Loops that would be drawn on each other are one loop (the Relics of Wakening: three in one barrow den).
+local GROUND_BY = { 0.03, 0.045 }   -- of the map's width and height (a map is half again as wide as it is high)
+local GROUND_LEAST = { 0.0275, 0.041 }   -- half the smallest loop Draw makes (W * 0.055 across), the same way
+local function CampOf(points, px, py)
+    local ok, camp = pcall(ns.QuestGroundCamps, points, px, py)
+    if not (ok and type(camp) == "table" and camp.x) then return nil end
+    local rx, ry = 0, 0
+    for pt in pairs(camp.has or {}) do
+        rx = math.max(rx, math.abs(pt[1] - camp.x))
+        ry = math.max(ry, math.abs(pt[2] - camp.y))
+    end
+    return { x = camp.x, y = camp.y, rx = rx, ry = ry }
+end
+local function GroundMarks(it, mapID, what, Put)
+    if not (ns.QuestGround and ns.QuestGroundCamps) then return false end
+    local ok, list = pcall(ns.QuestGround, mapID)
+    if not ok or type(list) ~= "table" then return false end
+    local q
+    for _, e in ipairs(list) do
+        if e.id == it.id then q = e break end
+    end
+    if not (q and type(q.parts) == "table" and #q.parts > 0) then return false end
+    local pm, px, py = Here()
+    if pm ~= mapID then px, py = nil, nil end
+    local range = ns.ToldMore and ns.ToldMore("range")
+    local camps = {}
+    local function Add(c)
+        for _, o in ipairs(camps) do
+            -- (by the size they are drawn at: a camp of one spot is still a loop GROUND_LEAST across, and three
+            -- relics a few steps apart in one barrow den were three loops on top of each other)
+            local wx, wy = math.max(o.rx, GROUND_LEAST[1]) + math.max(c.rx, GROUND_LEAST[1]), math.max(o.ry, GROUND_LEAST[2]) + math.max(c.ry, GROUND_LEAST[2])
+            if math.abs(o.x - c.x) <= wx * 0.7 + 0.012 and math.abs(o.y - c.y) <= wy * 0.7 + 0.012 then
+                local l, r = math.min(o.x - o.rx, c.x - c.rx), math.max(o.x + o.rx, c.x + c.rx)
+                local t, b = math.min(o.y - o.ry, c.y - c.ry), math.max(o.y + o.ry, c.y + c.ry)
+                o.x, o.y, o.rx, o.ry = (l + r) / 2, (t + b) / 2, (r - l) / 2, (b - t) / 2
+                -- (the giver's name for it before the data's)
+                if c.told and not o.told then o.label, o.told = c.label, true end
+                return
+            end
+        end
+        if #camps < 4 then camps[#camps + 1] = c end
+    end
+    -- (the spots of each thing to do, whatever drops or holds it: parts of one objective share its item, or its line)
+    local goals, byKey = {}, {}
+    for n, part in ipairs(q.parts) do
+        local key = part.item or part.text or part.what or n
+        local g = byKey[key]
+        if not g then
+            g = {}
+            byKey[key] = g
+            goals[#goals + 1] = g
+        end
+        for _, pt in ipairs(type(part.points) == "table" and part.points or {}) do g[#g + 1] = pt end
+    end
+    for _, pts in ipairs(goals) do
+        local placed = false
+        for i, t in ipairs(it.tellings) do
+            local pl = t.place
+            if t.kind == "place" and pl and what[i] and not (pl.zone and pl.map == mapID) then
+                local x, y, rx, ry = Box(pl, mapID)
+                if x then
+                    local inside = {}
+                    for _, pt in ipairs(pts) do
+                        if math.abs(pt[1] - x) <= rx + GROUND_BY[1] and math.abs(pt[2] - y) <= ry + GROUND_BY[2] then inside[#inside + 1] = pt end
+                    end
+                    local c = #inside > 0 and CampOf(inside, px, py)
+                    if c then
+                        c.label, c.told = pl.name, true
+                        Add(c)
+                        placed = true
+                    end
+                end
+            end
+        end
+        local c = (not placed) and #pts > 0 and CampOf(pts, px, py)
+        if c then
+            for i, t in ipairs(it.tellings) do
+                if (t.kind == "dir" or t.kind == "part") and what[i] and t.dir then
+                    local ax, ay
+                    if t.place then ax, ay = Box(t.place, mapID) elseif it.q.map == mapID then ax, ay = it.q.x, it.q.y end
+                    if ax then
+                        local dx, dy = ns.AsToldVec(t.dir)
+                        if ns.AsToldToward(dx, dy, (c.x - ax) * 1.5, c.y - ay) then
+                            c.told = true
+                            if t.place then
+                                c.label = (t.kind == "part" and ("the " .. t.dir .. " of ") or (t.dir .. " of ")) .. t.place.name
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+            -- (ground the giver gave no name for: the loop alone, with ns.ToldMore("range"))
+            if c.told or range then Add(c) end
+        end
+    end
+    for n, c in ipairs(camps) do
+        Put("g" .. n, { kind = "ring", x = c.x, y = c.y, rx = c.rx + 0.012, ry = c.ry + 0.012, ground = true }, true, c.label)
+    end
+    return true
+end
+
 -- what to draw on this map: { kind, x, y (0..1), rx, ry, dx, dy, lead, label }
 local function Collect(mapID)
     local list, byKey, faint = {}, {}, 0
@@ -634,7 +888,17 @@ local function Collect(mapID)
         local lead = it.id == leadId
         -- (what the words make of each telling: ns.AsToldMarks in AsToldRead.lua, the checker's rule too)
         local what = (lead or faintToo) and ns.AsToldMarks(it.tellings, it.q.text, it.q.obj, it.id) or {}
-        for i, t in ipairs(it.tellings) do
+        -- (the Lab: the leading quest's marks on its real ground, where the data knows it. Then the words'
+        -- marks below are not drawn for it: ns.ToldMore, GroundMarks above.)
+        local tellings = it.tellings
+        -- A finished quest marks nothing: its ground is done with and the panel says the way back. (It fell back
+        -- to the words' rings: the user's shots of 2026-11-24, 11:15, the finished bounty with "Ban'ethil
+        -- Hollow" as a name and a loop named "Starbreeze Village" on the map's own lettering: "With astolds
+        -- marks on i still get circles and placenames on map.")
+        if lead and pencil and ns.ToldMore and ns.ToldMore("marks") and (Complete(it.id) or GroundMarks(it, mapID, what, Put)) then
+            tellings = {}
+        end
+        for i, t in ipairs(tellings) do
             local p = t.place
             local x, y, rx, ry
             if p and (lead or faintToo) then x, y, rx, ry = Box(p, mapID) end
@@ -661,6 +925,17 @@ local function Collect(mapID)
             end
         end
     end
+    -- The name before the land (the Lab's switch, ns.ToldMore("name"); no build has it. The idea the user called
+    -- "Also worth a shot", 2026-11-24): a place you were only told of, on land you have not uncovered, is its
+    -- name alone on the blank paper, no ring. The land draws in when you get there, and the ring with it.
+    if ns.ToldMore and ns.ToldMore("name") and ns.IsUnexploredAt then
+        for _, e in ipairs(list) do
+            if e.kind == "ring" and e.lead and e.label then
+                local ok, blank = pcall(ns.IsUnexploredAt, mapID, e.x, e.y)
+                if ok and blank == true then e.nameOnly = true end
+            end
+        end
+    end
     -- An arrow toward where a ring of the same quest already lies says nothing the ring doesn't, and says it
     -- worse: "north" is drawn due north, and north of Auberdine is open sea while the river it means runs into
     -- the Mist's Edge, north-east, which is ringed (the user, 2026-11-15: "an arrow out to sea ... is not what
@@ -679,6 +954,13 @@ local function Collect(mapID)
         if keep then out[#out + 1] = e end
     end
     return out
+end
+
+-- (what As told marks on a map, as drawn: for the Lab's strip, which names the leading quest's place)
+function ns.ToldMarksOn(mapID)
+    local c = Cfg()
+    if not (c.on and c.map and mapID) then return {} end
+    return Collect(mapID)
 end
 
 -- the gold look: rings and one name, sized for the screen (6 px on a map 420 px wide, 5 on 300; the leading
@@ -735,6 +1017,15 @@ end
 local function Draw(map, mapID, scale)
     local c = Cfg()
     local list = (c.on and c.map) and Collect(mapID) or {}
+    -- (the Lab: a quest's ground drawn as pencil in the map's own art, Lab/GroundPencil.lua. It takes the ground
+    -- loops; whatever else is marked stays here. No build has it.)
+    if #list > 0 and ns.GroundPencilTakes and ns.GroundPencilTakes(mapID) then
+        local keep = {}
+        for _, e in ipairs(list) do
+            if not (e.kind == "ring" and e.ground and not e.nameOnly) then keep[#keep + 1] = e end
+        end
+        list = keep
+    end
     if #list == 0 then
         for _, m in ipairs(marks) do m.tex:Hide() m.text:Hide() end
         for _, g in ipairs(golds) do g.ring:Hide() g.name:Hide() end
@@ -769,13 +1060,18 @@ local function Draw(map, mapID, scale)
         local alpha = e.lead and FULL or FAINT
         m.tex:ClearAllPoints()
         m.tex:SetRotation(0)
-        if e.kind == "ring" or e.kind == "part" then
+        local nameOnly = e.kind == "ring" and e.nameOnly and e.label and c.names ~= false
+        if nameOnly then
+            -- (the name alone, written where the place lies: no ring on blank paper)
+            tx, ty = cx, cy
+        elseif e.kind == "ring" or e.kind == "part" then
             -- (round enough to read as a ring: a long thin place gets a wider one, a speck a ring you can see)
             local w, h = math.max(e.rx * 2 * W * 1.15, W * 0.055), math.max(e.ry * 2 * H * 1.15, W * 0.055)
             if w > h * 1.45 then h = w / 1.45 elseif h > w * 1.45 then w = h / 1.45 end
             -- (a ring says "here", not "this fifth of the zone": a place's art box can be far wider than the place)
             if e.kind == "ring" then
-                local cap = W * 0.11
+                -- (a loop round the quest's real ground is as wide as the ground, up to a sixth of the map)
+                local cap = W * (e.ground and 0.17 or 0.11)
                 if w > cap then h = h * cap / w w = cap end
                 if h > cap then w = w * cap / h h = cap end
             end
@@ -795,7 +1091,7 @@ local function Draw(map, mapID, scale)
             m.tex:SetRotation(math.atan2(-e.dy, e.dx))
             m.tex:SetVertexColor(PENCIL[1], PENCIL[2], PENCIL[3], alpha)
         end
-        m.tex:Show()
+        m.tex:SetShown(not nameOnly)
         -- (told.names = false: the marks alone, no lettering; the settings' "Name the places", 2026-11-15)
         if e.lead and e.label and tx and c.names ~= false then
             if not pcall(m.text.SetFont, m.text, FONT, size, "") or not m.text:GetFont() then m.text:SetFont(PLAIN, size - 2, "") end
@@ -804,7 +1100,11 @@ local function Draw(map, mapID, scale)
             m.text:ClearAllPoints()
             -- (kept on the map: a name by its edge leans inward)
             local px = math.max(70, math.min(W * scale - 70, tx * scale))
-            m.text:SetPoint(above and "BOTTOM" or "TOP", holder, "TOPLEFT", px, -(ty * scale) + (above and 3 or -3))
+            if nameOnly then
+                m.text:SetPoint("CENTER", holder, "TOPLEFT", px, -(ty * scale))
+            else
+                m.text:SetPoint(above and "BOTTOM" or "TOP", holder, "TOPLEFT", px, -(ty * scale) + (above and 3 or -3))
+            end
             m.text:Show()
         else
             m.text:Hide()
@@ -846,8 +1146,16 @@ local function Tick()
     end
     local mapID, scale = map:GetMapID(), map:GetCanvasScale() or 1
     local close = math.floor((ns.IsShown and ns.IsShown("detail") and ns.DetailFade and ns.DetailFade(map) or 0) * 8 + 0.5)
+    -- (the Lab's marks on the real ground: drawn again when an objective is done, and when you have walked a
+    -- sixth of the map, since the camp marked is the one near you)
+    local ground = ""
+    if ns.ToldMore and ns.ToldMore("marks") then
+        local pm, px, py = Here()
+        ground = (ns.QuestVersion and ns.QuestVersion() or 0) .. (ns.ToldMore("range") and "r" or "") ..
+                 ((pm == mapID and px) and (math.floor(px * 6) .. math.floor(py * 6)) or "")
+    end
     local key = table.concat({ mapID or 0, stamp, scale, map:GetCanvas():GetWidth(), c.alpha or 0, c.size or 0, leadId or 0, c.faint and 1 or 0, c.names == false and 0 or 1,
-                               c.look or "pencil", (map.GetWidth and map:GetWidth()) or 0, close }, ":")
+                               c.look or "pencil", (map.GetWidth and map:GetWidth()) or 0, close, ground }, ":")
     if key == shownKey then return end
     shownKey = key
     Draw(map, mapID, scale)
@@ -855,8 +1163,18 @@ end
 
 local ticker = CreateFrame("Frame")
 local since, lastScale = 0, nil
+local sinceGround = 0
 ticker:SetScript("OnUpdate", function(_, e)
     since = since + e
+    -- (have you come to a quest's ground: every two seconds, map shown or not)
+    sinceGround = sinceGround + e
+    if sinceGround >= 2 then
+        sinceGround = 0
+        -- (a fault in it is recorded, /bfi check shows it: a plain pcall would leave the warning silently dead)
+        if WaymarkDB then
+            if ns.Safe then ns.Safe("ToldArrive", Arrive) else pcall(Arrive) end
+        end
+    end
     -- (while the map zooms, every frame: the names keep their size by the canvas's scale)
     local map = BattlefieldMapFrame
     local scale = map and map:IsVisible() and map:GetCanvasScale()

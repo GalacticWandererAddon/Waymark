@@ -78,6 +78,20 @@ function ns.ToldLabelled(id, text)
     return out, read
 end
 
+-- The giver's warning: the one sentence of a quest where its giver warns you of what lies ahead, and its letter.
+-- Data\AsToldWarnings.lua names it by number (read by hand: tools\as_told_warnings.lua). Only where the letters
+-- fit the game's words and the sentence begins as it did when it was read: Forever rewrites quests, and a number
+-- that then points at another sentence must say nothing. nil: no warning in this quest.
+function ns.ToldWarning(id, text)
+    local w = ns.ToldWarnData and ns.ToldWarnData[id]
+    if not (w and text) then return nil end
+    local labelled, read = ns.ToldLabelled(id, text)
+    local e = read and labelled[w[1]]
+    if not e or e[2] == "X" then return nil end
+    if w[2] and e[1]:sub(1, #w[2]):lower() ~= w[2] then return nil end
+    return e[1], e[2]
+end
+
 -- the sentences of some letters, joined in the giver's order ("S", or "SFAW"); a gap between two that were
 -- not neighbours is left as a plain space: the words are the giver's, the cut is ours and is not shown
 function ns.ToldPart(labelled, which)

@@ -637,8 +637,11 @@ function ns.LearnedStats()
 end
 
 function ns.ForgetLearned()
-    -- (the learned townsfolk stay: they have their own button, Townsfolk.lua)
-    WaymarkQuestDB = { givers = {}, quests = {}, townsfolk = WaymarkQuestDB and WaymarkQuestDB.townsfolk }
+    -- (only what this page is about: the givers, their quests and the monster spots. Until 2026-11-24 the whole
+    -- table was replaced here, keeping the townsfolk alone (they have their own button, Townsfolk.lua): one
+    -- Shift-click also took the vendors' learned stock (VendorList.lua) and all the Lab's recorder had noted)
+    local db = DB()
+    db.givers, db.quests, db.mobs = {}, {}, {}
     wipe(questieKnows)
     if ns.RedrawLearned then ns.RedrawLearned() end
     if ns.LearnedMobsChanged then ns.LearnedMobsChanged() end  -- (the monster spots went too)

@@ -110,7 +110,7 @@ local function Continent(cont, canvas)
     if C then return C end
     local P = ns.ZoneArtParts
     C = { id = cont, host = CreateFrame("Frame", nil, canvas), fills = {}, relief = {},
-          baked = { l = {}, w = {}, f = {}, s = {}, g = {}, h = {} } }
+          baked = { l = {}, w = {}, f = {}, s = {}, g = {}, h = {}, x = {} } }
     C.host:SetAllPoints(canvas)
     C.host:Hide()
     C.zones = ZonesOf(cont, P)
@@ -305,7 +305,9 @@ local function LayRest(C, cw, ch)
     -- fills (their rows run on over it to their ragged ends), the brush work, the painted sea in its colours.
     -- Without: the land fills, their open sea over them, the brush work, the painted sea over that. The sea was
     -- baked into layers of its own on 2026-11-19 (tools/clone_art.py `s`, `w`, `g`, `h`).)
-    local order = sea and { "h", "l", "f", "g" } or { "l", "w", "f", "s" }
+    -- (x: the carried sea, a test layer of 2026-11-23, over the fills as ZoneArt.lua has it; no cells, nothing drawn.
+    -- Left out here, the first test of 22 Nov left a hole on the game's map)
+    local order = sea and { "h", "l", "x", "f", "g" } or { "l", "w", "f", "s" }
     local used = {}
     for sub, layer in ipairs(order) do
         used[layer] = true

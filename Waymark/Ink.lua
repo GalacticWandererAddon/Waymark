@@ -4,7 +4,8 @@ local _, ns = ...
 -- into the parchment (an explorer's markings), not icons on top of it.
 --   - Shown on whatever the Battlefield Map shows: zone and continent maps,
 --     caves, and our dungeon maps (Dungeon.lua), per map and floor:
---     ns.db.inkMarks[key] = { mark, ... }, key "m<uiMapID>" or "d<instance>:<floor>".
+--     ns.db.inkMarks[key] = { mark, ... }, key "m<uiMapID>", "d<instance>:<floor>" or
+--     "c<continent>:<north>:<west>" (a cave in our own cave view, Cave.lua).
 --   - A mark: { t = kind, v = version, ink = 1-3, r = seed, p = { x1, y1, ... }
 --     (0-1 across the map), s = text, f = hand, note = tooltip, sc = its own
 --     size, q = 2: the feathered quill's look }. Kinds: pen, route, wander,
@@ -788,6 +789,7 @@ end
 local map           -- BattlefieldMapFrame
 local zoneHost      -- on the zone map's canvas
 local dungeonHost   -- on Dungeon.lua's canvas
+local caveHost      -- on Cave.lua's own cave view, over the zone map
 local active        -- { host =, key =, level = (the catcher's frame level) } or nil
 local drawing = false
 local tool, inkIndex = "pen", 1
@@ -818,6 +820,13 @@ local function Surface()
             end
             local overlay = ns.dungeonOverlay
             return dungeonHost, key, (overlay and overlay:GetFrameLevel() or canvas:GetFrameLevel()) + 4
+        end
+    end
+    if ns.CaveInkSurface then
+        local surface, key, level = ns.CaveInkSurface()
+        if surface then
+            caveHost = caveHost or MakeHost(surface)
+            return caveHost, key, level
         end
     end
     local id = map and map:GetMapID()
@@ -1540,6 +1549,8 @@ local function PanStart()
     pan = { sx = sx, sy = sy }
     if active and active.host == dungeonHost and ns.DungeonPanStart then
         pan.dungeon = ns.DungeonPanStart()
+    elseif active and active.host == caveHost then
+        -- (the zone map lies hidden under the cave view: not panned)
     else
         local sc = map and map.ScrollContainer
         if sc and sc.Child and sc.GetCanvasScale then

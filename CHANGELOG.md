@@ -1,5 +1,53 @@
 # Changelog
 
+## 1.3.3 (2026-11-25)
+
+**Controller and docked-map fixes, cleaner quest data, and the world map polished.**
+
+### New
+
+- The map's colour follows the time of day by default for new players (every preset but Purist). If you update, your setting stays as it was.
+- As told warns you as you reach a quest's ground, in the quest giver's own words.
+- The world map's folded log shows your zones on a continent, each with its crest.
+- The world map's cog has a text size for the quest page.
+
+### Fixed
+
+- Controller: holding the tracking button on the docked map no longer leads to the "SetPreferredGamepadInteractTarget" error at the next menu or chat box. If you still see it, please send the report: with the controller UI on, it now records where the error started.
+- Controller: the game's settings panel stays open with the controller UI on.
+- Skyborne characters see their own side's quests, and no other side's.
+- Quests that can't be done on Forever (Naxxramas, Ahn'Qiraj, battlegrounds and more) are no longer offered or counted.
+- Many older quests now use the game's own level, objectives, zone and next step where they differ.
+- Quests with "Test" in their name (Test of Lore and others) are back.
+- Quest chains read the same from every step.
+- An item found inside another item shows where that one drops.
+- As told no longer marks a place named just before "wants you to" (Darnassus on the Gnarlpine bounty).
+- The world map's log files a quest under the place the game marks for it.
+- Closing the world map gives the small map back its own zone and zoom.
+- Quest details opens the new quest log, not the classic one.
+- The quill draws on the cave map when you're in a cave.
+- Docked map: the square keeps its size and border, stays over the minimap, and fits the minimap's dots round you.
+- Docked map: in caves, a stud shows the game's minimap, and party members show on the cave map.
+- Docked map: rotate minimap is kept per character, and the minimap's zoom and icon size come back when you undock.
+- A setup or a new character no longer loses the dungeon doors and fishing levels you learned. Each character's are merged into your account once.
+- "Forget all of it" on the learned quest givers no longer clears vendors' stock.
+- In a fight:
+  - "Fade while moving" no longer throws errors.
+  - The key picker lets go when a fight starts.
+  - The map search's ring no longer causes a blocked action.
+- A blocked action now shows one red chat line, not many.
+
+### Changed
+
+- "The classic quest log" is its name everywhere, and the Quest log page says plainly that Classic comes with the big map.
+- Settings only offer M where Waymark can use it.
+- On Simple or Questing with the time-of-day colours off, the preset's card now reads "(altered)", since both presets have it on.
+
+### Known
+
+- Class trainers have no lists yet. Right-click says so.
+- Turning Waymark's tracker off can leave the game's tracker hidden. Chat says so; /reload brings it back.
+
 ## 1.3.2 (2026-11-22)
 
 **A world map with a new quest log, a new sea, redrawn coasts, and players' bugs fixed.**

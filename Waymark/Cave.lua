@@ -124,6 +124,7 @@ end
 -- Minimap-style view (caves without a Blizzard map) --------------------------------
 
 local view, viewCanvas, viewArrow
+local viewTop          -- the frame over the cave's pictures: your arrow, your party
 local viewTextures, viewPool = {}, {}
 local viewFor          -- cave index the pictures were laid out for
 local refX, refY       -- world point at the canvas's centre
@@ -257,6 +258,83 @@ local function CursorInView()
     return x / s, y / s
 end
 
+-- Your party on the cave view, from where the game puts them in the world (UnitPosition: group members in the
+-- open world). The map shows them everywhere else; in a cave nothing did: "I cannot see my party members in
+-- the caves and dungeons", a player, 15 Nov. As the map's own dots: shown with them, at their opacity, in class
+-- colours if those are picked. A round dot with a dark rim, like the minimap's.
+local PARTY_BLUE = { 0.28, 0.62, 1 }
+local partyDots = {}
+local function PartyDot(i)
+    local d = partyDots[i]
+    if d then return d end
+    d = { rim = viewTop:CreateTexture(nil, "ARTWORK", nil, 1), dot = viewTop:CreateTexture(nil, "ARTWORK", nil, 2),
+          guid = false }   -- (false: its colour is set the first time, whatever the game tells)
+    -- (our own round dot, as the quest ground's: a light disc that takes a colour)
+    d.rim:SetTexture(ns.MEDIA .. "GroundDot")
+    d.rim:SetVertexColor(0, 0, 0, 0.85)
+    d.dot:SetTexture(ns.MEDIA .. "GroundDot")
+    d.dot:SetPoint("CENTER", d.rim, "CENTER")
+    partyDots[i] = d
+    return d
+end
+local function PlaceParty(k, cx, cy)
+    local n = 0
+    local _, _, cont = WorldPos()
+    if cont and refX and ns.IsShown("party") and IsInGroup and IsInGroup() then
+        local raid = IsInRaid and IsInRaid()
+        local size = math.max(6, (Cfg().arrowSize or 18) * 0.45)
+        local p = ns.db.party
+        local alpha, classOn = p.alpha or 1, p.classColors and true or false
+        for i = 1, raid and GetNumGroupMembers() or GetNumSubgroupMembers() do
+            local unit = (raid and "raid" or "party") .. i
+            if not UnitIsUnit(unit, "player") then
+                -- (Client.lua: nil for a value the game keeps secret in a fight, and inside an instance)
+                local a, b, uc = ns.WorldPos(unit)
+                if a and uc == cont then
+                    n = n + 1
+                    local d = PartyDot(n)
+                    -- (the look only when it changes: only the place moves every frame)
+                    local guid = ns.Known(UnitGUID(unit))
+                    if d.guid ~= guid or d.classOn ~= classOn then
+                        d.guid, d.classOn = guid, classOn
+                        local r, g, bl = PARTY_BLUE[1], PARTY_BLUE[2], PARTY_BLUE[3]
+                        if classOn then
+                            local _, class = UnitClass(unit)
+                            class = ns.Known(class)
+                            local col = class and (C_ClassColor and C_ClassColor.GetClassColor(class) or RAID_CLASS_COLORS[class])
+                            if col then r, g, bl = col.r, col.g, col.b end
+                        end
+                        d.dot:SetVertexColor(r, g, bl, 1)
+                    end
+                    if d.size ~= size then
+                        d.size = size
+                        d.rim:SetSize(size + 2, size + 2)
+                        d.dot:SetSize(size, size)
+                    end
+                    if d.alpha ~= alpha then
+                        d.alpha = alpha
+                        d.rim:SetAlpha(alpha)
+                        d.dot:SetAlpha(alpha)
+                    end
+                    d.rim:ClearAllPoints()
+                    d.rim:SetPoint("CENTER", view, "CENTER", ((refY - b) - cx) * k, ((a - refX) - cy) * k)
+                    if not d.rim:IsShown() then
+                        d.rim:Show()
+                        d.dot:Show()
+                    end
+                end
+            end
+        end
+    end
+    for i = n + 1, #partyDots do
+        local d = partyDots[i]
+        if d.rim:IsShown() then
+            d.rim:Hide()
+            d.dot:Hide()
+        end
+    end
+end
+
 -- The view follows you like the zone map does: the cave scrolls, but never past
 -- its edges, so near an edge the arrow moves instead and the art always fills
 -- the frame. "Keep the cave still": the whole cave fitted, only the arrow moves.
@@ -311,6 +389,7 @@ local function UpdateView(x, y)
     viewArrow:SetSize(c.arrowSize, c.arrowSize)
     local f = Facing()
     if f then viewArrow:SetRotation(f) end
+    PlaceParty(k, cx, cy)
 end
 
 -- (for marks laid on the cave's ground by other files, Lab\StillWarm.lua: the canvas is in yards, a world
@@ -396,6 +475,7 @@ local function CreateView(map)
     local top = CreateFrame("Frame", nil, view)
     top:SetAllPoints(view)
     top:SetFrameLevel(viewCanvas:GetFrameLevel() + 20)  -- (over the dungeon's pins too: PlacePins)
+    viewTop = top
 
     viewArrow = top:CreateTexture(nil, "OVERLAY")
     SetArrowTexture(viewArrow)
@@ -468,6 +548,77 @@ local function UpdateStyleButton(map, kind, cont, x, y)
     local area = map.ScrollContainer or map
     styleButton:SetPoint("BOTTOMLEFT", area, "BOTTOMLEFT", 6, 6 + (ns.CoordsCornerLift and ns.CoordsCornerLift() or 0) + (ns.SearchCornerLift and ns.SearchCornerLift() or 0))
     styleButton:Show()
+end
+
+-- Docked, the game's own minimap in the square instead of the cave map: your party and the game's blips on it
+-- ("I cannot see my party members in the caves and dungeons", a player, 15 Nov). A stud as the dungeon map's
+-- (Dungeon.lua), under the header; the X or the map's key brings the cave map back too. Not on the view itself:
+-- on the minimap side the view goes see-through (Dock.lua) and would take the way back with it.
+local dockButton
+local function CreateDockButton(map)
+    local area = map.ScrollContainer or map
+    local b = CreateFrame("Button", nil, area)
+    b:SetSize(22, 22)
+    b:SetFrameLevel(math.min(area:GetFrameLevel() + 5100, 9100))  -- over the cave view
+    b.icon = b:CreateTexture(nil, "ARTWORK")
+    b.icon:SetAllPoints()
+    b.shine = b:CreateTexture(nil, "HIGHLIGHT")
+    b.shine:SetAllPoints()
+    b.shine:SetBlendMode("ADD")
+    b.shine:SetAlpha(0.25)
+    b:SetScript("OnMouseDown", function(self)
+        self.icon:ClearAllPoints()
+        self.icon:SetPoint("TOPLEFT", 1, -1)
+        self.icon:SetPoint("BOTTOMRIGHT", 1, -1)
+    end)
+    b:SetScript("OnMouseUp", function(self) self.icon:ClearAllPoints() self.icon:SetAllPoints() end)
+    b:SetScript("OnClick", function()
+        GameTooltip:Hide()
+        if ns.DockToggleDungeonMinimap then ns.DockToggleDungeonMinimap() end
+    end)
+    b:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        local mini = ns.DockDungeonMinimap and ns.DockDungeonMinimap()
+        GameTooltip:AddLine(mini and "The cave map" or "Your minimap")
+        ns.ShiftLines(self, { mini and "Click for the cave map."
+                              or "The game's minimap in this frame, with your party. Click the X or press the map key for the cave map." })
+        GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- (the map's top-edge strip stops short of it while it shows, Dock.lua)
+    b:HookScript("OnShow", function() if ns.MapRimClearLeft then ns.MapRimClearLeft(34) end end)
+    b:HookScript("OnHide", function() if ns.MapRimClearLeft then ns.MapRimClearLeft(0) end end)
+    b:Hide()
+    dockButton = b
+    ns.debugFrames.caveDockButton = b
+end
+
+-- shown while docked with the cave view up (on the minimap side too: it is the way back)
+local function UpdateDockButton(map)
+    if not dockButton then return end
+    if not (ns.Docked and ns.Docked() and view and view:IsShown()) then
+        if dockButton:IsShown() then dockButton:Hide() end
+        return
+    end
+    local mini = ns.DockDungeonMinimap and ns.DockDungeonMinimap()
+    if dockButton.mini ~= mini then
+        dockButton.mini = mini
+        local art = ns.MEDIA .. (mini and "StudMap" or "StudNeedle")
+        dockButton.icon:SetTexture(art)
+        dockButton.shine:SetTexture(art)
+    end
+    if not dockButton:IsShown() then
+        dockButton:SetScale(ns.AddonScale() / math.max(0.1, map:GetScale()))  -- (its size on screen, like the map's buttons)
+        dockButton:ClearAllPoints()
+        dockButton:SetPoint("TOPLEFT", map.ScrollContainer or map, "TOPLEFT", 4, -26)
+        -- (over the map's edge strip, as the dungeon map's switch: in its strata, a little above)
+        local strip = ns.MapRimTop and ns.MapRimTop()
+        if strip then
+            dockButton:SetFrameStrata(strip:GetFrameStrata())
+            dockButton:SetFrameLevel(strip:GetFrameLevel() + 2)
+        end
+        dockButton:Show()
+    end
 end
 
 -- Caves whose map art comes in several floor pictures (the same name on the same continent:
@@ -605,6 +756,31 @@ end
 
 function ns.CavePinSurface()
     if pinKey and pinSurface:IsVisible() then return pinSurface, pinKey end
+end
+
+-- where map ink goes in our cave view (Ink.lua): a surface over the cave's whole picture, marks 0-1
+-- across it, and a key for the cave by its box, "c<continent>:<north>:<west>" (the data's order may
+-- change). The quill drew on the zone map under the view, the user 2026-11-24: "I cant draw on
+-- cavemaps with my quill, it goes to the zonemap under". A cave with the game's own map keeps "m<id>".
+local inkSurface, inkFor, inkKey
+function ns.CaveInkSurface()
+    if not (view and view:IsVisible() and viewFor and refX and state.kind and state.kind ~= "blizzard") then return end
+    if inkFor ~= state.kind .. viewFor then
+        local cont, n, w
+        if state.kind == "micro" then
+            local c = ns.MapCaves[viewFor]
+            cont, n, w = c[2], c[5], c[6]
+        else
+            local c = (state.kind == "extra" and ns.MapCaveMinimapExtra or ns.MapCaveMinimap)[viewFor]
+            cont, n, w = c[1], c[4], c[5]
+        end
+        inkSurface = inkSurface or CreateFrame("Frame", nil, viewCanvas)
+        inkSurface:ClearAllPoints()
+        inkSurface:SetPoint("TOPLEFT", viewCanvas, "CENTER", -artHW, artHH)
+        inkSurface:SetSize(2 * artHW, 2 * artHH)
+        inkFor, inkKey = state.kind .. viewFor, string.format("c%d:%d:%d", cont, math.floor(n), math.floor(w))
+    end
+    return inkSurface, inkKey, viewCanvas:GetFrameLevel() + 4
 end
 -- the zone your world position is in
 local function CaveZone()
@@ -831,6 +1007,7 @@ local function Update(map)
         UpdateStyleButton(map, nil)
         UpdateFloorBar(map, nil)
         if state.kind then Leave(map) end
+        UpdateDockButton(map)
         return
     end
     local kind, id, cont, x, y
@@ -840,6 +1017,7 @@ local function Update(map)
         UpdateFloorBar(map, nil)
         if next(floorPick) then wipe(floorPick) end  -- (out of the cave: the upper floor next time)
         if state.kind then Leave(map) end
+        UpdateDockButton(map)
         return
     end
 
@@ -875,6 +1053,7 @@ local function Update(map)
         UpdateView(x, y)
         UpdateQuestPins(lastK)
     end
+    UpdateDockButton(map)
 end
 
 -- /bfi cave: what the client gives, to see what's possible
@@ -910,6 +1089,7 @@ end
 function ns.SetupCave(map)
     CreateView(map)
     CreateStyleButton(map)
+    CreateDockButton(map)
     CreateFloorBar(map)
 
     local canvas = map:GetCanvas()

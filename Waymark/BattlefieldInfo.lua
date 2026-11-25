@@ -87,7 +87,7 @@ local DEFAULTS = {
                    hideDigits = false, digitsX = 0, digitsY = 0,
                    digitSize = 100, digitBack = 0, digitBold = false },
     softEdges  = { on = false, shape = "square", reach = 2, pins = true },
-    mapHour    = { on = false },  -- (MapHour.lua; on in the Creator's preset alone)
+    mapHour    = { on = true },   -- (MapHour.lua; on for a new player since 2026-11-24, the user: "the hour should be on by default")
     -- coordinates (Coords.lua): size = font size; where = a spot on the map's top
     -- or bottom edge (TOPLEFT, TOP, TOPRIGHT, BOTTOMLEFT, BOTTOM, BOTTOMRIGHT);
     -- side: inside / outside the map; backing: the dark box behind, opacity %;
@@ -1193,7 +1193,9 @@ function ns.ApplyGroups()
             local cave = ns.MapCaves and ns.MapCaves[mapID] and GroundInCave(group)
             pin:SetShown((PinsShown(group) or cave) and not HiddenUnexplored(pin, group, mapID)
                 and not HiddenOutside(pin, group, mapID) and not HiddenUntracked(pin, group, tracked)
-                and not HiddenDouble(pin, group, ours, handIn))
+                and not HiddenDouble(pin, group, ours, handIn)
+                -- (the Lab's By sight: smoke, a figure and a letter stand in for the quest givers' pins)
+                and not (ns.BySightHides and ns.BySightHides(group, pin)))
             -- our pins add their own dimming (party objectives) on top of the group alpha
             if template == "BFIQuestiePinTemplate" then
                 pin:ApplyCurrentAlpha()
@@ -2226,6 +2228,7 @@ end
 -- Blocked actions: the game says which function it blocked in these events (the
 -- popup doesn't). Shown in chat and kept, so one during a /reload is shown again
 -- after it (the chat from before a reload is gone).
+local told   -- (blocked functions already said in chat this session: ReportBlocked)
 local function ReportBlocked(event, addon, func)
     -- (every addon's, kept across reloads, the last 20: the game's chat line "Interface action
     -- failed because of an AddOn" doesn't say whose; /waymark check and Claude read it)
@@ -2241,8 +2244,15 @@ local function ReportBlocked(event, addon, func)
     local where = InCombatLockdown() and "in combat" or "out of combat"
     -- (Report.lua: a report players can copy into a CurseForge comment, and its link)
     if ns.NoteBlock then pcall(ns.NoteBlock, event, func) end
-    Log("|cffff6060blocked:|r", tostring(func), "(" .. event .. ", " .. where .. ", " .. when .. ")",
-        ns.ReportLink and ns.ReportLink() or "")
+    -- (one red line a blocked function a session: a controller block that comes back at every loot window filled a
+    -- player's chat, 1.3.2's CurseForge reports. The user, 2026-11-26: "Yeah probably should". The report keeps
+    -- every block, and /waymark check the list below)
+    told = told or {}
+    if not told[tostring(func)] then
+        told[tostring(func)] = true
+        Log("|cffff6060blocked:|r", tostring(func), "(" .. event .. ", " .. where .. ", " .. when .. ")",
+            ns.ReportLink and ns.ReportLink() or "")
+    end
     WaymarkDB = WaymarkDB or {}
     local list = WaymarkDB.blockedLog or {}
     list[#list + 1] = { func = tostring(func), event = event, where = where, when = when }
@@ -2273,11 +2283,16 @@ local function ShowBlockedFromLastTime()
     local list = WaymarkDB and WaymarkDB.blockedLog
     if not (list and #list > 0) then return end
     C_Timer.After(3, function()
-        Log("blocked before the last reload/logout:")
+        -- (one line, each function once with its count: ten lines of the same block filled the chat, 2026-11-26)
+        local count, order = {}, {}
         for _, b in ipairs(list) do
-            Log("  " .. b.func .. " (" .. b.event .. ", " .. b.where .. ", " .. b.when .. ")")
+            local f = tostring(b.func)
+            if not count[f] then order[#order + 1] = f end
+            count[f] = (count[f] or 0) + 1
         end
-        if ns.ReportLink then Log("a report to copy for Waymark's CurseForge page:", ns.ReportLink()) end
+        for i, f in ipairs(order) do order[i] = count[f] > 1 and (f .. " x" .. count[f]) or f end
+        Log("|cffff6060blocked|r before the last reload: " .. table.concat(order, ", ") .. ".",
+            ns.ReportLink and ns.ReportLink() or "")
         WaymarkDB.blockedLog = nil
     end)
 end

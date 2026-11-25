@@ -945,6 +945,8 @@ local function Row(i)
         elseif IsShiftKeyDown() then
             ToggleWatch(q.id)  -- (untracked, it leaves the list)
             ns.UpdateTracker(true)
+        elseif ns.TrackerPick and ns.TrackerPick(q.id) then
+            return  -- (the Lab, Lab/OneLog.lua: it was not the quest you are on, and now it is. No build has it.)
         elseif Cfg().click == "details" and ns.ShowQuestWindow then
             ns.ShowQuestWindow(q.id)
         elseif Cfg().click == "map" and not GamepadUI() then
@@ -1155,6 +1157,8 @@ local function Line(i, y, width, kind, text, color, quest, icon, indent, extra)
         local tw = math.min(row.text:GetStringWidth(), row.text:GetWidth())
         row:SetHitRectInsets(indent, math.max(0, width - x - tw), 0, 0)
     end
+    -- (the Lab's pencil, Lab/OneLog.lua: a stroke through what is done, a line under the quest you are on)
+    if ns.TrackerLineMore then pcall(ns.TrackerLineMore, row, kind, quest, extra) end
     row:Show()
     return y + hgt + (c.lineGap or 1)
 end
@@ -1569,11 +1573,13 @@ local function Draw()
                                     -- the name at the left, its count (or a tick) at the right
                                     local name, count = SplitObjective(o.text or "")
                                     if o.finished and c.doneCount == "tick" then count = TICK end
+                                    -- (the Lab, Lab/OneLog.lua: how many it asks, and your tally strokes)
+                                    if ns.TrackerObjective then name, count = ns.TrackerObjective(name, count, o.finished) end
                                     y = Line(n, y, width, "objective", name, color, q, nil, gutter + 4,
-                                        { count = count, flashKey = key })
+                                        { count = count, flashKey = key, done = o.finished })
                                 else
                                     y = Line(n, y, width, "objective", "- " .. (o.text or ""), color, q, nil,
-                                        gutter + 4, { flashKey = key })
+                                        gutter + 4, { flashKey = key, done = o.finished })
                                 end
                             end
                         end
@@ -3545,6 +3551,13 @@ function ns.OpenQuest(id)
     if not id then return end
     -- (the world map up: the quest's page in its log, the Lab's world map; Lab/WorldPanel.lua)
     if ns.WorldPanelOpenQuest and ns.WorldPanelOpenQuest(id) then return end
+    -- (the new log picked, the world map shut: the new log opens alone on the quest's page, not the classic window.
+    -- The user, 2026-11-23: "Quest details" from the right-click menu opened the old log with "new" chosen)
+    local W = ns.WorldLog
+    if ns.QuestLogKind and ns.QuestLogKind() == "new" and W and W.AloneOpen then
+        if not (W.Alone and W.Alone()) then W.AloneOpen() end
+        if ns.WorldPanelOpenQuest and ns.WorldPanelOpenQuest(id) then return end
+    end
     if LogIndex(id) then
         if QCfg().shown then ns.ShowQuestWindow(id) else OpenLog(id) end
     else

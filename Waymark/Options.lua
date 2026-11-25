@@ -473,6 +473,14 @@ end
 local MODIFIER_KEYS = { LSHIFT = true, RSHIFT = true, LCTRL = true, RCTRL = true,
                         LALT = true, RALT = true, LMETA = true, RMETA = true }
 local listening  -- the button waiting for a key
+-- (a fight starting while a button waits: it stops waiting, before the fight's lockdown. Waiting, it takes every key
+-- and passes none on, so the player's own keys did nothing in the fight; and a key pressed then set a binding in a
+-- fight, which the game refuses. PLAYER_REGEN_DISABLED comes before the lockdown: the health check, 2026-11-25)
+do
+    local fight = CreateFrame("Frame")
+    fight:RegisterEvent("PLAYER_REGEN_DISABLED")
+    fight:SetScript("OnEvent", function() if listening then listening.Stop() end end)
+end
 
 local function CreateKeyButton(parent, command)
     local b = RedButton(parent)
@@ -495,6 +503,7 @@ local function CreateKeyButton(parent, command)
     b:SetScript("OnKeyDown", function(_, key)
         if MODIFIER_KEYS[key] then return end
         if key == "ESCAPE" then b.Stop() return end
+        if InCombatLockdown() then b.Stop() return end   -- (no bindings in a fight: see the fight frame above)
         local combo = (IsAltKeyDown() and "ALT-" or "") .. (IsControlKeyDown() and "CTRL-" or "")
             .. (IsShiftKeyDown() and "SHIFT-" or "") .. key
         for _, old in ipairs({ GetBindingKey(command) }) do SetBinding(old) end
@@ -1720,6 +1729,9 @@ function MapKinds.LLabel(away)
     return key .. (away and " opens the new quest log" or " opens this log")
 end
 MapKinds.L_TIP = "Off: your quest log key stays the game's, its world map with the quest log."
+-- the key that opens the world map, in words: M only while it is ours (the M tick), else its own key (the player
+-- critic after 1.3.2: M was promised where it was still the game's)
+function MapKinds.MapKeyWords() return MapKinds.OnM() and "M" or "the World map key" end
 -- M opens it already: M is one of the Big map key's keys
 function MapKinds.OnM()
     if not GetBindingKey then return false end
@@ -2573,7 +2585,7 @@ PAGES[#PAGES + 1] = { key = "bigworld", label = "World map", build = function(p)
     -- (the way back to the big map, both ways: every preset but Purist has the world map. The user, 2026-11-22:
     -- "Every preset except purist defaults to worldmap and new log. Make it not too hard to switch back")
     a:CheckWith("Use the world map", MapKinds.World, MapKinds.SetWorld)
-    a:Tip("Your map opens big in a window of its own, with the new quest log. Off: your map made big, as before, with the classic quest log.")
+    a:Tip("Your map opens big in a window of its own, with the new quest log. Off: the big map and the classic quest log.")
     a:CheckWith(MapKinds.MLabel(), MapKinds.OnM, function(v)
         MapKinds.SetM(v)
         if ns.RebuildOptionsPages then ns.RebuildOptionsPages() end
@@ -2649,7 +2661,11 @@ PAGES[#PAGES + 1] = { key = "minimap", label = "Minimap replacement", build = fu
     local b = Column(p, 0, 0, HALF)
     b:Header("Minimap replacement")
     b:Check("Dock the map over the minimap", "dock", "on")
-    b:Tip("The map replaces your minimap, square and north up, with your minimap dots on it. If you switch in combat, it changes when combat ends.")
+    -- (the minimap's dots only where the client can lay the minimap over the map, Forever: DockPatch.lua. On Era
+    -- and Anniversary the tip promised them and none came, the docked pass 2026-11-24)
+    b:Tip((C_Minimap and C_Minimap.SetDrawGroundTextures)
+        and "The map replaces your minimap, square and north up, with your minimap dots on it. If you switch in combat, it changes when combat ends."
+        or "The map replaces your minimap, square and north up. If you switch in combat, it changes when combat ends.")
     b:Requires("dock", "on")
     -- (no row for dock.ourGround, "Waymark's map under the minimap's blips": the user, 2026-11-16, "Should
     -- it even be an option at all?". Off was the old way, the game's minimap picture up close, and left a
@@ -3543,11 +3559,11 @@ PAGES[#PAGES + 1] = { key = "keys", label = "Key bindings", build = function(p)
         -- (the new quest log, 2026-11-22: L opens it when its own key row is on; else the classic window's line)
         if g.title == "The keys worth having" and MapKinds.NewLog() then
             w:Note(MapKinds.TakesL()
-                and "Waymark's quest log opens on your quest log key (L); M in it opens the world map."
-                or "Waymark's quest log can open on your quest log key (L): a tick on the Quest log page.")
+                and ("The new quest log opens on your quest log key (L); in it, " .. MapKinds.MapKeyWords() .. " opens the world map.")
+                or "The new quest log can open on your quest log key (L): a tick on the Quest log page.")
             w:Button("Go to: Quest log", function() if ns.OpenOptionsPage then ns.OpenOptionsPage("questlog") end end)
         elseif g.title == "The keys worth having" and ns.db.questlog then
-            w:Note("Waymark's quest log needs no key of its own: it opens on your quest log key (L).")
+            w:Note("The classic quest log needs no key of its own: it opens on your quest log key (L).")
             w:Button("Go to: Open it with the quest log key", function() ns.ShowOption("questlog", "keyL") end)
         end
     end
@@ -3822,7 +3838,7 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     }, function() return T().click or "fold" end, function(v)
         T().click = v ~= "fold" and v or nil
     end)
-    a:Tip("Its details: Waymark's quest log. The game's map: the world map with the quest beside it; with a controller, its objectives fold instead.")
+    a:Tip("Its details: your quest log. The game's map: the world map with the quest beside it; with a controller, its objectives fold instead.")
     a:Check("Attach to the map", "tracker", "detached", true)  -- (ticked: not detached)
     a:Tip("Attached, it moves, fades and hides with the map. Off, it goes anywhere and stays open when the map closes.", "Off: drag its edge or zone name to move it, its corner to size it.")
     a:Requires(function() return T().shown and T().detached end)
@@ -3900,7 +3916,7 @@ PAGES[#PAGES + 1] = { key = "tracker", label = "Quest tracker", build = function
     d:Header("Look")
     d:Requires("tracker", "shown")
     d:Check("Same text as the quest log", "tracker", "textAsLog")
-    d:Tip("Uses the same fonts and sizes as Waymark's quest log. Off: set them below.")
+    d:Tip("Uses the same fonts and sizes as the classic quest log. Off: set them below.")
     d:Requires(function() return T().shown and not T().textAsLog end)
     d:Slider("Quest name size", 8, 20, 1, "tracker", "fontSize", "%d")
     d:Requires("tracker", "shown")
@@ -3993,7 +4009,8 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
     if MapKinds.Here() then
         a:Choice("Your quest log", nil, nil, { { "new", "New" }, { "classic", "Classic" } },
             function() return MapKinds.World() and "new" or "classic" end, function(v) MapKinds.SetWorld(v == "new") end)
-        a:Tip("New: Waymark's world map and its quest log. Classic: the big map and Waymark's old quest log (below).")
+        a:Tip("New: Waymark's world map and its quest log. Classic: the big map and the classic quest log (below), as before.")
+        a:Note("Classic comes with the big map.")   -- (said plainly: Waymark main for the user, 2026-11-23)
     end
     if MapKinds.NewLog() then
         a:CheckWith(MapKinds.LLabel(), MapKinds.TakesL, function(v)
@@ -4007,13 +4024,14 @@ PAGES[#PAGES + 1] = { key = "questlog", label = "Quest log", build = function(p)
         if MapKinds.TakesL() and W.SetLOpensMap then
             local key = W.QuestKeyName and W.QuestKeyName() or "The quest log key"
             a:CheckWith(key .. " opens the world map with it", W.LOpensMap, W.SetLOpensMap)
-            a:Tip("Off: " .. key .. " opens the log alone, and M in it opens the map.")
+            a:Tip("Off: " .. key .. " opens the log alone, and " .. MapKinds.MapKeyWords() .. " in it opens the map.")
         end
         a:Note("How it looks and what it shows: the World map page, and the cog on the map.")
         a:Button("Go to: World map", function() if ns.OpenOptionsPage then ns.OpenOptionsPage("bigworld") end end)
         return
     end
-    a:Check("Use Waymark's quest log", "questlog", "shown")
+    -- ("the classic quest log", the pick's own word: "Waymark's quest log" read as the new one. Waymark main, 2026-11-23)
+    a:Check("Use the classic quest log", "questlog", "shown")
     a:Tip("A quest's page beside the map: objectives, description, rewards and buttons. Off: the game's quest log instead.", "Right-click a quest in the tracker: view details.")
     a:Requires("questlog", "shown")
     a:Check("Also from its pins on the map", "questlog", "fromPins")
@@ -6405,7 +6423,13 @@ local function RegisterGameSettings()
     b:SetPoint("TOPLEFT", 16, -50)
     b:SetText("Open settings")
     b:SetScript("OnClick", function()
-        if SettingsPanel and SettingsPanel:IsShown() then HideUIPanel(SettingsPanel) end
+        -- (with the controller UI on, the game's panel is left open: a panel hidden from our code is heard by the
+        -- controller's focus manager, which changes its bindings there and then as ours, the blocked
+        -- SetPreferredGamepadInteractTarget the gamepad hunt proved for a menu closed the same way (23 Nov). Ours
+        -- opens over it (FULLSCREEN), and B or Escape closes the game's. The health check, 2026-11-25; the user:
+        -- "The controller one")
+        local pad = InputUtil and InputUtil.IsGamepadUIEnabled and InputUtil.IsGamepadUIEnabled()
+        if not pad and SettingsPanel and SettingsPanel:IsShown() then HideUIPanel(SettingsPanel) end
         ns.ToggleOptions(currentPage or PAGES[1].key)
     end)
     pcall(function()

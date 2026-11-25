@@ -256,8 +256,14 @@ do
     local at = CreateFrame("Frame")
     at:RegisterEvent("PLAYER_LOGIN")
     at:SetScript("OnEvent", function()
-        -- (dev copy only: the user, 2026-11-15, left them out of 1.3; ns.DevCommands is DevBar.lua's)
-        if not (ns.DevCommands and ns.FOREVER and GamepadMode and GamepadSharedUtility and hooksecurefunc) then return end
+        -- (a first touch or first write is this session's: an old one left in the file read as new,
+        -- the clean client 2026-11-23)
+        if WaymarkDB then WaymarkDB.firstTouch, WaymarkDB.firstTouchWhen, WaymarkDB.firstWrite = nil, nil, nil end
+        -- (the dev copy, and from 1.3.3 a player with the controller UI on at login: the user, 2026-11-25, "if they
+        -- dont carry risk of blocked stuff on gamepad". Post-hooks only (hooksecurefunc never taints the game's call),
+        -- and Caught only reads: issecurevariable, debugstack, our own WaymarkDB. ns.DevCommands is DevBar.lua's)
+        local pad = InputUtil and InputUtil.IsGamepadUIEnabled and InputUtil.IsGamepadUIEnabled()
+        if not ((ns.DevCommands or pad) and ns.FOREVER and GamepadMode and GamepadSharedUtility and hooksecurefunc) then return end
         already = PadWatch() ~= nil
         local fcm = GamepadMode.FrameControlsManager
         for _, name in ipairs({ "FrameShown", "FrameHidden", "FocusFrame", "FocusNextFrame", "FocusPreviousFrame",
@@ -376,7 +382,9 @@ end
 -- of ours touched earlier). Three readings of the client could not tell those apart (2026-11-14);
 -- the stack can. File names and line numbers only. The first two blocks' are kept.
 local function Stack()
-    local s = debugstack and debugstack(2, 30, 0) or ""
+    -- (60 frames: the 1.3.2 report of 2026-11-23 had 30, and the path was cut at the game's
+    -- Menu:Close, one frame short of the line of ours that called it)
+    local s = debugstack and debugstack(2, 60, 0) or ""
     local out, all, began = {}, {}, false
     for line in s:gmatch("[^\n]+") do
         if line:find("^Locals") or line:find("^%(%*temporary") then break end
@@ -385,8 +393,10 @@ local function Stack()
         -- (from the refused call down: what's above it is our own way here from the event. Seen in
         -- game 2026-11-14 with /waymark blocktest: two lines of the block watch, then "[C]: in
         -- function 'TargetUnit'")
-        if not began and line:find("^%[C%]") then began = true end
-        if began and #out < 26 then out[#out + 1] = all[#all] end
+        -- (not the pcall our block watch is called through: in that report it came first and
+        -- the three lines of our own way here were kept, at the cost of the last three)
+        if not began and line:find("^%[C%]: in function '") and not line:find("'pcall'", 1, true) then began = true end
+        if began and #out < 54 then out[#out + 1] = all[#all] end
     end
     return began and out or all
 end
